@@ -46,3 +46,44 @@ def test_serve_binds_loopback_only_and_opens_browser(root, configure):
              open_browser=opened.append)
     assert seen["host"] == "127.0.0.1"
     assert opened == [f"http://127.0.0.1:{seen['port']}/"]
+
+
+def _client(env, top_n=10):
+    cfg = cli.load_config(env)
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    return create_app(factory, lambda: NOW, top_n=top_n).test_client()
+
+
+def test_cli_week_prints_weekly_view_with_deltas(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=3_000_000)])
+    root.write_transcript("p", "s0", [req("m0", "2026-10-22T01:00:00Z", output=2_000_000)])
+    out = io.StringIO()
+    assert cli.main(["week"], env=configure(root), now=NOW, out=out) == 0
+    text = out.getvalue()
+    assert "2026-10-26..2026-10-30" in text and "partial" in text
+    assert "$60.00" in text and "$40.00" in text and "+$20.00" in text and "+50.0%" in text
+    assert "output" in text and "s1" in text and "p" in text
+
+
+def test_dashboard_shows_period_modes_comparison_and_top_n(root, configure):
+    root.write_transcript("proj-x", "sess-x", [req("m1", "2026-10-29T01:00:00Z", output=1_000_000)])
+    client = _client(configure(root))
+    for q in ("", "?period=week", "?period=month", "?period=last7&include_today=0"):
+        assert client.get("/" + q).status_code == 200
+    html = client.get("/?period=week").get_data(as_text=True)
+    assert "partial" in html and "sess-x" in html and "proj-x" in html and "cache read" in html
+    default = client.get("/").get_data(as_text=True)
+    assert 'name="include_today" value="1" checked' in default
+    assert 'name="include_today" value="1" checked' not in client.get(
+        "/?include_today=0").get_data(as_text=True)
+    assert client.get("/?period=bogus").status_code == 400
+
+
+def test_dashboard_top_n_comes_from_config(root, configure):
+    for i in range(3):
+        root.write_transcript("p", f"sess-{i}", [req(f"m{i}", "2026-10-29T01:00:00Z", output=1_000_000 + i)])
+    html = _client(configure(root), top_n=2).get("/").get_data(as_text=True)
+    assert html.count("sess-") == 2
