@@ -1,34 +1,31 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: findings</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>Drains and Opportunities</h1>
-  <p><a href="{{ url_for('dashboard') }}">Dashboard</a></p>
-  <form method="get" action="{{ url_for('findings') }}">
-    <label>Since <input type="date" name="since" value="{{ since.isoformat() if since }}"></label>
-    <button type="submit">Show</button>
-  </form>
-  <p id="not-additive"><em>{{ note }}</em></p>
+{% extends "base.html" %}
+{% block title %}Drains and Opportunities · claude-cost{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>Drains and Opportunities</h1>
+    <form method="get" action="{{ url_for('findings') }}" class="form-row">
+      <label>Since <input type="date" name="since" value="{{ since.isoformat() if since }}"></label>
+      <button type="submit">Show</button>
+    </form>
+  </div>
+  <p id="not-additive" class="callout">{{ note }}</p>
   {% macro table(kind, heading) %}
-  <h2>{{ heading }}</h2>
-  <table id="{{ kind }}s">
-    <tr><th>Finding</th><th>Attributed spend</th><th>Avoidable spend (lower bound)</th><th>Formula</th><th>Covers</th></tr>
-    {% for f in findings if f.kind == kind %}
-    <tr>
-      <td><a href="{{ url_for('finding_detail', finding_id=f.id, since=since.isoformat() if since) }}">{{ f.title }}</a><br><small>{{ f.description }}</small></td>
-      <td>${{ "%.2f"|format(f.attributed) }}</td>
-      <td>{% if f.avoidable is none %}not estimated{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</td>
-      <td>{{ f.formula or "none (attributed spend only)" }}{% if f.detail %}<br><small>{{ f.detail }}</small>{% endif %}</td>
-      <td>{{ f.requests|length }} requests in {{ f.sessions|length }} sessions</td>
-    </tr>
-    {% else %}<tr><td colspan="5">None</td></tr>{% endfor %}
-  </table>
+  <section class="card {{ kind }}">
+    <h2>{{ heading }}</h2>
+    <div class="table-wrap"><table id="{{ kind }}s">
+      <tr><th>Finding</th><th class="num">Attributed spend</th><th class="num">Avoidable spend (lower bound)</th><th>Formula</th><th class="num">Covers</th></tr>
+      {% for f in findings if f.kind == kind %}
+      <tr>
+        <td class="title"><a href="{{ url_for('finding_detail', finding_id=f.id, since=since.isoformat() if since) }}">{{ f.title }}</a><small>{{ f.description }}</small></td>
+        <td class="num">${{ "%.2f"|format(f.attributed) }}</td>
+        <td class="num">{% if f.avoidable is none %}<span class="muted">not estimated</span>{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</td>
+        <td>{{ f.formula or "none (attributed spend only)" }}{% if f.detail %}<small>{{ f.detail }}</small>{% endif %}</td>
+        <td class="num">{{ f.requests|length }} requests<small>in {{ f.sessions|length }} sessions</small></td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="empty">None</td></tr>{% endfor %}
+    </table></div>
+  </section>
   {% endmacro %}
   {{ table(drain, "Drains") }}
   {{ table(opportunity, "Opportunities") }}
-</body>
-</html>
+{% endblock %}

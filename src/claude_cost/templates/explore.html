@@ -1,26 +1,27 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: explore</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>Explore</h1>
-  <p><a href="{{ url_for('dashboard') }}">Dashboard</a> | <a href="{{ url_for('explore_page') }}">Reset</a></p>
-  <form method="get" action="{{ url_for('explore_page') }}" id="explore-form">
-    <p><label>Group by
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Explore · claude-cost{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <div>
+      <h1>Explore</h1>
+      <p class="sub">Total <strong>${{ fmt_cost(result.total_cost) }}</strong> across {{ result.total_requests }} requests</p>
+    </div>
+    <a href="{{ url_for('explore_page') }}">Reset</a>
+  </div>
+  <form method="get" action="{{ url_for('explore_page') }}" id="explore-form" class="card">
+    <div class="form-row"><label>Group by
       <select name="group">{% for key, d in dims.items() %}
         <option value="{{ key }}" {{ "selected" if key == spec.group }}>{{ d.label }}</option>{% endfor %}
-      </select></label></p>
-    {% if spec.filters %}<p>Filters:
+      </select></label></div>
+    {% if spec.filters %}<div>
       {% for key, values in spec.filters.items() %}{% for v in values %}
         <span class="chip">{{ dims[key].label }} = {{ v }}
-          <a href="{{ explore_url('explore_page', spec.without(key, v)) }}" aria-label="Remove filter">x</a></span>
+          <a href="{{ explore_url('explore_page', spec.without(key, v)) }}" aria-label="Remove filter">×</a></span>
         <input type="hidden" name="{{ key }}" value="{{ v }}">
-      {% endfor %}{% endfor %}</p>{% endif %}
+      {% endfor %}{% endfor %}</div>{% endif %}
     <details {{ "open" if not spec.filters }}><summary>Add a filter</summary>
-      <table>
+      <table class="filters">
       {% for key, d in dims.items() %}
         <tr><td><label for="f-{{ key }}">{{ d.label }}</label></td>
           <td><input id="f-{{ key }}" name="{{ key }}" list="o-{{ key }}" autocomplete="off"
@@ -29,25 +30,29 @@
       {% endfor %}
       </table>
     </details>
-    <button type="submit">Apply</button>
+    <p><button type="submit">Apply</button></p>
   </form>
 
-  <p>Total <strong>${{ fmt_cost(result.total_cost) }}</strong> across {{ result.total_requests }} requests</p>
-  {% if result.overlapping %}<p><em>A request can use several {{ result.label|lower }} values, so rows can add up to more than the total.</em></p>{% endif %}
+  {% if result.overlapping %}<p class="callout">A request can use several {{ result.label|lower }} values, so rows can add up to more than the total.</p>{% endif %}
   {% if result.rows %}
-  <div style="max-width:900px"><canvas id="explore-chart" aria-label="Cost by {{ result.label }}"></canvas></div>
+  <section class="card">
+    <div class="card-head"><h2>Cost by {{ result.label|lower }}</h2><a id="csv-link" href="{{ explore_url('explore_csv', spec) }}">Export CSV</a></div>
+    <div class="chart"><canvas id="explore-chart" aria-label="Cost by {{ result.label }}"></canvas></div>
+  </section>
+  <section class="card">
+    <div class="table-wrap"><table id="explore-table">
+      <tr><th>{{ result.label }}</th><th class="num">Cost</th><th class="num">Requests</th><th class="num">Share %</th><th></th></tr>
+      {% for r in result.rows %}
+      <tr><td>{% if result.group == "session" %}{{ ui.sid(r.value) }}{% elif result.group == "component" %}{{ ui.component(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
+        <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td>
+        <td class="num">{% if result.group == "session" %}<a href="{{ explore_url('explore_requests', spec.drill('session', r.value)) }}">requests</a>
+          {% else %}<a href="{{ explore_url('explore_page', spec.drill(result.group, r.value)) }}">sessions</a>{% endif %}</td></tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% else %}<p class="card empty">No requests match.</p>{% endif %}
+{% endblock %}
+{% block scripts %}{% if result.rows %}
   <script id="explore-data" type="application/json">{{ chart_data|tojson }}</script>
-  <p><a id="csv-link" href="{{ explore_url('explore_csv', spec) }}">Export CSV</a></p>
-  <table id="explore-table">
-    <tr><th>{{ result.label }}</th><th>Cost</th><th>Requests</th><th>Share %</th><th></th></tr>
-    {% for r in result.rows %}
-    <tr><td>{{ r.value }}</td><td>${{ fmt_cost(r.cost) }}</td><td>{{ r.requests }}</td><td>{{ fmt_share(r.share) }}</td>
-      <td>{% if result.group == "session" %}<a href="{{ explore_url('explore_requests', spec.drill('session', r.value)) }}">requests</a>
-        {% else %}<a href="{{ explore_url('explore_page', spec.drill(result.group, r.value)) }}">sessions</a>{% endif %}</td></tr>
-    {% endfor %}
-  </table>
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
-  <script src="{{ url_for('static', filename='explore.js') }}"></script>
-  {% else %}<p>No requests match.</p>{% endif %}
-</body>
-</html>
+  {{ ui.chart_scripts('explore.js') }}
+{% endif %}{% endblock %}

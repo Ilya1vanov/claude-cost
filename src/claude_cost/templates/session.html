@@ -1,40 +1,52 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Session {{ t.session_id }}{% if t.agent_id %} / {{ t.agent_id }}{% endif %} - claude-cost</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <p><a href="{{ url_for('dashboard') }}">Dashboard</a>
-    {% if t.agent_id %} | <a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ t.session_id }}</a>{% endif %}
-    {% if t.parent_session_id %} | {{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ t.parent_session_id }}</a>{% endif %}</p>
-  <h1>{% if t.agent_id %}Subagent {{ t.agent_id }} of session {{ t.session_id }}{% else %}Session {{ t.session_id }}{% endif %}</h1>
-  <p><a href="{{ url_for('compact') }}">Compact threshold</a></p>
-  <p>{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
-  <div style="max-width:1000px"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Session {{ t.session_id }}{% if t.agent_id %} / {{ t.agent_id }}{% endif %} · claude-cost{% endblock %}
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('dashboard') }}">Dashboard</a>
+    {% if t.parent_session_id %}<span class="sep">/</span>{{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ ui.sid(t.parent_session_id) }}</a>{% endif %}
+    {% if t.agent_id %}<span class="sep">/</span><a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ ui.sid(t.session_id) }}</a>{% endif %}</div>
+  <div class="page-head">
+    <div>
+      <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ ui.sid(t.session_id) }}</small>{% else %}Session {{ ui.sid(t.session_id) }}{% endif %}</h1>
+      <p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
+    </div>
+    <a href="{{ url_for('compact') }}">Compact threshold</a>
+  </div>
+
+  <section class="card">
+    <h2>Context and cost per request</h2>
+    <div class="chart tall"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
+  </section>
+
+  <section class="card">
+    <h2>Events</h2>
+    <div class="table-wrap"><table id="events">
+      <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
+      {% for c in t.compactions %}<tr class="compaction{% if c.late %} late{% endif %}"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <span class="badge late">Late compact</span>{% endif %}</td>
+        <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
+          (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
+      {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
+        <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
+          {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
+      {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>Side session started</td>
+        <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ ui.sid(s.session_id) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
+      {% if not (t.compactions or t.subagents or t.side_sessions) %}<tr><td colspan="3" class="empty">No events</td></tr>{% endif %}
+    </table></div>
+  </section>
+
+  <section class="card">
+    <h2>Requests</h2>
+    <div class="table-wrap"><table id="requests">
+      <tr><th>Time</th><th class="num">Context</th><th class="num">Cost</th><th>Marks</th></tr>
+      {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
+        <td>{% if p.idle %}<span class="badge idle">idle gap {{ (p.gap_seconds / 60)|round|int }} min</span>{% endif %}
+          {% if p.cache_event == "cold" %}<span class="badge cold">Cold write</span>{% endif %}
+          {% if p.cold_resume %}<span class="badge cold">Cold resume</span>{% endif %}
+          {% if p.threshold and p.context_tokens > p.threshold %}<span class="badge over">Oversized context (above {{ "{:,}".format(p.threshold) }})</span>{% endif %}</td></tr>{% endfor %}
+    </table></div>
+  </section>
+{% endblock %}
+{% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
-
-  <h2>Events</h2>
-  <table id="events">
-    <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
-    {% for c in t.compactions %}<tr class="compaction{% if c.late %} late{% endif %}"{% if c.late %} style="background:#f3e5f5"{% endif %}><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <strong>Late compact</strong>{% endif %}</td>
-      <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
-        (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
-    {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
-      <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{{ a.agent_type or a.agent_id }}</a>
-        {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
-    {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>Side session started</td>
-      <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ s.session_id }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
-  </table>
-
-  <h2>Requests</h2>
-  <table id="requests">
-    <tr><th>Time</th><th>Context</th><th>Cost</th><th>Marks</th></tr>
-    {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td>{{ "{:,}".format(p.context_tokens) }}</td><td>${{ "%.4f"|format(p.cost) }}</td>
-      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}{% if p.cold_resume %} (Cold resume){% endif %}{% if p.threshold and p.context_tokens > p.threshold %} Oversized context (above {{ "{:,}".format(p.threshold) }}){% endif %}</td></tr>{% endfor %}
-  </table>
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
-  <script src="{{ url_for('static', filename='session.js') }}"></script>
-</body>
-</html>
+  {{ ui.chart_scripts('session.js') }}
+{% endblock %}
