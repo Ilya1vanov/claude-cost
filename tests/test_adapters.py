@@ -87,3 +87,18 @@ def test_dashboard_top_n_comes_from_config(root, configure):
         root.write_transcript("p", f"sess-{i}", [req(f"m{i}", "2026-10-29T01:00:00Z", output=1_000_000 + i)])
     html = _client(configure(root), top_n=2).get("/").get_data(as_text=True)
     assert html.count("sess-") == 2
+
+
+def test_compare_page_selects_periods_and_baseline(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-13T01:00:00Z", output=1_000_000)])
+    root.write_transcript("p", "s2", [req("m2", "2026-10-26T01:00:00Z", output=2_000_000)])
+    client = _client(configure(root))
+    assert client.get("/compare").status_code == 200
+    html = client.get("/compare?mode=week&p=2026-10-12&p=2026-10-26&baseline=2026-10-26"
+                      ).get_data(as_text=True)
+    assert 'id="compare-chart"' in html and "$20.00" in html and "$40.00" in html
+    assert "-50.0%" in html and "-$20.00" in html
+    assert client.get("/compare?mode=week&p=2026-10-12&p=2026-10-26").status_code == 200
+    for bad in ("?mode=last7", "?mode=week&p=2026-10-12&p=2026-10-14&p=2026-10-26",
+                "?mode=week&p=2026-10-12&p=2026-10-26&baseline=2026-10-05"):
+        assert client.get("/compare" + bad).status_code == 400

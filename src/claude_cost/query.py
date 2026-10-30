@@ -80,6 +80,36 @@ class PeriodComparison:
         return self.delta_cost / self.baseline_cost * 100 if self.baseline_cost else None
 
 
+COMPARISON_MODES = ("week", "month")
+
+
+@dataclass(frozen=True)
+class ComparisonEntry:
+    period: Period  # the full calendar period
+    cost: float
+    daily: list[float]  # cost per day of period; stops at today for a period still running
+    partial: bool
+    delta_cost: float  # vs the Baseline (0 for the Baseline itself)
+    delta_pct: float | None  # None when the Baseline cost is zero
+
+
+@dataclass(frozen=True)
+class Comparison:
+    mode: str
+    baseline: date  # start of the Baseline period
+    entries: tuple[ComparisonEntry, ...]  # earliest first
+    day_count: int  # length of the longest selected period (the chart's x axis)
+
+
+def calendar_period(mode: str, start: date) -> Period:
+    """The full calendar week (Monday start) or month beginning at `start`."""
+    if mode == "week" and start.weekday() == 0:
+        return Period(start, start + timedelta(6))
+    if mode == "month" and start.day == 1:
+        return Period(start, start.replace(day=calendar.monthrange(start.year, start.month)[1]))
+    raise ValueError(f"{start} is not the start of a {mode}")
+
+
 def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple[Period, Period, int]:
     """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days."""
     if mode == "last7":
@@ -175,6 +205,56 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def available_periods(self, mode: str, now: datetime) -> list[date]:
+        """Start dates of every calendar period from the first request to now, newest first."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}")
+        row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
+        if row["first"] is None:
+            return []
+        today = self._today(now)
+        first = self._local_day(row["first"])
+        if mode == "week":
+            cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
+        else:
+            cur = first.replace(day=1)
+            step = lambda d: (d.replace(day=28) + timedelta(4)).replace(day=1)
+        out = []
+        while cur <= today:
+            out.append(cur)
+            cur = step(cur)
+        return out[::-1]
+
+    def comparison(self, mode: str, starts: list[date], now: datetime,
+                   baseline: date | None = None) -> Comparison:
+        """Two or more calendar periods of one mode, against a Baseline (default: the earliest)."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}, not {mode!r}")
+        starts = sorted(set(starts))
+        if len(starts) < 2:
+            raise ValueError("select at least two different periods")
+        today = self._today(now)
+        periods = [calendar_period(mode, s) for s in starts]
+        if periods[-1].start > today:
+            raise ValueError(f"{periods[-1].start} has not started yet")
+        baseline = baseline or starts[0]
+        if baseline not in starts:
+            raise ValueError("the baseline must be one of the selected periods")
+        costs, dailies = [], []
+        for p in periods:
+            daily = [d.cost for d in self.daily_spend(p.start, min(p.end, today))]
+            dailies.append(daily)
+            costs.append(sum(daily))
+        base_cost = costs[starts.index(baseline)]
+        entries = tuple(
+            ComparisonEntry(p, c, d, p.end > today, c - base_cost,
+                            (c - base_cost) / base_cost * 100 if base_cost else None)
+            for p, c, d in zip(periods, costs, dailies))
+        return Comparison(mode, baseline, entries, max(p.days for p in periods))
+
+    def _today(self, now: datetime) -> date:
+        return now.astimezone(self._tz).date() if self._tz else now.date()
 
     def unpriced_models(self) -> list[str]:
         rows = self._conn.execute(
