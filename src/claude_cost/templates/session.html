@@ -3,11 +3,11 @@
 {% block title %}Session {{ t.session_id }}{% if t.agent_id %} / {{ t.agent_id }}{% endif %} · claude-cost{% endblock %}
 {% block content %}
   <div class="crumbs"><a href="{{ url_for('dashboard') }}">Dashboard</a>
-    {% if t.parent_session_id %}<span class="sep">/</span>{{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ ui.sid(t.parent_session_id) }}</a>{% endif %}
-    {% if t.agent_id %}<span class="sep">/</span><a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ ui.sid(t.session_id) }}</a>{% endif %}</div>
+    {% if t.parent_session_id %}<span class="sep">/</span>{{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ session_label(t.parent_session_id) }}</a>{% endif %}
+    {% if t.agent_id %}<span class="sep">/</span><a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ session_label(t.session_id) }}</a>{% endif %}</div>
   <div class="page-head">
     <div>
-      <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ ui.sid(t.session_id) }}</small>{% else %}Session {{ ui.sid(t.session_id) }}{% endif %}</h1>
+      <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ session_label(t.session_id) }}</small>{% else %}Session {{ session_label(t.session_id, link=False) }}{% endif %}</h1>
       <p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
@@ -29,7 +29,7 @@
         <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
           {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
       {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>Side session started</td>
-        <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ ui.sid(s.session_id) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
+        <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ session_label(s.session_id, link=False) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
       {% if not (t.compactions or t.subagents or t.side_sessions) %}<tr><td colspan="3" class="empty">No events</td></tr>{% endif %}
     </table></div>
   </section>
