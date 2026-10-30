@@ -155,3 +155,23 @@ def test_serve_ingests_on_start(root, configure):
              run_server=lambda *a: None, open_browser=lambda u: None)
     cfg = cli.load_config(env)
     assert QueryService(store.connect(cfg.store_path), "UTC").last_ingest_epoch() == NOW.timestamp()
+
+
+def test_owner_is_decided_across_runs_without_doubling(root, service_for):
+    # A fork copy is ingested first; the original transcript shows up in a later run.
+    root.write_transcript("p", "fork", [req("m1", "2026-10-30T01:00:00Z", output=1_000_000,
+                                            forked_from="orig")])
+    assert total(service_for(root)) == (pytest.approx(20.0), 1)
+    root.write_transcript("p", "orig", [req("m1", "2026-10-30T01:00:00Z", output=1_000_000)])
+    svc = service_for(root)
+    assert total(svc) == (pytest.approx(20.0), 1)
+    assert [s.cost for s in svc.session_summaries()] == [pytest.approx(20.0)]
+
+
+def test_link_appended_later_groups_sessions(root, service_for):
+    root.write_transcript("p", "a", [req("m1", "2026-10-30T01:00:00Z", output=1)])
+    root.write_transcript("p", "b", [req("m2", "2026-10-30T02:00:00Z", output=1)])
+    assert len(service_for(root).session_summaries()) == 2
+    root.append_to_transcript("p", "a", [], raw=json.dumps(
+        {"type": "continued-in", "continuedInSessionId": "b"}) + "\n")
+    assert len(service_for(root).session_summaries()) == 1

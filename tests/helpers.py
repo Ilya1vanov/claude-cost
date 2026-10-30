@@ -24,6 +24,7 @@ class Req:
     write_1h: int = 0
     lines: int = 1  # streaming split: one JSONL line per content block
     session_id: str | None = None  # record sessionId; default = transcript session
+    forked_from: str | None = None  # marks copied fork history: forkedFrom.sessionId
 
 
 def req(message_id: str, ts: str, **kw) -> Req:
@@ -42,12 +43,15 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             "cache_creation": {"ephemeral_5m_input_tokens": r.write_5m,
                                "ephemeral_1h_input_tokens": r.write_1h},
         }
-        out.append({
+        rec = {
             "type": "assistant", "uuid": f"{r.message_id}-u{i}", "timestamp": r.ts,
             "sessionId": r.session_id or session_id,
             "message": {"id": r.message_id, "model": r.model, "role": "assistant",
                         "content": [{"type": "text", "text": "x"}], "usage": usage},
-        })
+        }
+        if r.forked_from:
+            rec["forkedFrom"] = {"sessionId": r.forked_from, "messageUuid": f"{r.message_id}-u{i}"}
+        out.append(rec)
     return out
 
 

@@ -9,7 +9,16 @@ from typing import Sequence
 
 
 def pick_owner(candidates: Sequence[dict]) -> dict:
-    """Each candidate: {"file_stem", "session_id", "file_first_ts"}."""
+    """Each candidate: {"file_stem", "session_id", "file_first_ts"} plus optional flags.
+
+    `is_copy` marks a record that its transcript flags as copied history (a Fork's
+    `forkedFrom`); `relocated` marks a transcript that carries a `relocated` record (a
+    worktree-move copy). Both lose to an unflagged candidate, so the original transcript
+    keeps the request. Ties are broken deterministically.
+    """
+    def key(c):
+        return (bool(c.get("is_copy")), bool(c.get("relocated")), c["file_first_ts"],
+                c.get("project", ""), c["file_stem"])
+
     matching = [c for c in candidates if c["file_stem"] == c["session_id"]]
-    pool = matching or list(candidates)
-    return min(pool, key=lambda c: c["file_first_ts"])
+    return min(matching or list(candidates), key=key)
