@@ -12,6 +12,7 @@ from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from . import ingest as ingest_mod
+from . import pricing
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
@@ -26,14 +27,30 @@ def _now(config: Config) -> datetime:
 
 def _service(config: Config) -> QueryService:
     conn = store.connect(config.store_path)
-    ingest_mod.ingest(conn, config.data_roots)
-    return QueryService(conn, config.timezone)
+    table = pricing.build_table(config.prices)
+    ingest_mod.ingest(conn, config.data_roots, price_table=table)
+    return QueryService(conn, config.timezone, price_table=table)
 
 
 def cmd_today(config: Config, now: datetime, out) -> int:
     day = now.date()
     spend = _service(config).daily_spend(day, day)[0]
     print(f"Today ({day.isoformat()}): ${spend.cost:.2f} across {spend.requests} requests", file=out)
+    return 0
+
+
+def cmd_prices(config: Config, out) -> int:
+    svc = _service(config)
+    print("Prices in effect ($ per million tokens)", file=out)
+    print(f"{'model':<22}{'from':<12}{'input':>8}{'output':>8}{'write5m':>9}{'write1h':>9}"
+          f"{'read':>8}  note", file=out)
+    for r in svc.price_table():
+        note = " ".join(x for x in (r.tier_note, "(config)" if r.source == "config" else "") if x)
+        print(f"{r.model:<22}{r.effective_from.isoformat():<12}{r.input:>8.4g}{r.output:>8.4g}"
+              f"{r.cache_write_5m:>9.4g}{r.cache_write_1h:>9.4g}{r.cache_read:>8.4g}  {note}".rstrip(),
+              file=out)
+    unpriced = svc.unpriced_models()
+    print("Unpriced models found: " + (", ".join(unpriced) if unpriced else "none"), file=out)
     return 0
 
 
@@ -84,6 +101,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     parser = argparse.ArgumentParser(prog="claude-cost")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("today", help="print today's spend")
+    sub.add_parser("prices", help="list the price table in effect and unpriced models")
     sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
     cfg = sub.add_parser("config", help="show or change settings in config.toml")
     cfg_sub = cfg.add_subparsers(dest="config_action")
@@ -107,6 +125,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     now_fn = (lambda: now) if now else (lambda: _now(config))
     if args.command == "today":
         return cmd_today(config, now_fn(), out)
+    if args.command == "prices":
+        return cmd_prices(config, out)
     return cmd_serve(config, now_fn, out, run_server, open_browser)
 
 

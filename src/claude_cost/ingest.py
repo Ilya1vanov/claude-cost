@@ -5,10 +5,11 @@ idempotent). Incremental ingest by file size/offset is a later ticket.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import ownership, pricing, sources
@@ -79,6 +80,8 @@ def _parse_transcript(path: Path) -> Parsed:
                 "cache_read": usage.get("cache_read_input_tokens") or 0,
                 "write_5m": w5m,
                 "write_1h": w1h,
+                "speed": usage.get("speed") or "standard",
+                "inference_geo": usage.get("inference_geo") or "",
             }
     return parsed
 
@@ -105,8 +108,35 @@ def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) 
             for members in groups.values() for stem in members}
 
 
-def ingest(conn: sqlite3.Connection, roots: list[Path]) -> int:
+def reprice(conn: sqlite3.Connection, table: dict) -> None:
+    """Re-price every stored Request when the price table in effect changed since last time."""
+    fp = hashlib.sha256(repr(sorted(table.items())).encode()).hexdigest()
+    row = conn.execute("SELECT fingerprint FROM pricing_state").fetchone()
+    if row and row["fingerprint"] == fp:
+        return
+    updates = []
+    rows = conn.execute(
+        "SELECT r.*, a.speed, a.inference_geo FROM requests r "
+        "LEFT JOIN request_attrs a ON a.message_id = r.message_id").fetchall()
+    for r in rows:
+        cost = pricing.price_request(
+            r["model"], datetime.fromtimestamp(r["ts_epoch"], timezone.utc).date(),
+            input=r["input_tokens"], output=r["output_tokens"], cache_read=r["cache_read_tokens"],
+            write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
+            speed=r["speed"], inference_geo=r["inference_geo"], table=table)
+        c = cost or pricing.CostComponents()
+        updates.append((1 if cost else 0, c.input, c.output, c.cache_write_5m,
+                        c.cache_write_1h, c.cache_read, r["message_id"]))
+    with conn:
+        conn.executemany(
+            "UPDATE requests SET priced=?, cost_input=?, cost_output=?, cost_cache_write_5m=?, "
+            "cost_cache_write_1h=?, cost_cache_read=? WHERE message_id=?", updates)
+        conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
+
+
+def ingest(conn: sqlite3.Connection, roots: list[Path], price_table: dict | None = None) -> int:
     """Ingest all Data roots; returns the number of Requests in the store afterwards."""
+    table = pricing.PRICE_TABLE if price_table is None else price_table
     candidates: dict[str, list[dict]] = {}
     stem_first_ts: dict[str, datetime] = {}
     links: set[tuple[str, str]] = set()
@@ -136,6 +166,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path]) -> int:
             cost = pricing.price_request(
                 r["model"], r["ts"].date(), input=r["input"], output=r["output"],
                 cache_read=r["cache_read"], write_5m=r["write_5m"], write_1h=r["write_1h"],
+                speed=r["speed"], inference_geo=r["inference_geo"], table=table,
             )
             c = cost or pricing.CostComponents()
             conn.execute(
@@ -145,4 +176,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path]) -> int:
                  r["write_5m"], r["write_1h"], 1 if cost else 0,
                  c.input, c.output, c.cache_write_5m, c.cache_write_1h, c.cache_read),
             )
+            conn.execute("INSERT OR REPLACE INTO request_attrs VALUES (?,?,?)",
+                         (mid, r["speed"], r["inference_geo"]))
+    reprice(conn, table)
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

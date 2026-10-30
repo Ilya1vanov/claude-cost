@@ -25,6 +25,8 @@ class Req:
     lines: int = 1  # streaming split: one JSONL line per content block
     session_id: str | None = None  # record sessionId; default = transcript session
     forked_from: str | None = None  # marks copied fork history: forkedFrom.sessionId
+    speed: str | None = None  # usage.speed ("fast"); None = key absent
+    inference_geo: str | None = None  # usage.inference_geo ("us", "global"); None = absent
 
 
 def req(message_id: str, ts: str, **kw) -> Req:
@@ -43,6 +45,10 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             "cache_creation": {"ephemeral_5m_input_tokens": r.write_5m,
                                "ephemeral_1h_input_tokens": r.write_1h},
         }
+        if r.speed:
+            usage["speed"] = r.speed
+        if r.inference_geo:
+            usage["inference_geo"] = r.inference_geo
         rec = {
             "type": "assistant", "uuid": f"{r.message_id}-u{i}", "timestamp": r.ts,
             "sessionId": r.session_id or session_id,
