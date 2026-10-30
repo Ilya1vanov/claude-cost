@@ -100,7 +100,7 @@ def test_dashboard_top_n_comes_from_config(root, configure):
     for i in range(3):
         root.write_transcript("p", f"sess-{i}", [req(f"m{i}", "2026-10-29T01:00:00Z", output=1_000_000 + i)])
     html = _client(configure(root), top_n=2).get("/").get_data(as_text=True)
-    assert html.count("sess-") == 2
+    assert html.count(">sess-") == 2  # link text; the href repeats the id
 
 
 def test_compare_page_selects_periods_and_baseline(root, configure):
