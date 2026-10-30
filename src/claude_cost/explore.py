@@ -24,12 +24,10 @@ from datetime import date
 from typing import Callable
 
 from .findings import all_findings
-from .sql import SESSION_ID_SQL, SESSION_JOIN
+from .sql import COMPONENTS, SESSION_ID_SQL, SESSION_JOIN
 
 NONE = "(none)"
-COMPONENT_KEYS = (("input", "cost_input"), ("output", "cost_output"),
-                  ("cache write (5m)", "cost_cache_write_5m"),
-                  ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
+COMPONENT_KEYS = COMPONENTS
 _KEYS = tuple(k for _, k in COMPONENT_KEYS)
 DEFAULT_GROUP = "date"
 

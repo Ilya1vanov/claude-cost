@@ -15,7 +15,7 @@ from . import findings as findings_mod
 from . import pricing, spotlights
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
-from .sql import CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
+from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
 
@@ -183,9 +183,6 @@ class SessionTimeline:
 
 
 PERIOD_MODES = ("last7", "week", "month")
-COMPONENTS = (("input", "cost_input"), ("output", "cost_output"),
-              ("cache write (5m)", "cost_cache_write_5m"),
-              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
 
 
 @dataclass(frozen=True)
@@ -783,8 +780,8 @@ class QueryService:
     def _request_rows(self) -> list:
         return self._conn.execute(
             f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent, "
-            "r.ts_epoch AS ts, r.cost_input, r.cost_output, r.cost_cache_write_5m, "
-            "r.cost_cache_write_1h, r.cost_cache_read "
+            f"r.ts_epoch AS ts, {COST_SQL} AS cost, "
+            + ", ".join(f"r.{c}" for _, c in COMPONENTS) + " "
             f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id").fetchall()
 
@@ -792,7 +789,7 @@ class QueryService:
         mine = [r for r in rows if r["sid"] in members]
         times = [r["ts"] for r in mine]
         return SpotlightSummary(
-            defn.name, defn.kind, defn.rule, sum(sum(r[c] for _, c in COMPONENTS) for r in mine),
+            defn.name, defn.kind, defn.rule, sum(r["cost"] for r in mine),
             len(mine), len(members), self._local_day(min(times)) if times else None,
             self._local_day(max(times)) if times else None)
 
@@ -816,7 +813,7 @@ class QueryService:
         ranked = []
         for d in defs:
             members = member[d.name].members
-            period_cost = sum(sum(r[c] for _, c in COMPONENTS) for r in rows
+            period_cost = sum(r["cost"] for r in rows
                               if r["sid"] in members and lo <= r["ts"] < hi)
             if period_cost > 0:
                 ranked.append(SpotlightRank(self._summary(d, members, rows), period_cost))
