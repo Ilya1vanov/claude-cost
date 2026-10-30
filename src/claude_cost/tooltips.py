@@ -12,6 +12,14 @@ _1H = ("Your main conversation, on a Claude subscription within its included usa
        "survives breaks of up to an hour, so a short break doesn't trigger a Cold write.")
 
 TOOLTIPS = {
+    "sessions": ("Sessions that made at least one request in the period. A Session is one logical "
+                 "conversation, which may span several transcripts through resumes and clears."),
+    "turns": ("Prompts you typed into a session, including slash commands and messages queued "
+              "while Claude was working. Tool results, compaction summaries, hook output and "
+              "Subagent messages are not Turns."),
+    "requests": "Billed API calls in the period, each counted once however many transcripts hold a copy.",
+    "per turn": ("The component's cost divided by the Turns in the period. A flat cost per Turn "
+                 "with a falling total means less usage, not savings."),
     "input": "The uncached input tokens of requests, at the list price.",
     "output": "The output tokens of requests, at the list price.",
     "cache write (5m)": _5M,

@@ -201,6 +201,16 @@ class ComponentSpend:
     name: str
     current: float
     baseline: float
+    current_per_turn: float | None = None  # None when the period has no Turns
+    baseline_per_turn: float | None = None
+
+
+@dataclass(frozen=True)
+class Usage:
+    """What a Period used: Sessions with spend, Turns the user typed, Requests billed."""
+    sessions: int
+    turns: int
+    requests: int
 
 
 @dataclass(frozen=True)
@@ -223,6 +233,8 @@ class PeriodComparison:
     components: tuple[ComponentSpend, ...]
     top_sessions: tuple[RankedSpend, ...]
     top_projects: tuple[RankedSpend, ...]
+    usage_current: Usage = Usage(0, 0, 0)
+    usage_baseline: Usage = Usage(0, 0, 0)
 
     @property
     def delta_cost(self) -> float:
@@ -537,13 +549,35 @@ class QueryService:
         today = self.today(now)
         cur, base, full = resolve_periods(mode, today, include_today)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
-        components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
+        use_cur, use_base = self._usage(cur), self._usage(base)
+
+        def per_turn(value: float, u: Usage) -> float | None:
+            return value / u.turns if u.turns else None
+        components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col],
+                                          per_turn(cur_sums[col], use_cur),
+                                          per_turn(base_sums[col], use_base))
                            for name, col in COMPONENTS)
         return PeriodComparison(
             mode, cur, base, cur.days < full and mode != "last7", cur.days, full,
             sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
             components, self._top(SESSION_ID_SQL, cur, top_n),
-            self._top("r.project", cur, top_n))
+            self._top("r.project", cur, top_n), use_cur, use_base)
+
+    def _usage(self, p: Period) -> Usage:
+        lo, hi = self._bounds(p)
+        row = self._conn.execute(
+            f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n "
+            f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
+            (lo, hi)).fetchone()
+        turns = self._conn.execute(
+            "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
+        return Usage(row["s"], turns, row["n"])
+
+    def session_turns(self, session_id: str) -> int:
+        """Turns the user typed in a logical Session, across all its transcripts."""
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM turns t LEFT JOIN session_links l ON l.stem = t.stem "
+            "WHERE COALESCE(l.logical_session_id, t.stem) = ?", (session_id,)).fetchone()[0]
 
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""
