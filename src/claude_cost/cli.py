@@ -9,6 +9,7 @@ import sys
 import threading
 import webbrowser
 from datetime import date, datetime, timedelta
+from importlib import metadata
 from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,13 @@ from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
+
+
+def _version() -> str:
+    try:
+        return metadata.version("claude-cost")
+    except metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _now(config: Config) -> datetime:
@@ -212,6 +220,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     out = out or sys.stdout
     err = err or sys.stderr
     parser = argparse.ArgumentParser(prog="claude-cost")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("today", help="print today's spend")
     sub.add_parser("week", help="print this calendar week's spend compared with the previous week")
