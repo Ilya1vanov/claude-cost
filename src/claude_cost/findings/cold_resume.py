@@ -1,13 +1,14 @@
 """Drain: Cold resume. A cold cache write after a long idle gap on a large context."""
 from __future__ import annotations
 
+from ..cache import COLD
 from .core import DRAIN, Covered, Detection, FindingContext, FindingDef, Threshold
 
 
 def is_cold_resume(cache_event: str, gap: float | None, context: int,
                    idle_minutes: int, min_context: int) -> bool:
     """A cold cache write after at least `idle_minutes` idle, on a context of `min_context`+."""
-    return (cache_event == "cold" and gap is not None and gap >= idle_minutes * 60
+    return (cache_event == COLD and gap is not None and gap >= idle_minutes * 60
             and context >= min_context)
 
 

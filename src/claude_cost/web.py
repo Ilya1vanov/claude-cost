@@ -7,6 +7,7 @@ from typing import Callable
 from flask import Flask, Response, abort, redirect, render_template, request, url_for
 
 from . import explore
+from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
@@ -242,7 +243,7 @@ def create_app(service_factory: Callable[[], QueryService],
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
                  "cost": [round(p.cost, 4) for p in timeline.points],
-                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == "cold"],
+                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == COLD],
                  "idle": [i for i, p in enumerate(timeline.points) if p.idle],
                  "threshold": [p.threshold for p in timeline.points],
                  "over": [i for i, p in enumerate(timeline.points)
