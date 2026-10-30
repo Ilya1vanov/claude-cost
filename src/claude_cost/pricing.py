@@ -63,7 +63,10 @@ PRICE_TABLE: dict[str, list[PriceEntry]] = {
     "claude-sonnet-5-5": _p(2, 10, 0.05),
     "claude-sonnet-5": _p(2, 10),
     "claude-sonnet-4-6": _p(3, 15),
-    "claude-haiku-5-5": _p(0.1, 0.5, tier_threshold=100_000, tier_mult=2.0),  # tier price assumed 2x
+    "claude-haiku-5-5": _p(0.1, 0.5, tier_threshold=100_000, tier_mult=5.0),
+    # Haiku 5.5: $0.10/$0.50 per M up to 100K prompt tokens, $0.50/$2.50 beyond (5x): claude-api
+    # skill model table (cached 2026-10-06). Fast mode 2x: Opus 5.5 fast $8/$40 vs $4/$20, same
+    # source; request flag is usage.speed == "fast".
     "claude-haiku-4-5": _p(1, 5),
 }
 
