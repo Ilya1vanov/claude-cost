@@ -15,6 +15,7 @@ from . import findings as findings_mod
 from . import pricing, spotlights
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
+from .projects import project_display_names
 from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
@@ -543,6 +544,10 @@ class QueryService:
             sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
             components, self._top(SESSION_ID_SQL, cur, top_n),
             self._top("r.project", cur, top_n))
+
+    def project_names(self) -> dict[str, str]:
+        """Project key -> display name, used wherever a Project is shown."""
+        return project_display_names(self._conn)
 
     def _bounds(self, p: Period) -> tuple[float, float]:
         """Epoch range [start, end) covering the Period's local days."""

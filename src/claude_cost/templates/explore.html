@@ -16,7 +16,7 @@
       </select></label></div>
     {% if spec.filters %}<div>
       {% for key, values in spec.filters.items() %}{% for v in values %}
-        <span class="chip">{{ dims[key].label }} = {{ v }}
+        <span class="chip">{{ dims[key].label }} = {{ pnames.get(v, v) if key == 'project' else v }}
           <a href="{{ explore_url('explore_page', spec.without(key, v)) }}" aria-label="Remove filter">×</a></span>
         <input type="hidden" name="{{ key }}" value="{{ v }}">
       {% endfor %}{% endfor %}</div>{% endif %}
@@ -43,7 +43,7 @@
     <div class="table-wrap"><table id="explore-table">
       <tr><th>{{ result.label }}</th><th class="num">Cost</th><th class="num">Requests</th><th class="num">Share %</th><th></th></tr>
       {% for r in result.rows %}
-      <tr><td>{% if result.group == "session" %}{{ ui.sid(r.value) }}{% elif result.group == "component" %}{{ ui.component(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
+      <tr><td>{% if result.group == "session" %}{{ ui.sid(r.value) }}{% elif result.group == "component" %}{{ ui.component(r.value) }}{% elif result.group == "project" %}{{ pnames.get(r.value, r.value) }}{% else %}{{ r.value }}{% endif %}</td>
         <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td>
         <td class="num">{% if result.group == "session" %}<a href="{{ explore_url('explore_requests', spec.drill('session', r.value)) }}">requests</a>
           {% else %}<a href="{{ explore_url('explore_page', spec.drill(result.group, r.value)) }}">sessions</a>{% endif %}</td></tr>
