@@ -1,7 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 from flask import Flask, Response, abort, redirect, render_template, request, url_for
@@ -234,10 +234,11 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")
     def session_timeline(session_id: str, agent_id: str | None = None):
-        timeline = service_factory().session_timeline(session_id, agent_id)
+        service = service_factory()
+        timeline = service.session_timeline(session_id, agent_id)
         if timeline is None:
             abort(404)
-        chart = {"labels": [datetime.fromtimestamp(p.ts, timezone.utc).strftime("%H:%M:%S")
+        chart = {"labels": [service.local_time(p.ts).strftime("%H:%M:%S")
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
                  "cost": [round(p.cost, 4) for p in timeline.points],
@@ -249,7 +250,6 @@ def create_app(service_factory: Callable[[], QueryService],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,
-                               when=lambda ts: datetime.fromtimestamp(ts, timezone.utc)
-                               .strftime("%Y-%m-%d %H:%M:%S UTC"))
+                               when=lambda ts: service.local_time(ts).strftime("%Y-%m-%d %H:%M:%S %Z"))
 
     return app
