@@ -533,7 +533,7 @@ class QueryService:
 
         `include_today` only affects `last7`; calendar periods always run through today.
         """
-        today = self._today(now)
+        today = self.today(now)
         cur, base, full = resolve_periods(mode, today, include_today)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
         components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
@@ -587,7 +587,7 @@ class QueryService:
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
         """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
-        today = self._today(now)
+        today = self.today(now)
         cur, base, _ = resolve_periods(mode, today, include_today)
         return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
 
@@ -629,7 +629,7 @@ class QueryService:
                      top_n: int = 10) -> list[findings_mod.Finding]:
         """The findings covering the most spend inside the Period (same periods as
         period_comparison), costliest first; findings that cover nothing are left out."""
-        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
         hits = [f for f in self.findings(cur.start, cur.end) if f.attributed > 0]
         return sorted(hits, key=lambda f: (-f.attributed, f.id))[:top_n]
 
@@ -646,7 +646,7 @@ class QueryService:
         row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
         if row["first"] is None:
             return []
-        today = self._today(now)
+        today = self.today(now)
         first = self._local_day(row["first"])
         if mode == "week":
             cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
@@ -667,7 +667,7 @@ class QueryService:
         starts = sorted(set(starts))
         if len(starts) < 2:
             raise ValueError("select at least two different periods")
-        today = self._today(now)
+        today = self.today(now)
         periods = [calendar_period(mode, s) for s in starts]
         if periods[-1].start > today:
             raise ValueError(f"{periods[-1].start} has not started yet")
@@ -692,7 +692,8 @@ class QueryService:
             for p, c, d in zip(periods, costs, dailies))
         return Comparison(mode, baseline, entries, max(p.days for p in periods))
 
-    def _today(self, now: datetime) -> date:
+    def today(self, now: datetime) -> date:
+        """`now` as a calendar day in the configured time zone."""
         return today(now, self._tz)
 
     def price_table(self) -> list[PriceRow]:
@@ -805,7 +806,7 @@ class QueryService:
     def top_spotlights(self, mode: str, now: datetime, include_today: bool = True,
                        top_n: int = 10) -> list[SpotlightRank]:
         """Spotlights ranked by spend inside the Period (same periods as period_comparison)."""
-        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
         lo, hi = self._bounds(cur)
         _, defs, member = self._spotlight_state()
         rows = self._request_rows()

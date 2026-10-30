@@ -64,7 +64,7 @@ def format_findings(findings) -> str:
 
 def cmd_drains(config: Config, now: datetime, out, err, since: str | None) -> int:
     svc = _service(config, now, err)
-    print(format_findings(svc.findings(parse_since(since, now.date()) if since else None)), file=out)
+    print(format_findings(svc.findings(parse_since(since, svc.today(now)) if since else None)), file=out)
     return 0
 
 
@@ -117,8 +117,9 @@ def cmd_ingest(config: Config, now: datetime, out, err, rebuild: bool) -> int:
 
 
 def cmd_today(config: Config, now: datetime, out, err) -> int:
-    day = now.date()
-    spend = _service(config, now, err).daily_spend(day, day)[0]
+    svc = _service(config, now, err)
+    day = svc.today(now)
+    spend = svc.daily_spend(day, day)[0]
     print(f"Today ({day.isoformat()}): ${spend.cost:.2f} across {spend.requests} requests", file=out)
     return 0
 

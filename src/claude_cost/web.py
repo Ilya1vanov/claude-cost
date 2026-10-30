@@ -45,7 +45,7 @@ def create_app(service_factory: Callable[[], QueryService],
             if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
-        today = now().date()
+        today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
         return render_template(
             "dashboard.html",
@@ -84,7 +84,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def _since_arg():
         try:
             text = request.args.get("since")
-            return parse_since(text, now().date()) if text else None
+            return parse_since(text, service_factory().today(now())) if text else None
         except ValueError:
             abort(400, "since must be a date like 2026-10-01 or days like 7d")
 
