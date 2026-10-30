@@ -744,6 +744,9 @@ class QueryService:
                 vals("first_prompt"), parent, kind)
         return out
 
+    def auto_spotlights_enabled(self) -> bool:
+        return bool(self._key_pattern)
+
     def _key_regex(self):
         return spotlights.compile_pattern(self._key_pattern, "spotlight_key_pattern") \
             if self._key_pattern else None
