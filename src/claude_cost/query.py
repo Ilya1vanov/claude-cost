@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import pricing
+from . import explore, pricing
 
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
@@ -447,3 +447,16 @@ class QueryService:
         rows = self._conn.execute(
             "SELECT DISTINCT model FROM requests WHERE priced = 0 ORDER BY model")
         return [r["model"] for r in rows]
+
+    # Explore (ticket #11): the dimension registry and slicing live in explore.py
+    def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
+        """Cost and requests per value of `spec.group`, over the requests the filters keep."""
+        return explore.run(self._conn, self._local_day, spec)
+
+    def explore_requests(self, spec: explore.ExploreSpec) -> list[explore.ExploreRequest]:
+        """The individual requests of the slice, oldest first."""
+        return explore.requests(self._conn, self._local_day, spec)
+
+    def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
+        """Most frequent values per dimension, to suggest in filter inputs."""
+        return explore.options(self._conn, limit)

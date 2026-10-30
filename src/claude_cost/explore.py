@@ -1,0 +1,319 @@
+"""Explore: slice spend by any dimension (filters) and group it by one (group-by).
+
+A **dimension** (`Dimension`, registered in `DIMENSIONS`) says which value(s) each Request has
+on some axis. To add one (Drain/Opportunity, ...): subclass `Dimension` with a `key`, `label`
+and either an `sql` ("SELECT message_id, value FROM ...") or a `load(conn)` returning
+`{message_id: [values]}`, then call `register(MyDimension())`. It is then a filter and a
+group-by with no further wiring (web form, URL and CSV are generated from the registry).
+
+Semantics:
+- Filters on different dimensions AND together; several values of one dimension OR.
+- A request may have several values on a dimension (tool, skill): it then counts in each
+  group (`overlapping`), while the total counts it once.
+- Cost component and Cache event split a request's cost across their values; filtering
+  by them also restricts the cost counted to the selected parts.
+"""
+from __future__ import annotations
+
+import csv
+import io
+import sqlite3
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Callable
+
+NONE = "(none)"
+COMPONENT_KEYS = (("input", "cost_input"), ("output", "cost_output"),
+                  ("cache write (5m)", "cost_cache_write_5m"),
+                  ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
+_KEYS = tuple(k for _, k in COMPONENT_KEYS)
+DEFAULT_GROUP = "date"
+
+
+@dataclass
+class Item:
+    """One Request in the slice; `components` are its costs by Cost component column."""
+    message_id: str
+    ts_epoch: float
+    day: date
+    components: dict[str, float]
+
+    @property
+    def cost(self) -> float:
+        return sum(self.components.values())
+
+
+# (value, cost-component columns it covers, None = the whole request)
+Part = tuple[str, "tuple[str, ...] | None"]
+
+
+class Dimension:
+    key = ""
+    label = ""
+    sql: str | None = None  # SELECT message_id, value ... (several rows per message id = several values)
+    missing = NONE  # value of a request the loader has nothing for
+    overlapping = False  # a request can have several values
+    chronological = False  # order groups by value, not by cost
+
+    def load(self, conn: sqlite3.Connection) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        if self.sql:
+            for mid, value in conn.execute(self.sql):
+                out.setdefault(mid, []).append(value)
+        return out
+
+    def parts(self, item: Item, data: dict[str, list[str]]) -> list[Part]:
+        return [(v, None) for v in data.get(item.message_id) or [self.missing]]
+
+    def matches(self, value: str, selected: tuple[str, ...]) -> bool:
+        return value in selected
+
+    def restrict(self, item: Item, data: dict[str, list[str]],
+                 selected: tuple[str, ...]) -> Item | None:
+        """The item as the filter leaves it (cost possibly narrowed), or None when excluded."""
+        hit = [keys for v, keys in self.parts(item, data) if self.matches(v, selected)]
+        if not hit:
+            return None
+        if any(k is None for k in hit):
+            return item
+        kept = {c for keys in hit for c in keys}  # type: ignore[union-attr]
+        comps = {c: (v if c in kept else 0.0) for c, v in item.components.items()}
+        return Item(item.message_id, item.ts_epoch, item.day, comps) if sum(comps.values()) else None
+
+    def cost_of(self, item: Item, keys: tuple[str, ...] | None) -> float:
+        return item.cost if keys is None else sum(item.components[k] for k in keys)
+
+
+class DateDimension(Dimension):
+    key, label, chronological = "date", "Date", True
+
+    def parts(self, item, data):
+        return [(item.day.isoformat(), None)]
+
+    def matches(self, value, selected):
+        """A selected entry is a day (YYYY-MM-DD) or an inclusive range (A..B)."""
+        for sel in selected:
+            lo, _, hi = sel.partition("..")
+            if lo <= value <= (hi or lo):
+                return True
+        return False
+
+
+class SplitDimension(Dimension):
+    """Values that divide a request's cost between them (Cost component, Cache event)."""
+
+    def parts(self, item, data):
+        return [(v, keys) for v, keys in self.split(item, data)
+                if sum(item.components[k] for k in keys) > 0]
+
+    def split(self, item: Item, data: dict[str, list[str]]) -> list[tuple[str, tuple[str, ...]]]:
+        raise NotImplementedError
+
+
+class ComponentDimension(SplitDimension):
+    key, label = "component", "Cost component"
+
+    def split(self, item, data):
+        return [(name, (col,)) for name, col in COMPONENT_KEYS]
+
+
+class CacheEventDimension(SplitDimension):
+    """Cold/Warm write (from `request_cache`), cache read, and everything else as uncached."""
+    key, label = "cache_event", "Cache event"
+    sql = "SELECT message_id, event FROM request_cache"
+
+    def split(self, item, data):
+        event = (data.get(item.message_id) or ["none"])[0]
+        out = [("cache read", ("cost_cache_read",)), ("uncached", ("cost_input", "cost_output"))]
+        if event in ("cold", "warm"):
+            out.append((f"{event} write", ("cost_cache_write_5m", "cost_cache_write_1h")))
+        return out
+
+
+def _scalar(key: str, label: str, sql: str, **attrs) -> Dimension:
+    return type(f"{key}_dimension", (Dimension,), {"key": key, "label": label, "sql": sql, **attrs})()
+
+
+# Subagent type: the transcript's agent type, "(main)" for requests made by the Session itself
+_SUBAGENT_SQL = (
+    "SELECT a.message_id, COALESCE(s.agent_type, '(unknown)') FROM request_surface a "
+    "JOIN requests r ON r.message_id = a.message_id "
+    "LEFT JOIN (SELECT f.file_stem AS stem, sf.agent_id AS agent_id, MAX(sf.agent_type) AS agent_type "
+    "FROM subagent_files sf JOIN ingest_files f ON f.path = sf.path "
+    "GROUP BY f.file_stem, sf.agent_id) s ON s.stem = r.session_id AND s.agent_id = a.agent_id "
+    "WHERE a.agent_id IS NOT NULL")
+
+DIMENSIONS: dict[str, Dimension] = {}
+
+
+def register(dim: Dimension) -> Dimension:
+    DIMENSIONS[dim.key] = dim
+    return dim
+
+
+for _d in (
+    DateDimension(),
+    _scalar("data_root", "Data root", "SELECT message_id, data_root FROM requests"),
+    _scalar("surface", "Surface", "SELECT message_id, surface FROM request_surface"),
+    _scalar("project", "Project", "SELECT message_id, project FROM requests"),
+    _scalar("git_branch", "Git branch",
+            "SELECT message_id, git_branch FROM request_dims WHERE git_branch != ''"),
+    _scalar("session", "Session",
+            "SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) FROM requests r "
+            "LEFT JOIN session_links l ON l.stem = r.session_id"),
+    _scalar("subagent_type", "Subagent type", _SUBAGENT_SQL, missing="(main)"),
+    _scalar("model", "Model", "SELECT message_id, model FROM requests"),
+    _scalar("effort", "Effort", "SELECT message_id, effort FROM request_dims WHERE effort != ''"),
+    _scalar("speed", "Speed", "SELECT message_id, speed FROM request_attrs"),
+    ComponentDimension(),
+    CacheEventDimension(),
+    _scalar("tool", "Tool", "SELECT message_id, tool FROM request_tools", overlapping=True),
+    _scalar("skill", "Skill", "SELECT message_id, skill FROM request_skills", overlapping=True),
+):
+    register(_d)
+
+
+@dataclass(frozen=True)
+class ExploreSpec:
+    """A view: the group-by and the filters. `from_query`/`to_query` are the URL encoding
+    (`?group=model&project=a&project=b`: one query parameter per dimension key)."""
+    group: str = DEFAULT_GROUP
+    filters: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    @classmethod
+    def from_query(cls, pairs) -> "ExploreSpec":
+        group, filters = DEFAULT_GROUP, {}
+        for key, value in pairs:
+            if key == "group":
+                if value not in DIMENSIONS:
+                    raise ValueError(f"group must be one of {', '.join(DIMENSIONS)}")
+                group = value
+            elif key in DIMENSIONS and value != "":
+                if value not in filters.setdefault(key, ()):
+                    filters[key] = filters[key] + (value,)
+        return cls(group, filters)
+
+    def to_query(self) -> list[tuple[str, str]]:
+        return [("group", self.group)] + [(k, v) for k in DIMENSIONS for v in self.filters.get(k, ())]
+
+    def with_group(self, group: str) -> "ExploreSpec":
+        return ExploreSpec(group, self.filters)
+
+    def drill(self, dim: str, value: str) -> "ExploreSpec":
+        """Narrow to one group and show its Sessions (a Session row stays a Session view)."""
+        return ExploreSpec("session", {**self.filters, dim: (value,)})
+
+    def without(self, dim: str, value: str) -> "ExploreSpec":
+        rest = tuple(v for v in self.filters.get(dim, ()) if v != value)
+        filters = {k: v for k, v in self.filters.items() if k != dim}
+        if rest:
+            filters[dim] = rest
+        return ExploreSpec(self.group, filters)
+
+
+@dataclass(frozen=True)
+class ExploreRow:
+    value: str
+    cost: float
+    requests: int
+    share: float  # of the slice's total cost, 0..1
+
+
+@dataclass(frozen=True)
+class ExploreResult:
+    group: str
+    label: str
+    rows: tuple[ExploreRow, ...]
+    total_cost: float
+    total_requests: int
+    overlapping: bool  # a request can be in several rows, so rows may add up to more than the total
+
+
+@dataclass(frozen=True)
+class ExploreRequest:
+    message_id: str
+    ts_epoch: float
+    day: date  # local day
+    session_id: str
+    project: str
+    model: str
+    cost: float
+
+
+def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list[Item]:
+    cols = ", ".join(_KEYS)
+    return [Item(r["message_id"], r["ts_epoch"], local_day(r["ts_epoch"]),
+                 {k: r[k] for k in _KEYS})
+            for r in conn.execute(f"SELECT message_id, ts_epoch, {cols} FROM requests "
+                                  "ORDER BY ts_epoch, message_id")]
+
+
+def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = ()):
+    """Items left by the filters, and the loaded data of every dimension used."""
+    used = {spec.group, *spec.filters, *extra}
+    data = {k: DIMENSIONS[k].load(conn) for k in used}
+    items = []
+    for item in _items(conn, local_day):
+        for key, selected in spec.filters.items():
+            item = DIMENSIONS[key].restrict(item, data[key], selected)  # type: ignore[assignment]
+            if item is None:
+                break
+        else:
+            items.append(item)
+    return items, data
+
+
+def run(conn, local_day, spec: ExploreSpec) -> ExploreResult:
+    dim = DIMENSIONS[spec.group]
+    items, data = _slice(conn, local_day, spec)
+    groups: dict[str, list] = {}
+    for item in items:
+        for value, keys in dim.parts(item, data[spec.group]):
+            g = groups.setdefault(value, [0.0, 0])
+            g[0] += dim.cost_of(item, keys)
+            g[1] += 1
+    total = sum(i.cost for i in items)
+    rows = [ExploreRow(v, c, n, c / total if total else 0.0) for v, (c, n) in groups.items()]
+    rows.sort(key=(lambda r: r.value) if dim.chronological else (lambda r: (-r.cost, r.value)))
+    return ExploreResult(spec.group, dim.label, tuple(rows), total, len(items), dim.overlapping)
+
+
+def requests(conn, local_day, spec: ExploreSpec) -> list[ExploreRequest]:
+    items, data = _slice(conn, local_day, spec, extra=("session", "project", "model"))
+    one = lambda key, item: (data[key].get(item.message_id) or [NONE])[0]  # noqa: E731
+    return [ExploreRequest(i.message_id, i.ts_epoch, i.day, one("session", i), one("project", i),
+                           one("model", i), i.cost) for i in items]
+
+
+def options(conn, limit: int = 100) -> dict[str, list[str]]:
+    """Most frequent values of each dimension (for form suggestions); dates are free text."""
+    out = {}
+    for key, dim in DIMENSIONS.items():
+        if isinstance(dim, (DateDimension, SplitDimension)):
+            continue
+        counts: dict[str, int] = {}
+        for values in dim.load(conn).values():
+            for v in values:
+                counts[v] = counts.get(v, 0) + 1
+        out[key] = [v for v, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+    out["component"] = [name for name, _ in COMPONENT_KEYS]
+    out["cache_event"] = ["cold write", "warm write", "cache read", "uncached"]
+    return out
+
+
+def fmt_cost(cost: float) -> str:
+    return f"{cost:.2f}"
+
+
+def fmt_share(share: float) -> str:
+    return f"{share * 100:.1f}"
+
+
+def to_csv(result: ExploreResult) -> str:
+    """The Explore table as CSV: same rows, same rounding (cost in $, share in %)."""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow([result.label, "Cost", "Requests", "Share %"])
+    for r in result.rows:
+        w.writerow([r.value, fmt_cost(r.cost), r.requests, fmt_share(r.share)])
+    return buf.getvalue()

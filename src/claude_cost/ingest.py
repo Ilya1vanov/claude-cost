@@ -48,6 +48,27 @@ class Parsed:
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
 
 
+def _str_or_empty(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _tool_use(content: object, attribution_skill: object) -> tuple[set[str], set[str]]:
+    """Tool names called in a message's content blocks, and the Skills used (Skill tool calls
+    plus the line's `attributionSkill`)."""
+    tools: set[str] = set()
+    skills = {attribution_skill} if isinstance(attribution_skill, str) and attribution_skill else set()
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        name = block.get("name")
+        if isinstance(name, str) and name:
+            tools.add(name)
+            inp = block.get("input")
+            if name == "Skill" and isinstance(inp, dict) and isinstance(inp.get("skill"), str):
+                skills.add(inp["skill"])
+    return tools, skills
+
+
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
     """Group assistant lines by message id: first line wins, output = max over lines."""
     parsed = Parsed()
@@ -77,8 +98,11 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
         if not usage or not mid or not model or model == "<synthetic>":
             continue
         out = usage.get("output_tokens") or 0
+        tools, skills = _tool_use(msg.get("content"), rec.get("attributionSkill"))
         if mid in reqs:
             reqs[mid]["output"] = max(reqs[mid]["output"], out)
+            reqs[mid]["tools"] |= tools  # one streamed line per content block: union them
+            reqs[mid]["skills"] |= skills
             continue
         fork = rec.get("forkedFrom")
         fork_sid = fork.get("sessionId") if isinstance(fork, dict) else None
@@ -108,6 +132,10 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             "surface": surface_of(rec.get("entrypoint")),
             "speed": usage.get("speed") or "standard",
             "inference_geo": usage.get("inference_geo") or "",
+            "git_branch": _str_or_empty(rec.get("gitBranch")),
+            "effort": _str_or_empty(rec.get("effort")),
+            "tools": tools,
+            "skills": skills,
         }
     return parsed
 
@@ -135,6 +163,12 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
                      (mid, r["speed"], r["inference_geo"]))
         conn.execute("INSERT OR IGNORE INTO copy_surface VALUES (?,?,?)",
                      (str(path), mid, r["surface"]))
+        conn.execute("INSERT OR IGNORE INTO request_dims VALUES (?,?,?)",
+                     (mid, r["git_branch"], r["effort"]))
+        conn.executemany("INSERT OR IGNORE INTO request_tools VALUES (?,?)",
+                         [(mid, t) for t in sorted(r["tools"])])
+        conn.executemany("INSERT OR IGNORE INTO request_skills VALUES (?,?)",
+                         [(mid, s) for s in sorted(r["skills"])])
 
 
 def _epoch_dt(epoch: float) -> datetime:
@@ -357,6 +391,9 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
+    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
+            and not conn.execute("SELECT 1 FROM meta WHERE key = 'explore_dims'").fetchone()):
+        rebuild = True  # a store from before the Explore attributes: re-read once to fill them
     changed = rebuild
     with conn:
         if rebuild:
@@ -417,5 +454,6 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
     reprice(conn, price_table)
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

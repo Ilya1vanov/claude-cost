@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>claude-cost: requests</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <h1>Requests</h1>
+  <p><a href="{{ explore_url('explore_page', spec.with_group('session')) }}">Back to Explore</a></p>
+  <p>{% for key, values in spec.filters.items() %}{% for v in values %}<span class="chip">{{ dims[key].label }} = {{ v }}</span> {% endfor %}{% endfor %}</p>
+  <p>{{ total }} requests, <strong>${{ "%.2f"|format(cost) }}</strong>{% if total > requests|length %} (first {{ requests|length }} shown){% endif %}</p>
+  <table id="requests-table">
+    <tr><th>Day</th><th>Request</th><th>Session</th><th>Project</th><th>Model</th><th>Cost</th></tr>
+    {% for r in requests %}
+    <tr><td>{{ r.day }}</td><td>{{ r.message_id }}</td><td>{{ r.session_id }}</td><td>{{ r.project }}</td>
+      <td>{{ r.model }}</td><td>${{ "%.4f"|format(r.cost) }}</td></tr>
+    {% else %}<tr><td colspan="6">No requests match.</td></tr>{% endfor %}
+  </table>
+</body>
+</html>

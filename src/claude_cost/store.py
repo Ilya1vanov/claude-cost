@@ -77,7 +77,20 @@ CREATE TABLE IF NOT EXISTS request_attrs (
   speed TEXT NOT NULL,
   inference_geo TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS pricing_state (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT);
+-- Explore dimensions read from the transcript (ticket #11): git branch and effort ('' = absent),
+-- tools called by the request, and Skills it used (Skill tool calls, attributionSkill)
+CREATE TABLE IF NOT EXISTS request_dims (
+  message_id TEXT PRIMARY KEY,
+  git_branch TEXT NOT NULL,
+  effort TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS request_tools (
+  message_id TEXT NOT NULL, tool TEXT NOT NULL, PRIMARY KEY (message_id, tool)
+);
+CREATE TABLE IF NOT EXISTS request_skills (
+  message_id TEXT NOT NULL, skill TEXT NOT NULL, PRIMARY KEY (message_id, skill)
+);
+CREATE TABLE IF NOT EXISTS pricing_state(id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT);
 -- Surface and Subagent attribution (ticket #7). copy_surface: the Surface of each copy;
 -- request_surface: the owner copy's Surface, and the Subagent that made the request (if any;
 -- then requests.session_id is its parent Session).
