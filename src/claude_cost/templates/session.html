@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Session {{ t.session_id }}{% if t.agent_id %} / {{ t.agent_id }}{% endif %} - claude-cost</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <p><a href="{{ url_for('dashboard') }}">Dashboard</a>
+    {% if t.agent_id %} | <a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ t.session_id }}</a>{% endif %}
+    {% if t.parent_session_id %} | {{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ t.parent_session_id }}</a>{% endif %}</p>
+  <h1>{% if t.agent_id %}Subagent {{ t.agent_id }} of session {{ t.session_id }}{% else %}Session {{ t.session_id }}{% endif %}</h1>
+  <p>{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
+  <div style="max-width:1000px"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
+  <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
+
+  <h2>Events</h2>
+  <table id="events">
+    <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
+    {% for c in t.compactions %}<tr class="compaction"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }})</td>
+      <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens</td></tr>{% endfor %}
+    {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
+      <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{{ a.agent_type or a.agent_id }}</a>
+        {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
+    {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>Side session started</td>
+      <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ s.session_id }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
+  </table>
+
+  <h2>Requests</h2>
+  <table id="requests">
+    <tr><th>Time</th><th>Context</th><th>Cost</th><th>Marks</th></tr>
+    {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td>{{ "{:,}".format(p.context_tokens) }}</td><td>${{ "%.4f"|format(p.cost) }}</td>
+      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}</td></tr>{% endfor %}
+  </table>
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='session.js') }}"></script>
+</body>
+</html>

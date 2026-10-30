@@ -100,7 +100,7 @@ def test_dashboard_top_n_comes_from_config(root, configure):
     for i in range(3):
         root.write_transcript("p", f"sess-{i}", [req(f"m{i}", "2026-10-29T01:00:00Z", output=1_000_000 + i)])
     html = _client(configure(root), top_n=2).get("/").get_data(as_text=True)
-    assert html.count("sess-") == 2
+    assert html.count(">sess-") == 2  # link text; the href repeats the id
 
 
 def test_compare_page_selects_periods_and_baseline(root, configure):
@@ -178,3 +178,19 @@ def test_spotlight_pages_edit_pins_and_compare(root, configure):
     assert cmp.status_code == 200 and 'id="spotlight-compare-chart"' in cmp.get_data(as_text=True)
     assert client.get("/spotlights/compare?s=PROJ-7&s=nope").status_code == 404
     assert client.get("/spotlights/nope").status_code == 404
+
+
+def test_session_timeline_page_loads(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1000)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T01:01:00Z", output=1000)])
+    cfg = cli.load_config(configure(root))
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    client = create_app(factory, lambda: NOW).test_client()
+    page = client.get("/session/s1")
+    assert page.status_code == 200 and 'id="timeline"' in page.get_data(as_text=True)
+    assert "/session/s1/agent/a1" in page.get_data(as_text=True)
+    assert client.get("/session/s1/agent/a1").status_code == 200
+    assert client.get("/session/nope").status_code == 404

@@ -135,6 +135,16 @@ CREATE TABLE IF NOT EXISTS spotlight_pins (
   session_id TEXT NOT NULL,
   PRIMARY KEY (spotlight, session_id)
 );
+-- compact_boundary records of main transcripts (ticket #12), deduped by record uuid (resume
+-- copies repeat them); `stem` is the transcript that held it first
+CREATE TABLE IF NOT EXISTS compactions (
+  uuid TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
+  ts_epoch REAL NOT NULL,
+  trigger TEXT NOT NULL,
+  pre_tokens INTEGER NOT NULL,
+  post_tokens INTEGER NOT NULL
+);
 """
 
 
