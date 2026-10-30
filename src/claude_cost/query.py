@@ -220,7 +220,7 @@ class ComponentSpend:
 class Usage:
     """What a Period used: Sessions with spend, Turns the user typed, Requests billed."""
     sessions: int
-    turns: int
+    turns: int | None  # None when the period starts before Turn coverage (pruned transcripts)
     requests: int
 
 
@@ -587,7 +587,8 @@ class QueryService:
             f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n "
             f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
             (lo, hi)).fetchone()
-        turns = self._conn.execute(
+        cov = self._conn.execute("SELECT value FROM meta WHERE key = 'turns_from'").fetchone()
+        turns = None if cov and lo < float(cov["value"]) else self._conn.execute(
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
         return Usage(row["s"], turns, row["n"])
 

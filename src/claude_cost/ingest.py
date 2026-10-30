@@ -568,6 +568,18 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         rebuild = True  # a store from before Turns: re-read once to record them
     changed = rebuild
     with conn:
+        if not conn.execute("SELECT 1 FROM meta WHERE key = 'turns_from'").fetchone():
+            # Turn coverage: Turns are known from this epoch on. A fresh store sees every
+            # transcript (0); a store from before Turns only has what the transcripts that
+            # still exist hold, so coverage starts at the earliest of them.
+            from_ts = 0.0
+            if conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone() \
+                    and not conn.execute("SELECT 1 FROM meta WHERE key = 'turns'").fetchone():
+                existing = {str(t[0]) for root in roots for t in _transcripts(root)}
+                firsts = [r[1] for r in conn.execute("SELECT path, first_ts_epoch FROM ingest_files")
+                          if r[0] in existing and r[1] is not None]
+                from_ts = min(firsts, default=now.timestamp())
+            conn.execute("INSERT INTO meta VALUES ('turns_from', ?)", (str(from_ts),))
         if rebuild:
             # Forget what we read from files that still exist; copies from vanished
             # transcripts are history and stay. Requests are recomputed below.

@@ -149,3 +149,26 @@ def test_dashboard_shows_usage_strip_above_cost_components_with_per_turn_columns
     assert "per Turn (this)" in comps and "per Turn (baseline)" in comps
     assert "$10.00" in comps          # $20 output over 2 Turns
     assert "n/a" in comps             # the baseline week has no Turns
+
+
+def test_periods_before_turn_coverage_show_no_turn_figures(root, tmp_path):
+    """A store that predates Turns is backfilled from the transcripts that still exist; a
+    Request whose transcript was pruned has no Turns, so its period must not claim zero."""
+    from claude_cost.query import QueryService
+    old = root.write_transcript("p", "old", [req("o", "2026-10-20T10:00:00Z", output=1_000_000)],
+                                extra_lines=[prompt_line("u0", "2026-10-20T09:00:00Z")])
+    root.write_transcript("p", "s1", [req("a", "2026-10-26T00:00:00Z", output=1_000_000)],
+                          extra_lines=[prompt_line("u1", "2026-10-26T00:00:00Z")])
+    conn = store.connect(tmp_path / "store.sqlite")
+    ingest.ingest(conn, [root.path])
+    c = QueryService(conn, "UTC").period_comparison("week", NOW)
+    assert c.usage_baseline.turns == 1            # fresh store: coverage is complete
+    conn.execute("DELETE FROM meta WHERE key IN ('turns', 'turns_from')")
+    conn.execute("DELETE FROM turns")
+    old.unlink()
+    ingest.ingest(conn, [root.path])
+    c = QueryService(conn, "UTC").period_comparison("week", NOW)
+    assert c.usage_baseline.requests == 1 and c.usage_baseline.turns is None
+    assert c.usage_current.turns == 1
+    out = {x.name: x for x in c.components}["output"]
+    assert out.baseline_per_turn is None and out.current_per_turn == pytest.approx(20)
