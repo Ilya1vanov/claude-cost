@@ -7,6 +7,8 @@ import calendar
 from datetime import date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo
 
+from . import pricing
+
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
 
@@ -98,9 +100,24 @@ def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple
     raise ValueError(f"unknown period mode {mode!r}; expected one of {PERIOD_MODES}")
 
 
+@dataclass(frozen=True)
+class PriceRow:
+    model: str  # model-name prefix
+    effective_from: date
+    input: float  # $ per million tokens
+    output: float
+    cache_write_5m: float
+    cache_write_1h: float
+    cache_read: float
+    tier_note: str  # e.g. "x2.0 above 100000 prompt tokens", "" when flat
+    source: str  # "default" or "config"
+
+
 class QueryService:
-    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None):
+    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
+                 price_table: dict | None = None):
         self._conn = conn
+        self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
     def _local_day(self, epoch: float) -> date:
@@ -175,6 +192,18 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def price_table(self) -> list[PriceRow]:
+        """The price table in effect (defaults plus config overrides), $ per million tokens."""
+        rows = []
+        for model in sorted(self._table):
+            for e in sorted(self._table[model], key=lambda e: e.effective_from):
+                note = (f"x{e.tier_mult:g} above {e.tier_threshold} prompt tokens"
+                        if e.tier_threshold else "")
+                rows.append(PriceRow(model, e.effective_from, e.input, e.output,
+                                     e.input * pricing.WRITE_5M_MULT, e.input * pricing.WRITE_1H_MULT,
+                                     e.cache_read, note, e.source))
+        return rows
 
     def unpriced_models(self) -> list[str]:
         rows = self._conn.execute(
