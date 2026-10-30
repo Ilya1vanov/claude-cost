@@ -145,3 +145,20 @@ def test_data_root_filter(tmp_path, service_for):
     assert svc.daily_spend(D30, D30)[0].requests == 2
     assert svc.daily_spend(D30, D30, data_root=r1.path)[0].requests == 1
     assert [x.session_id for x in svc.session_summaries(data_root=r2.path)] == ["s2"]
+
+
+def test_links_survive_incremental_reingest_and_late_subagent(tmp_path, root, desktop):
+    from claude_cost import ingest, store
+    from claude_cost.query import QueryService
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=M)])
+    conn = store.connect(tmp_path / "inc.sqlite")
+    stores = [desktop.path.parent.parent]
+    ingest.ingest(conn, [root.path], desktop_stores=stores)
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T02:00:00Z", output=M)],
+                                   meta={"agentType": "Explore"})
+    ingest.ingest(conn, [root.path])  # desktop_stores=None keeps what was stored
+    ingest.ingest(conn, [root.path], desktop_stores=stores)
+    svc = QueryService(conn, "UTC")
+    [s] = svc.session_summaries()
+    assert (s.requests, s.subagent_requests) == (2, 1)
+    assert [a.agent_type for a in svc.subagent_summaries()] == ["Explore"]

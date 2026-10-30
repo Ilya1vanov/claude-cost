@@ -31,6 +31,7 @@ class Config:
     port: int = DEFAULT_PORT
     top_n: int = DEFAULT_TOP_N
     desktop_stores: list[Path] = field(default_factory=list)  # Desktop session store folders
+    prices: dict[str, dict[str, float]] = field(default_factory=dict)  # model -> price override
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
 
 
@@ -91,6 +92,24 @@ def _coerce_tz(v: Any) -> str:
     return v
 
 
+def _coerce_prices(v: Any) -> dict[str, dict[str, float]]:
+    if not isinstance(v, dict):
+        raise ConfigError(f"prices must be a table of model -> {{input, output, cache_read}}, got {v!r}")
+    out: dict[str, dict[str, float]] = {}
+    for model, p in v.items():
+        if not isinstance(p, dict) or not {"input", "output"} <= set(p) <= {"input", "output", "cache_read"}:
+            raise ConfigError(f"prices.{model} needs input and output (and optionally cache_read), got {p!r}")
+        for k, x in p.items():
+            if isinstance(x, bool) or not isinstance(x, (int, float)) or x < 0:
+                raise ConfigError(f"prices.{model}.{k} must be a number >= 0, got {x!r}")
+        out[model] = dict(p)
+    return out
+
+
+def _parse_prices(text: str) -> Any:
+    raise ConfigError("prices cannot be set from the command line; use `claude-cost config edit`")
+
+
 SETTINGS: dict[str, Setting] = {s.name: s for s in [
     Setting("data_roots", "Claude config folders to read (Data roots); CLI: comma-separated.",
             None, '["~/.claude"]', '["~/.claude"]', _coerce_roots, _parse_roots),
@@ -107,6 +126,10 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             _coerce_stores, _parse_roots),
     Setting("timezone", "IANA time zone for days and weeks; unset = system local time.",
             None, "(system local time)", '"Europe/Berlin"', _coerce_tz, str),
+    Setting("prices", "Price overrides in $ per million tokens, by model-name prefix "
+            "(cache_read defaults to 0.1x input); also adds new models.",
+            None, "(none)", '{ "claude-example-1" = { input = 3.0, output = 15.0, cache_read = 0.3 } }',
+            _coerce_prices, _parse_prices),
 ]}
 
 
@@ -167,6 +190,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         port=values["port"],
         top_n=values["top_n"],
         desktop_stores=[Path(p).expanduser() for p in values["desktop_session_stores"]],
+        prices=values["prices"] or {},
         sources=sources,
     )
 

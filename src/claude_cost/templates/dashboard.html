@@ -7,8 +7,36 @@
 </head>
 <body>
   <h1>Dashboard</h1>
+  <form method="post" action="{{ url_for('force_refresh') }}"><button type="submit">Refresh</button></form>
   <p>Last {{ days|length }} days: <strong>${{ "%.2f"|format(total) }}</strong></p>
   {% if unpriced %}<p class="unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}
+  {% set c = comparison %}
+  <h2>Period comparison</h2>
+  <form method="get" action="/">
+    <nav>{% for m in modes %}
+      <label><input type="radio" name="period" value="{{ m }}" {{ "checked" if m == c.mode }} onchange="this.form.submit()">
+        {{ {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}[m] }}</label>
+    {% endfor %}</nav>
+    {% if c.mode == "last7" %}
+    <input type="hidden" name="include_today" value="0">
+    <label><input type="checkbox" name="include_today" value="1" {{ "checked" if include_today }} onchange="this.form.submit()"> Include today</label>
+    {% endif %}
+    <noscript><button type="submit">Show</button></noscript>
+  </form>
+  <p>{{ c.current.start }} to {{ c.current.end }}{% if c.partial %} <em>(partial: {{ c.elapsed_days }} of {{ c.period_days }} days)</em>{% endif %}
+    vs {{ c.baseline.start }} to {{ c.baseline.end }}</p>
+  <p id="period-total"><strong>${{ "%.2f"|format(c.current_cost) }}</strong> vs ${{ "%.2f"|format(c.baseline_cost) }}:
+    {{ "+" if c.delta_cost >= 0 else "-" }}${{ "%.2f"|format(c.delta_cost|abs) }}
+    ({% if c.delta_pct is none %}n/a{% else %}{{ "%+.1f"|format(c.delta_pct) }}%{% endif %})</p>
+  <h3>Cost components</h3>
+  <table>
+    <tr><th>Component</th><th>This period</th><th>Baseline</th></tr>
+    {% for x in c.components %}<tr><td>{{ x.name }}</td><td>${{ "%.2f"|format(x.current) }}</td><td>${{ "%.2f"|format(x.baseline) }}</td></tr>{% endfor %}
+  </table>
+  <h3>Top sessions</h3>
+  <ol>{% for s in c.top_sessions %}<li>{{ s.key }}: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
+  <h3>Top projects</h3>
+  <ol>{% for p in c.top_projects %}<li>{{ p.key }}: ${{ "%.2f"|format(p.cost) }} ({{ p.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>

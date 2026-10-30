@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, tzinfo
+import calendar
+from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from . import pricing
 
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
@@ -45,9 +48,96 @@ class SubagentSummary:
     requests: int
 
 
+PERIOD_MODES = ("last7", "week", "month")
+COMPONENTS = (("input", "cost_input"), ("output", "cost_output"),
+              ("cache write (5m)", "cost_cache_write_5m"),
+              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
+
+
+@dataclass(frozen=True)
+class Period:
+    start: date  # first local day, inclusive
+    end: date    # last local day, inclusive
+
+    @property
+    def days(self) -> int:
+        return (self.end - self.start).days + 1
+
+
+@dataclass(frozen=True)
+class ComponentSpend:
+    name: str
+    current: float
+    baseline: float
+
+
+@dataclass(frozen=True)
+class RankedSpend:
+    key: str  # Session id or project name
+    cost: float
+    requests: int
+
+
+@dataclass(frozen=True)
+class PeriodComparison:
+    mode: str
+    current: Period
+    baseline: Period  # same number of elapsed days as `current` (clamped to the month length)
+    partial: bool  # the current calendar period has not finished yet
+    elapsed_days: int
+    period_days: int  # length of the full current period
+    current_cost: float
+    baseline_cost: float
+    components: tuple[ComponentSpend, ...]
+    top_sessions: tuple[RankedSpend, ...]
+    top_projects: tuple[RankedSpend, ...]
+
+    @property
+    def delta_cost(self) -> float:
+        return self.current_cost - self.baseline_cost
+
+    @property
+    def delta_pct(self) -> float | None:
+        """None when the baseline is zero (a percentage is undefined)."""
+        return self.delta_cost / self.baseline_cost * 100 if self.baseline_cost else None
+
+
+def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple[Period, Period, int]:
+    """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days."""
+    if mode == "last7":
+        end = today if include_today else today - timedelta(days=1)
+        return Period(end - timedelta(6), end), Period(end - timedelta(13), end - timedelta(7)), 7
+    if mode == "week":
+        start = today - timedelta(days=today.weekday())  # Monday
+        prev = start - timedelta(days=7)
+        elapsed = (today - start).days
+        return Period(start, today), Period(prev, prev + timedelta(elapsed)), 7
+    if mode == "month":
+        start = today.replace(day=1)
+        prev = (start - timedelta(days=1)).replace(day=1)
+        prev_end = min(prev + timedelta(today.day - 1), (start - timedelta(days=1)))
+        return Period(start, today), Period(prev, prev_end), calendar.monthrange(today.year, today.month)[1]
+    raise ValueError(f"unknown period mode {mode!r}; expected one of {PERIOD_MODES}")
+
+
+@dataclass(frozen=True)
+class PriceRow:
+    model: str  # model-name prefix
+    effective_from: date
+    input: float  # $ per million tokens
+    output: float
+    cache_write_5m: float
+    cache_write_1h: float
+    cache_read: float
+    tier_note: str  # e.g. "x2.0 above 100000 prompt tokens", "" when flat
+    source: str  # "default" or "config"
+
+
 class QueryService:
-    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None):
+    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
+                 price_table: dict | None = None):
         self._conn = conn
+        self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
     def _local_day(self, epoch: float) -> date:
@@ -58,7 +148,7 @@ class QueryService:
         """WHERE clause (over `requests r`) for the Surface and Data root filters."""
         where, args = [], []
         if surface is not None:
-            where.append("r.message_id IN (SELECT message_id FROM request_attrs WHERE surface = ?)")
+            where.append("r.message_id IN (SELECT message_id FROM request_surface WHERE surface = ?)")
             args.append(surface)
         if data_root is not None:
             where.append("r.data_root = ?")
@@ -84,6 +174,12 @@ class QueryService:
         return [DaySpend(d, *totals.get(d, (0.0, 0)))
                 for d in (start + timedelta(n) for n in range(days))]
 
+    def last_ingest_epoch(self) -> float | None:
+        """When the store was last refreshed (epoch seconds), None if never."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'last_ingest_epoch'").fetchone()
+        return float(row["value"]) if row else None
+
     def session_summaries(self, surface: str | None = None,
                           data_root: str | Path | None = None) -> list[SessionSummary]:
         """One row per Session (logical conversation), oldest first.
@@ -98,7 +194,7 @@ class QueryService:
             f"SUM(CASE WHEN a.agent_id IS NOT NULL THEN {COST_SQL} ELSE 0 END) AS sub_cost, "
             f"SUM(a.agent_id IS NOT NULL) AS sub_n "
             "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
-            f"LEFT JOIN request_attrs a ON a.message_id = r.message_id{where} "
+            f"LEFT JOIN request_surface a ON a.message_id = r.message_id{where} "
             "GROUP BY sid ORDER BY first, sid", args).fetchall()
         members: dict[str, list[str]] = {}
         logical: dict[str, str] = {}
@@ -126,14 +222,68 @@ class QueryService:
             f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent_id, "
             "s.agent_type, COALESCE(s.is_fork, 0) AS is_fork, s.tool_use_id, s.parent_agent_id, "
             f"s.description, SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
-            "FROM requests r JOIN request_attrs a ON a.message_id = r.message_id "
+            "FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN session_links l ON l.stem = r.session_id "
-            "LEFT JOIN subagents s ON s.session_stem = r.session_id AND s.agent_id = a.agent_id"
+            "LEFT JOIN (SELECT f.file_stem AS stem, sf.agent_id, MAX(sf.agent_type) AS agent_type, "
+            "MAX(sf.is_fork) AS is_fork, MAX(sf.tool_use_id) AS tool_use_id, "
+            "MAX(sf.parent_agent_id) AS parent_agent_id, MAX(sf.description) AS description "
+            "FROM subagent_files sf JOIN ingest_files f ON f.path = sf.path "
+            "GROUP BY f.file_stem, sf.agent_id) s ON s.stem = r.session_id AND s.agent_id = a.agent_id "
             f"{where}{' AND' if where else ' WHERE'} a.agent_id IS NOT NULL "
             "GROUP BY r.session_id, a.agent_id ORDER BY first, sid, a.agent_id", args).fetchall()
         return [SubagentSummary(r["sid"], r["agent_id"], r["agent_type"], bool(r["is_fork"]),
                                 r["tool_use_id"], r["parent_agent_id"], r["description"],
                                 r["cost"], r["n"]) for r in rows]
+
+    def period_comparison(self, mode: str, now: datetime, include_today: bool = True,
+                          top_n: int = 10) -> PeriodComparison:
+        """Spend for a Period against the baseline before it, in the service's time zone.
+
+        `include_today` only affects `last7`; calendar periods always run through today.
+        """
+        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        cur, base, full = resolve_periods(mode, today, include_today)
+        cur_sums, base_sums = self._sums(cur), self._sums(base)
+        components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
+                           for name, col in COMPONENTS)
+        return PeriodComparison(
+            mode, cur, base, cur.days < full and mode != "last7", cur.days, full,
+            sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
+            components, self._top("COALESCE(l.logical_session_id, r.session_id)", cur, top_n),
+            self._top("r.project", cur, top_n))
+
+    def _bounds(self, p: Period) -> tuple[float, float]:
+        """Epoch range [start, end) covering the Period's local days."""
+        return (datetime.combine(p.start, time.min, self._tz).timestamp(),
+                datetime.combine(p.end + timedelta(1), time.min, self._tz).timestamp())
+
+    def _sums(self, p: Period) -> dict[str, float]:
+        lo, hi = self._bounds(p)
+        cols = ", ".join(f"COALESCE(SUM({c}), 0) AS {c}" for _, c in COMPONENTS)
+        row = self._conn.execute(
+            f"SELECT {cols} FROM requests WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()
+        return {c: row[c] for _, c in COMPONENTS}
+
+    def _top(self, key_sql: str, p: Period, n: int) -> tuple[RankedSpend, ...]:
+        lo, hi = self._bounds(p)
+        rows = self._conn.execute(
+            f"SELECT {key_sql} AS k, SUM({COST_SQL}) AS cost, COUNT(*) AS n "
+            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
+            (lo, hi, n)).fetchall()
+        return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def price_table(self) -> list[PriceRow]:
+        """The price table in effect (defaults plus config overrides), $ per million tokens."""
+        rows = []
+        for model in sorted(self._table):
+            for e in sorted(self._table[model], key=lambda e: e.effective_from):
+                note = (f"x{e.tier_mult:g} above {e.tier_threshold} prompt tokens"
+                        if e.tier_threshold else "")
+                rows.append(PriceRow(model, e.effective_from, e.input, e.output,
+                                     e.input * pricing.WRITE_5M_MULT, e.input * pricing.WRITE_1H_MULT,
+                                     e.cache_read, note, e.source))
+        return rows
 
     def unpriced_models(self) -> list[str]:
         rows = self._conn.execute(
