@@ -662,6 +662,12 @@ class QueryService:
             daily = [d.cost for d in self.daily_spend(p.start, min(p.end, today))]
             dailies.append(daily)
             costs.append(sum(daily))
+        # A partial period is judged on the days that have elapsed, so every period is
+        # compared over the same number of days (the full lists stay for the chart).
+        elapsed = [len(d) for p, d in zip(periods, dailies) if p.end > today]
+        if elapsed:
+            n = min(elapsed)
+            costs = [sum(d[:n]) for d in dailies]
         base_cost = costs[starts.index(baseline)]
         entries = tuple(
             ComparisonEntry(p, c, d, p.end > today, c - base_cost,

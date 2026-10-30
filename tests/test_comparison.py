@@ -94,3 +94,16 @@ def test_available_periods_run_from_first_request_to_now_newest_first(root, serv
 
 def test_available_periods_empty_store(service_for, root):
     assert service_for(root).available_periods("week", NOW) == []
+
+
+def test_partial_period_is_compared_on_equal_elapsed_days(root, service_for):
+    _spend(root, "a", "2026-10-26", "a1")                     # current week, day 1: $20
+    _spend(root, "b", "2026-10-12", "b1", output=2_000_000)   # baseline day 1: $40
+    _spend(root, "c", "2026-10-18", "c1", output=5_000_000)   # baseline day 7: $100, after elapsed days
+    c = service_for(root).comparison("week", [date(2026, 10, 12), date(2026, 10, 26)], NOW)
+    base, cur = c.entries
+    assert cur.partial and not base.partial
+    assert base.cost == pytest.approx(40)                      # first 5 days only, not the full $140
+    assert cur.cost == pytest.approx(20)
+    assert cur.delta_cost == pytest.approx(-20) and cur.delta_pct == pytest.approx(-50)
+    assert sum(base.daily) == pytest.approx(140)               # chart keeps the full period
