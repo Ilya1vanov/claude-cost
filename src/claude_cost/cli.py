@@ -13,6 +13,7 @@ from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from . import ingest as ingest_mod
+from . import pricing
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
@@ -26,7 +27,8 @@ def _now(config: Config) -> datetime:
 
 
 def _open(config: Config) -> QueryService:
-    return QueryService(store.connect(config.store_path), config.timezone)
+    return QueryService(store.connect(config.store_path), config.timezone,
+                        price_table=pricing.build_table(config.prices))
 
 
 def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> int:
@@ -36,7 +38,8 @@ def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> i
         if err is not None and ingest_mod.is_first_run(conn):
             for warning in ingest_mod.retention_warnings(config.data_roots):
                 print(warning, file=err)
-        return ingest_mod.ingest(conn, config.data_roots, rebuild=rebuild, now=now)
+        return ingest_mod.ingest(conn, config.data_roots, rebuild=rebuild, now=now,
+                                 price_table=pricing.build_table(config.prices))
     finally:
         conn.close()
 
@@ -79,6 +82,21 @@ def format_week(c: PeriodComparison) -> str:
 def cmd_week(config: Config, now: datetime, out, err) -> int:
     service = _service(config, now, err)
     print(format_week(service.period_comparison("week", now, top_n=config.top_n)), file=out)
+    return 0
+
+
+def cmd_prices(config: Config, now: datetime, out, err) -> int:
+    svc = _service(config, now, err)
+    print("Prices in effect ($ per million tokens)", file=out)
+    print(f"{'model':<22}{'from':<12}{'input':>8}{'output':>8}{'write5m':>9}{'write1h':>9}"
+          f"{'read':>8}  note", file=out)
+    for r in svc.price_table():
+        note = " ".join(x for x in (r.tier_note, "(config)" if r.source == "config" else "") if x)
+        print(f"{r.model:<22}{r.effective_from.isoformat():<12}{r.input:>8.4g}{r.output:>8.4g}"
+              f"{r.cache_write_5m:>9.4g}{r.cache_write_1h:>9.4g}{r.cache_read:>8.4g}  {note}".rstrip(),
+              file=out)
+    unpriced = svc.unpriced_models()
+    print("Unpriced models found: " + (", ".join(unpriced) if unpriced else "none"), file=out)
     return 0
 
 
@@ -134,6 +152,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("today", help="print today's spend")
     sub.add_parser("week", help="print this calendar week's spend compared with the previous week")
+    sub.add_parser("prices", help="list the price table in effect and unpriced models")
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
@@ -162,6 +181,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         return cmd_today(config, now_fn(), out, err)
     if args.command == "week":
         return cmd_week(config, now_fn(), out, err)
+    if args.command == "prices":
+        return cmd_prices(config, now_fn(), out, err)
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)

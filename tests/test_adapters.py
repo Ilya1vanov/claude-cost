@@ -48,6 +48,20 @@ def test_serve_binds_loopback_only_and_opens_browser(root, configure):
     assert opened == [f"http://127.0.0.1:{seen['port']}/"]
 
 
+def test_cli_prices_lists_table_overrides_and_unpriced_models(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", model="claude-mystery-9", output=5)])
+    env = configure(root)
+    from pathlib import Path
+    with (Path(env["CLAUDE_COST_CONFIG_DIR"]) / "config.toml").open("a") as f:
+        f.write('\n[prices.claude-opus-5-5]\ninput = 1.0\noutput = 3.0\n')
+    out = io.StringIO()
+    assert cli.main(["prices"], env=env, now=NOW, out=out) == 0
+    text = out.getvalue()
+    assert "claude-haiku-5-5" in text and "above 100000 prompt tokens" in text
+    assert any(l.startswith("claude-opus-5-5") and "(config)" in l for l in text.splitlines())
+    assert text.strip().endswith("Unpriced models found: claude-mystery-9")
+
+
 def _client(env, top_n=10):
     cfg = cli.load_config(env)
     def factory():
@@ -102,3 +116,8 @@ def test_compare_page_selects_periods_and_baseline(root, configure):
     for bad in ("?mode=last7", "?mode=week&p=2026-10-12&p=2026-10-14&p=2026-10-26",
                 "?mode=week&p=2026-10-12&p=2026-10-26&baseline=2026-10-05"):
         assert client.get("/compare" + bad).status_code == 400
+
+def test_dashboard_flags_unpriced_models(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", model="claude-mystery-9", output=5)])
+    html = _client(configure(root)).get("/").get_data(as_text=True)
+    assert "Unpriced models: claude-mystery-9" in html
