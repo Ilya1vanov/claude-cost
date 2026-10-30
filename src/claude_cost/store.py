@@ -158,6 +158,13 @@ CREATE TABLE IF NOT EXISTS compactions (
   pre_tokens INTEGER NOT NULL,
   post_tokens INTEGER NOT NULL
 );
+-- Turns (ticket #25): prompts the user typed in main transcripts, deduped by record uuid
+-- (resume copies repeat them); `stem` is the transcript that held it first
+CREATE TABLE IF NOT EXISTS turns (
+  uuid TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
+  ts_epoch REAL NOT NULL
+);
 -- Listings (ticket #16): one row per skill / MCP server listed in a session. `stem` is the
 -- (parent) transcript stem, `agent_id` '' for the main agent else the Subagent that loaded it.
 -- kind skill|mcp; name = skill name or the server's display name; tokens estimated from text.

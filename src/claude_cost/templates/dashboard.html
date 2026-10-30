@@ -57,13 +57,30 @@
     <div class="chart"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
   </section>
 
+  {% macro per_turn(v) %}{% if v is none %}n/a{% else %}${{ "%.2f"|format(v) }}{% endif %}{% endmacro %}
+  {% set uc, ub = c.usage_current, c.usage_baseline %}
+  <section class="card" id="usage-strip">
+    <h2>Usage</h2>
+    <div class="kpis">
+      {% for label, key, a, b in (("Sessions", "sessions", uc.sessions, ub.sessions), ("Turns", "turns", uc.turns, ub.turns), ("Requests", "requests", uc.requests, ub.requests)) %}
+      <div class="kpi">
+        <div class="label">{{ label }} {{ ui.info(key) }}</div>
+        <div class="value">{{ a }}</div>
+        <div class="meta">vs {{ b }} in baseline{% if key == "sessions" %} (with spend){% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
   <div class="grid grid-2">
     <section class="card">
       <h2>Cost components</h2>
       <div class="table-wrap"><table>
-        <tr><th>Component</th><th class="num">This period</th><th class="num">Baseline</th></tr>
+        <tr><th>Component</th><th class="num">This period</th><th class="num">Baseline</th>
+          <th class="num">per Turn (this) {{ ui.info("per turn") }}</th><th class="num">per Turn (baseline)</th></tr>
         {% for x in c.components %}<tr><td>{{ ui.component(x.name) }} {{ ui.info(x.name) }}</td><td class="num">${{ "%.2f"|format(x.current) }}</td>
-          <td class="num">${{ "%.2f"|format(x.baseline) }}</td></tr>{% endfor %}
+          <td class="num">${{ "%.2f"|format(x.baseline) }}</td>
+          <td class="num">{{ per_turn(x.current_per_turn) }}</td><td class="num">{{ per_turn(x.baseline_per_turn) }}</td></tr>{% endfor %}
       </table></div>
     </section>
     <section class="card">

@@ -88,6 +88,49 @@ def compact_line(uuid: str, ts: str, pre: int, post: int, trigger: str = "manual
                                            "postTokens": post}})
 
 
+def _user(uuid: str, ts: str, content, session_id: str | None = None, **extra) -> str:
+    rec = {"type": "user", "uuid": uuid, "timestamp": ts,
+           "message": {"role": "user", "content": content}, **extra}
+    if session_id:
+        rec["sessionId"] = session_id
+    return json.dumps(rec)
+
+
+def prompt_line(uuid: str, ts: str, text: str = "do the thing",
+                session_id: str | None = None) -> str:
+    """A plain-text prompt the user typed, for `write_transcript(extra_lines=[...])`."""
+    return _user(uuid, ts, text, session_id, origin={"kind": "human"})
+
+
+def slash_command_line(uuid: str, ts: str, name: str = "/review") -> str:
+    """A slash command the user typed (stored wrapped in `<command-name>`)."""
+    return _user(uuid, ts, f"<command-message>{name[1:]}</command-message>\n"
+                           f"<command-name>{name}</command-name>")
+
+
+def tool_result_line(uuid: str, ts: str) -> str:
+    """A user record that carries a tool result: not a prompt."""
+    return _user(uuid, ts, [{"type": "tool_result", "tool_use_id": "t0", "content": "ok"}])
+
+
+def compact_summary_line(uuid: str, ts: str) -> str:
+    """The user record holding a compaction summary: not a prompt."""
+    return _user(uuid, ts, "This session is being continued from a previous conversation...",
+                 isCompactSummary=True)
+
+
+def queued_prompt_line(uuid: str, ts: str, text: str = "also do this") -> str:
+    """A message the user typed while Claude was working (a `queued_command` attachment)."""
+    return json.dumps({"type": "attachment", "uuid": uuid, "timestamp": ts,
+                       "attachment": {"type": "queued_command", "prompt": text,
+                                      "origin": {"kind": "human"}}})
+
+
+def hook_injection_line(uuid: str, ts: str) -> str:
+    """A hook / system injection stored as a user record: not a prompt."""
+    return _user(uuid, ts, "<system-reminder>hook output</system-reminder>")
+
+
 def skill_listing_line(ts: str, skills: dict[str, str], uuid: str = "sl") -> str:
     """A `skill_listing` attachment; `skills` maps skill name -> description."""
     content = "\n".join(f"- {n}: {d}" for n, d in skills.items())
