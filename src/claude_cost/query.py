@@ -511,7 +511,7 @@ class QueryService:
         by_id = {r.message_id: r for r in rows}
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
-                                          self._table)
+                                          self._table, self._conn)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:

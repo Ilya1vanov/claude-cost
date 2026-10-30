@@ -126,6 +126,29 @@ CREATE TABLE IF NOT EXISTS compactions (
   pre_tokens INTEGER NOT NULL,
   post_tokens INTEGER NOT NULL
 );
+-- Listings (ticket #16): one row per skill / MCP server listed in a session. `stem` is the
+-- (parent) transcript stem, `agent_id` '' for the main agent else the Subagent that loaded it.
+-- kind skill|mcp; name = skill name or the server's display name; tokens estimated from text.
+CREATE TABLE IF NOT EXISTS listings (
+  stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ts_epoch REAL NOT NULL,
+  tokens INTEGER NOT NULL,
+  PRIMARY KEY (stem, agent_id, kind, name)
+);
+-- Skill calls and MCP tool calls, deduped by tool_use id; mcp name = normalised server key
+CREATE TABLE IF NOT EXISTS tool_uses (
+  tool_use_id TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ts_epoch REAL NOT NULL
+);
 """
 
 

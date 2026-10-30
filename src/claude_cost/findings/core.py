@@ -118,8 +118,10 @@ class FindingContext:
     """What a detector sees: every request (`rows`), thresholds, prices and the time zone."""
 
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
-                 defs: Mapping[str, Threshold], price_table: Mapping | None):
+                 defs: Mapping[str, Threshold], price_table: Mapping | None,
+                 conn: sqlite3.Connection | None = None):
         self.rows = rows
+        self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.price_table = price_table
         self._thresholds, self._defs = thresholds, defs
 
