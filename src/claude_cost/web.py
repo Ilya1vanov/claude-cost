@@ -56,6 +56,7 @@ def create_app(service_factory: Callable[[], QueryService],
             include_today=include_today,
             unpriced=service.unpriced_models(),
             spotlights=service.top_spotlights(mode, now(), include_today, top_n),
+            top_findings=service.top_findings(mode, now(), include_today, top_n),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
 

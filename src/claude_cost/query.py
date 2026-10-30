@@ -594,17 +594,27 @@ class QueryService:
         return sorted(out, key=lambda e: e.event)
 
 
-    def findings(self, since: date | None = None) -> list[findings_mod.Finding]:
-        """Every Drain, then every Opportunity, over requests from local day `since` on
-        (all history when None). Findings overlap: never sum their avoidable figures."""
+    def findings(self, since: date | None = None,
+                 until: date | None = None) -> list[findings_mod.Finding]:
+        """Every Drain, then every Opportunity, over requests from local day `since` through
+        `until` (all history when None). Findings overlap: never sum their avoidable figures."""
         lo = datetime.combine(since, time.min, self._tz).timestamp() if since else None
-        rows = findings_mod.load_rows(self._conn, self._tz, lo, None)
+        hi = datetime.combine(until + timedelta(1), time.min, self._tz).timestamp() if until else None
+        rows = findings_mod.load_rows(self._conn, self._tz, lo, hi)
         by_id = {r.message_id: r for r in rows}
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
                                           compact_mod.analyze(self._conn, self._tz, self._table))
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
+
+    def top_findings(self, mode: str, now: datetime, include_today: bool = True,
+                     top_n: int = 10) -> list[findings_mod.Finding]:
+        """The findings covering the most spend inside the Period (same periods as
+        period_comparison), costliest first; findings that cover nothing are left out."""
+        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        hits = [f for f in self.findings(cur.start, cur.end) if f.attributed > 0]
+        return sorted(hits, key=lambda f: (-f.attributed, f.id))[:top_n]
 
     def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:
         for f in self.findings(since):
