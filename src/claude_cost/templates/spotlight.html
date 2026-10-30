@@ -49,7 +49,7 @@
       {% for x in d.sessions %}<tr><td>{{ x.label }} <small>{{ ui.sid(x.session_id) }}</small></td>
         <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
         <td>{% if x.link_kind in ("side", "fork") %}<span class="badge">{{ {"side": "Side session", "fork": "Fork"}[x.link_kind] }}</span>{% endif %}</td>
-        <td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
+        <td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>
         <td class="num">{% if x.pinned %}<form method="post" action="{{ url_for('spotlight_unpin', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Unpin</button></form>{% endif %}</td></tr>
       {% else %}<tr><td colspan="6" class="empty">No Sessions</td></tr>{% endfor %}
     </table></div>
@@ -80,7 +80,7 @@
   <section class="card">
     <h2>Pin a Session</h2>
     <form method="post" action="{{ url_for('spotlight_pin', name=s.name) }}" class="form-row">
-      <select name="session">{% for sid, label, cost in choices %}<option value="{{ sid }}">{{ label }} ({{ sid[:8] }}, ${{ "%.2f"|format(cost) }})</option>{% endfor %}</select>
+      <select name="session">{% for sid, label, cost in choices %}<option value="{{ sid }}">{{ label }} ({{ sid }}, ${{ "%.2f"|format(cost) }})</option>{% endfor %}</select>
       <button type="submit">Pin</button>
     </form>
   </section>
