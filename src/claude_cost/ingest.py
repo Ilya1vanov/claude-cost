@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -17,16 +18,35 @@ def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _parse_transcript(path: Path) -> dict[str, dict]:
+@dataclass
+class Parsed:
+    reqs: dict[str, dict] = field(default_factory=dict)
+    relocated: bool = False
+    links: set[str] = field(default_factory=set)  # other session ids of the same conversation
+
+
+def _parse_transcript(path: Path) -> Parsed:
     """Group assistant lines by message id: first line wins, output = max over lines."""
-    reqs: dict[str, dict] = {}
+    parsed = Parsed()
+    reqs = parsed.reqs
     with path.open(encoding="utf-8", errors="replace") as fh:
         for line in fh:
             try:
                 rec = json.loads(line)
             except ValueError:
                 continue  # corrupt or partially written line
-            if not isinstance(rec, dict) or rec.get("type") != "assistant":
+            if not isinstance(rec, dict):
+                continue
+            kind = rec.get("type")
+            if kind == "relocated":
+                parsed.relocated = True
+                continue
+            if kind == "continued-in":
+                nxt = rec.get("continuedInSessionId")
+                if isinstance(nxt, str) and nxt:
+                    parsed.links.add(nxt)
+                continue
+            if kind != "assistant":
                 continue
             msg = rec.get("message") or {}
             usage = msg.get("usage")
@@ -38,6 +58,11 @@ def _parse_transcript(path: Path) -> dict[str, dict]:
             if mid in reqs:
                 reqs[mid]["output"] = max(reqs[mid]["output"], out)
                 continue
+            fork = rec.get("forkedFrom")
+            fork_sid = fork.get("sessionId") if isinstance(fork, dict) else None
+            sid = fork_sid or rec.get("sessionId") or path.stem
+            if not fork_sid and sid != path.stem:
+                parsed.links.add(sid)  # resume or /clear copy: same conversation
             total_w = usage.get("cache_creation_input_tokens") or 0
             cc = usage.get("cache_creation") or {}
             w1h = cc.get("ephemeral_1h_input_tokens") or 0
@@ -45,7 +70,8 @@ def _parse_transcript(path: Path) -> dict[str, dict]:
             if w5m + w1h < total_w:
                 w5m = total_w - w1h
             reqs[mid] = {
-                "session_id": rec.get("sessionId") or path.stem,
+                "session_id": sid,
+                "is_copy": bool(fork_sid),
                 "ts": _parse_ts(rec["timestamp"]),
                 "model": model,
                 "input": usage.get("input_tokens") or 0,
@@ -54,25 +80,56 @@ def _parse_transcript(path: Path) -> dict[str, dict]:
                 "write_5m": w5m,
                 "write_1h": w1h,
             }
-    return reqs
+    return parsed
+
+
+def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) -> dict[str, str]:
+    """Union transcripts linked as one conversation; label each group by its earliest transcript."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for stem in first_ts:
+        find(stem)
+    for a, b in links:
+        parent[find(a)] = find(b)
+    groups: dict[str, list[str]] = {}
+    for stem in first_ts:
+        groups.setdefault(find(stem), []).append(stem)
+    return {stem: min(members, key=lambda s: (first_ts[s], s))
+            for members in groups.values() for stem in members}
 
 
 def ingest(conn: sqlite3.Connection, roots: list[Path]) -> int:
     """Ingest all Data roots; returns the number of Requests in the store afterwards."""
     candidates: dict[str, list[dict]] = {}
+    stem_first_ts: dict[str, datetime] = {}
+    links: set[tuple[str, str]] = set()
     for root in roots:
         for path in sources.main_transcripts(root):
             parsed = _parse_transcript(path)
-            if not parsed:
+            links.update((path.stem, other) for other in parsed.links)
+            if not parsed.reqs:
                 continue
-            first_ts = min(r["ts"] for r in parsed.values())
-            for mid, r in parsed.items():
+            first_ts = min(r["ts"] for r in parsed.reqs.values())
+            stem_first_ts[path.stem] = min(first_ts, stem_first_ts.get(path.stem, first_ts))
+            for mid, r in parsed.reqs.items():
                 candidates.setdefault(mid, []).append({
                     "file_stem": path.stem, "session_id": r["session_id"],
                     "file_first_ts": first_ts, "root": str(root),
                     "project": path.parent.name, "req": r,
+                    "is_copy": r["is_copy"], "relocated": parsed.relocated,
                 })
     with conn:
+        conn.execute("DELETE FROM session_links")
+        conn.executemany(
+            "INSERT INTO session_links VALUES (?,?)",
+            _group_sessions(stem_first_ts, links).items())
         for mid, cands in candidates.items():
             owner = ownership.pick_owner(cands)
             r = owner["req"]

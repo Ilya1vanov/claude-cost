@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS requests (
   cost_cache_read REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS requests_ts ON requests (ts_epoch);
+-- transcript stem -> the logical Session (conversation) it belongs to (ticket #3)
+CREATE TABLE IF NOT EXISTS session_links (
+  stem TEXT PRIMARY KEY,
+  logical_session_id TEXT NOT NULL
+);
 """
 
 
