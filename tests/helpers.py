@@ -67,6 +67,15 @@ class DataRoot:
         f.write_text("\n".join(lines + (extra_lines or [])) + "\n")
         return f
 
+    def append_to_transcript(self, project: str, session_id: str, reqs: list[Req],
+                             raw: str = "") -> Path:
+        """Append records to an existing transcript (as Claude Code does while a session runs)."""
+        f = self.path / "projects" / project / f"{session_id}.jsonl"
+        lines = [json.dumps(rec) for r in reqs for rec in assistant_lines(r, session_id)]
+        with f.open("a") as fh:
+            fh.write("\n".join(lines) + ("\n" if lines else "") + raw)
+        return f
+
     def write_subagent_transcript(self, project: str, session_id: str, agent_id: str,
                                   reqs: list[Req]) -> Path:
         d = self.path / "projects" / project / session_id / "subagents"
