@@ -110,13 +110,16 @@ def test_timeline_shows_threshold_and_highlights_late_compacts(root, service_for
     _ramp_sessions(root, 20)
     root.write_transcript("p", "t", [req("t1", "2026-10-25T10:00:00Z", cache_read=30_000),
                                      req("t2", "2026-10-25T10:01:00Z", cache_read=45_000),
-                                     req("t3", "2026-10-25T10:02:00Z", cache_read=45_000)],
+                                     req("t3", "2026-10-25T10:02:00Z", cache_read=45_000),
+                                     req("t4", "2026-10-25T10:04:00Z", cache_read=150_000)],
                           extra_lines=[compact_line("tc1", "2026-10-25T10:01:30Z", 45_000, 8_000, "manual"),
-                                       compact_line("tc2", "2026-10-25T10:03:00Z", 200_000, 8_000, "auto")])
+                                       compact_line("tc2", "2026-10-25T10:03:00Z", 200_000, 8_000, "auto"),
+                                       compact_line("tc3", "2026-10-25T10:05:00Z", 20_000, 8_000, "manual")])
     t = service_for(root).session_timeline("t")
     assert all(p.threshold == 130_000 for p in t.points)
-    early, late = t.compactions
-    assert (early.late, late.late) == (False, True)  # 45K <= T < 200K
+    early, high_pre, late = t.compactions
+    # Judged by the request before it, not by preTokens: 45K <= T < 150K; 200K preTokens don't matter
+    assert (early.late, high_pre.late, late.late) == (False, False, True)
     assert early.threshold == 130_000
 
 
@@ -137,8 +140,10 @@ def test_cli_compact_and_pages(root, configure):
     from conftest import NOW
 
     _ramp_sessions(root, 20)
-    root.write_transcript("p", "t", [req("t1", "2026-10-25T10:00:00Z", cache_read=30_000)],
-                          extra_lines=[compact_line("tc", "2026-10-25T10:03:00Z", 200_000, 8_000, "auto")])
+    root.write_transcript("p", "t", [req("t1", "2026-10-25T10:00:00Z", cache_read=150_000)],
+                          extra_lines=[compact_line("tc", "2026-10-25T10:03:00Z", 20_000, 8_000, "auto")])
+    root.write_transcript("p", "n", [req("n1", "2026-10-25T11:00:00Z", cache_read=30_000)],
+                          extra_lines=[compact_line("nc", "2026-10-25T11:03:00Z", 200_000, 8_000, "auto")])
     env = configure(root)
     out = io.StringIO()
     assert cli.main(["compact"], env=env, now=NOW, out=out) == 0
@@ -161,6 +166,7 @@ def test_cli_compact_and_pages(root, configure):
     page_snippet = json.loads(html.unescape(re.search(r'<pre id="model-settings">(.*?)</pre>', page, re.S).group(1)))
     assert page_snippet == snippet
     assert "Late compact" in client.get("/session/t").get_data(as_text=True)
+    assert "Late compact" not in client.get("/session/n").get_data(as_text=True)  # high preTokens, low request
 
 
 def test_min_sample_and_step_are_configurable(root, service_for):
