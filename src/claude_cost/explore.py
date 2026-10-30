@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable
 
+from .sql import SESSION_ID_SQL, SESSION_JOIN
+
 NONE = "(none)"
 COMPONENT_KEYS = (("input", "cost_input"), ("output", "cost_output"),
                   ("cache write (5m)", "cost_cache_write_5m"),
@@ -180,8 +182,7 @@ for _d in (
     _scalar("git_branch", "Git branch",
             "SELECT message_id, git_branch FROM request_dims WHERE git_branch != ''"),
     _scalar("session", "Session",
-            "SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) FROM requests r "
-            "LEFT JOIN session_links l ON l.stem = r.session_id"),
+            f"SELECT r.message_id, {SESSION_ID_SQL} FROM requests r {SESSION_JOIN}"),
     _scalar("subagent_type", "Subagent type", _SUBAGENT_SQL, missing="(main)"),
     _scalar("model", "Model", "SELECT message_id, model FROM requests"),
     _scalar("effort", "Effort", "SELECT message_id, effort FROM request_dims WHERE effort != ''"),

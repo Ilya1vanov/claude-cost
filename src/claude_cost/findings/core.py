@@ -14,6 +14,7 @@ from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
 from .. import compact, pricing
+from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
 DEFAULT_COMPARE_MODEL = "claude-opus-5-5"  # Fable usage compares against it (fable_compare_model)
@@ -72,7 +73,7 @@ class RequestRow:
 
     @property
     def context(self) -> int:
-        return self.input + self.cache_read + self.write_5m + self.write_1h
+        return context_tokens(self.input, self.cache_read, self.write_5m, self.write_1h)
 
 
 @dataclass(frozen=True)
@@ -181,14 +182,13 @@ class FindingContext:
 def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
               hi: float | None) -> list[RequestRow]:
     """All requests, oldest first, with session gaps. `lo`/`hi` only set `in_period`."""
-    sql = ("SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) AS sid, "
+    sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
-           "r.cost_input + r.cost_output + r.cost_cache_write_5m + r.cost_cache_write_1h "
-           "+ r.cost_cache_read AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
+           f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
            "sf.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
-           "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+           f"FROM requests r {SESSION_JOIN} "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
            "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "

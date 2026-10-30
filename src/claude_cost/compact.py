@@ -20,6 +20,7 @@ from datetime import date, datetime, timezone
 from typing import Mapping
 
 from . import pricing
+from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
@@ -112,10 +113,9 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
 def analyze(conn: sqlite3.Connection, tz=None, table=None, min_sample: int = MIN_SAMPLE,
             step: int = STEP) -> CompactAnalysis:
     rows = conn.execute(
-        "SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id, "
-        "r.ts_epoch, r.model, r.input_tokens + r.cache_read_tokens + r.cache_write_5m_tokens "
-        "+ r.cache_write_1h_tokens AS ctx FROM requests r "
-        "LEFT JOIN session_links l ON l.stem = r.session_id "
+        f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, a.agent_id, "
+        f"r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx FROM requests r "
+        f"{SESSION_JOIN} "
         "LEFT JOIN request_surface a ON a.message_id = r.message_id "
         "ORDER BY r.ts_epoch, r.message_id").fetchall()
     reqs: list[_Req] = []

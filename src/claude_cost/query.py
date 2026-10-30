@@ -14,9 +14,8 @@ from . import explore
 from . import findings as findings_mod
 from . import pricing, spotlights
 from .findings import cold_resume as cold_resume_mod
+from .sql import CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
-COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
-            "+ cost_cache_write_1h + cost_cache_read")
 
 
 @dataclass(frozen=True)
@@ -389,11 +388,11 @@ class QueryService:
         """
         where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
-            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, "
+            f"SELECT {SESSION_ID_SQL} AS sid, "
             f"SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first, "
             f"SUM(CASE WHEN a.agent_id IS NOT NULL THEN {COST_SQL} ELSE 0 END) AS sub_cost, "
             f"SUM(a.agent_id IS NOT NULL) AS sub_n "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             f"LEFT JOIN request_surface a ON a.message_id = r.message_id{where} "
             "GROUP BY sid ORDER BY first, sid", args).fetchall()
         members: dict[str, list[str]] = {}
@@ -419,11 +418,11 @@ class QueryService:
         """One row per Subagent that made requests, with its own cost, oldest first."""
         where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
-            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent_id, "
+            f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent_id, "
             "s.agent_type, COALESCE(s.is_fork, 0) AS is_fork, s.tool_use_id, s.parent_agent_id, "
             f"s.description, SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
-            "FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
-            "LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
+            f"{SESSION_JOIN} "
             "LEFT JOIN (SELECT f.file_stem AS stem, sf.agent_id, MAX(sf.agent_type) AS agent_type, "
             "MAX(sf.is_fork) AS is_fork, MAX(sf.tool_use_id) AS tool_use_id, "
             "MAX(sf.parent_agent_id) AS parent_agent_id, MAX(sf.description) AS description "
@@ -452,13 +451,12 @@ class QueryService:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
         or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
         rows = self._conn.execute(
-            f"SELECT r.message_id, r.ts_epoch, r.model, r.input_tokens + r.cache_read_tokens "
-            "+ r.cache_write_5m_tokens + r.cache_write_1h_tokens AS ctx, "
+            f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
             f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN request_cache c ON c.message_id = r.message_id "
-            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ? "
+            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
             "ORDER BY r.ts_epoch, r.message_id", (session_id, agent_id)).fetchall()
         if not rows:
             return None
@@ -511,9 +509,9 @@ class QueryService:
 
     def _first_ts(self, session_id: str, agent_id: str | None = None) -> float:
         return self._conn.execute(
-            "SELECT MIN(r.ts_epoch) FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"SELECT MIN(r.ts_epoch) FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
-            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ?",
+            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ?",
             (session_id, agent_id)).fetchone()[0]
 
     def _subagent_starts(self, session_id: str) -> list[tuple[SubagentSummary, float]]:
@@ -538,7 +536,7 @@ class QueryService:
         return PeriodComparison(
             mode, cur, base, cur.days < full and mode != "last7", cur.days, full,
             sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
-            components, self._top("COALESCE(l.logical_session_id, r.session_id)", cur, top_n),
+            components, self._top(SESSION_ID_SQL, cur, top_n),
             self._top("r.project", cur, top_n))
 
     def _bounds(self, p: Period) -> tuple[float, float]:
@@ -557,7 +555,7 @@ class QueryService:
         lo, hi = self._bounds(p)
         rows = self._conn.execute(
             f"SELECT {key_sql} AS k, SUM({COST_SQL}) AS cost, COUNT(*) AS n "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
@@ -776,10 +774,10 @@ class QueryService:
 
     def _request_rows(self) -> list:
         return self._conn.execute(
-            "SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent, "
+            f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent, "
             "r.ts_epoch AS ts, r.cost_input, r.cost_output, r.cost_cache_write_5m, "
             "r.cost_cache_write_1h, r.cost_cache_read "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id").fetchall()
 
     def _summary(self, defn, members: frozenset[str], rows: list) -> SpotlightSummary:
