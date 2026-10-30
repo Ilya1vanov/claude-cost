@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>claude-cost</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <h1>Dashboard</h1>
+  <p>Last {{ days|length }} days: <strong>${{ "%.2f"|format(total) }}</strong></p>
+  {% if unpriced %}<p class="unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}
+  <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
+  <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>
