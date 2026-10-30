@@ -13,6 +13,7 @@ price; a compaction costs `postTokens` of summary output plus writing `postToken
 """
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from dataclasses import dataclass, field, replace
@@ -25,6 +26,15 @@ from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
+
+# Autocompact fires at autoCompactWindow - 33,000: the window minus an output reserve, minus a
+# buffer. Read from the Claude Code 2.1.314 bundle; re-check when autocompacts fire elsewhere.
+CLAUDE_CODE_VERSION = "2.1.314"
+AUTOCOMPACT_OUTPUT_RESERVE = 20_000
+AUTOCOMPACT_BUFFER = 13_000
+AUTOCOMPACT_OFFSET = AUTOCOMPACT_OUTPUT_RESERVE + AUTOCOMPACT_BUFFER
+MIN_AUTOCOMPACT_WINDOW = 100_000  # the range Claude Code accepts for autoCompactWindow
+MAX_AUTOCOMPACT_WINDOW = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,29 @@ class ModelThreshold:
     actual_cost: float  # observed carrying cost of the replayed requests
     curve: tuple[CurvePoint, ...]  # of the model, or of the global fit when source == "global"
 
+    @property
+    def autocompact_window(self) -> int:
+        """modelSettings.<model>.autoCompactWindow that makes autocompact fire at `threshold`."""
+        return min(max(self.threshold + AUTOCOMPACT_OFFSET, MIN_AUTOCOMPACT_WINDOW),
+                   MAX_AUTOCOMPACT_WINDOW)
+
+    @property
+    def window_clamp(self) -> str | None:
+        """"raised" / "lowered" when `autocompact_window` had to be clamped, else None."""
+        wanted = self.threshold + AUTOCOMPACT_OFFSET
+        if wanted < MIN_AUTOCOMPACT_WINDOW:
+            return "raised"
+        return "lowered" if wanted > MAX_AUTOCOMPACT_WINDOW else None
+
+    @property
+    def window_note(self) -> str | None:
+        if self.window_clamp == "raised":
+            return (f"raised to {MIN_AUTOCOMPACT_WINDOW:,}: autocompact fires at "
+                    f"{MIN_AUTOCOMPACT_WINDOW - AUTOCOMPACT_OFFSET:,}")
+        if self.window_clamp == "lowered":
+            return f"lowered to {MAX_AUTOCOMPACT_WINDOW:,}: autocompact can't reach the Compact threshold"
+        return None
+
 
 @dataclass(frozen=True)
 class _Req:
@@ -64,6 +97,11 @@ class CompactAnalysis:
     stream_of: Mapping[str, tuple[str, str | None]]  # message_id -> (logical session, agent id)
     own_prices: Mapping[str, tuple[float, float]] = field(default_factory=dict)
     # model -> (average $ per post token of a compaction, average cache-read $ per token)
+
+    def model_settings_json(self) -> str:
+        """Copy-paste Claude Code `modelSettings`: every model's recommended window by model id."""
+        return json.dumps({"modelSettings": {
+            m.model: {"autoCompactWindow": m.autocompact_window} for m in self.models}}, indent=2)
 
     def for_model(self, model: str) -> ModelThreshold | None:
         for m in self.models:
