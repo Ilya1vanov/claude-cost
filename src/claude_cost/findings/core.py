@@ -85,9 +85,25 @@ class Covered:
 
 
 @dataclass(frozen=True)
+class CollapsibleCell:
+    """A table cell that shows `summary` and folds `items` into a collapsed list."""
+    summary: str
+    items: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DetailTable:
+    """Structured detail for a finding's page: column names and rows (a cell is text or a
+    CollapsibleCell). Shown on the finding detail page only."""
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str | CollapsibleCell, ...], ...]
+
+
+@dataclass(frozen=True)
 class Detection:
     covered: list[Covered]
     detail: str = ""  # measured inputs to the formula, e.g. "median first context 12,000"
+    table: DetailTable | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +160,7 @@ class Finding:
     sessions: tuple[SessionCoverage, ...]
     requests: tuple[CoveredRequest, ...]
     subagents: tuple[SubagentCoverage, ...] = ()
+    table: DetailTable | None = None
 
 
 class FindingContext:
@@ -240,4 +257,4 @@ def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow])
         d.id, d.kind, d.title, d.description, d.formula, det.detail,
         sum(r.cost for r, _ in covered),
         max(0.0, sum(c.avoidable or 0.0 for _, c in covered)) if has_avoidable else None,
-        sessions, requests, subagents)
+        sessions, requests, subagents, det.table)
