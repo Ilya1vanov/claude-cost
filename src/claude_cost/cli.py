@@ -29,7 +29,8 @@ def _now(config: Config) -> datetime:
 
 
 def _open(config: Config) -> QueryService:
-    return QueryService(store.connect(config.store_path), config.timezone,
+    """A service on the store; callers ingest first (which creates the schema)."""
+    return QueryService(store.connect(config.store_path, schema=False), config.timezone,
                         price_table=pricing.build_table(config.prices),
                         thresholds=config.thresholds,
                         compare_model=config.fable_compare_model,

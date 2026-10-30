@@ -340,6 +340,9 @@ class QueryService:
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
+    def close(self) -> None:
+        self._conn.close()
+
     def local_time(self, epoch: float) -> datetime:
         """An epoch timestamp as an aware datetime in the configured time zone."""
         return datetime.fromtimestamp(epoch, self._tz).astimezone(self._tz)
