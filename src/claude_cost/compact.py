@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Mapping
 
@@ -62,12 +62,21 @@ class CompactAnalysis:
     models: tuple[ModelThreshold, ...]  # models with at least one observed compaction
     global_: ModelThreshold | None  # None when there are no compactions at all
     stream_of: Mapping[str, tuple[str, str | None]]  # message_id -> (logical session, agent id)
+    own_prices: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    # model -> (average $ per post token of a compaction, average cache-read $ per token)
 
     def for_model(self, model: str) -> ModelThreshold | None:
         for m in self.models:
             if m.model == model:
                 return m
-        return self.global_
+        g = self.global_
+        if g is not None and model in self.own_prices:  # global T and p75, this model's prices
+            cpp, read = self.own_prices[model]
+            saved = (g.threshold - g.post_tokens_p75) * read
+            cost = g.post_tokens_p75 * cpp
+            return replace(g, compaction_cost=cost,
+                           payback_requests=cost / saved if saved > 0 else None)
+        return g
 
 
 def p75(values: list[int]) -> int:
@@ -78,9 +87,13 @@ def p75(values: list[int]) -> int:
 def replay(reqs: list[_Req], threshold: int, post: int) -> float:
     """Total cost of `reqs` (oldest first) if each stream compacted whenever above `threshold`."""
     offset: dict[tuple, int] = {}
+    last: dict[tuple, int] = {}
     total = 0.0
     for r in reqs:
-        ctx = r.context - offset.get(r.stream, 0)
+        if r.context < last.get(r.stream, 0):  # a real compaction happened: the hypothetical
+            offset[r.stream] = 0  # reduction no longer applies to the fresh context
+        last[r.stream] = r.context
+        ctx = max(0, r.context - offset.get(r.stream, 0))
         if ctx > threshold:
             offset[r.stream] = offset.get(r.stream, 0) + ctx - post
             ctx = post
@@ -98,17 +111,20 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
     hi = max(lo, math.ceil(top / step) * step + step)
     curve = tuple(CurvePoint(t, replay(reqs, t, post)) for t in range(lo, hi + 1, step))
     best = min(curve, key=lambda c: (c.cost, -c.threshold))  # tie: do not compact earlier
-    sample = [r for r in reqs]
-    if sample:
-        cost_per_post = sum(r.cost_per_post for r in sample) / len(sample)
-        read = sum(r.read_price for r in sample) / len(sample)
-    else:
-        cost_per_post = read = 0.0
-    saved_per_request = (best.threshold - post) * read
-    return ModelThreshold(
-        model, best.threshold, source, len(posts), post, post * cost_per_post,
-        post * cost_per_post / saved_per_request if saved_per_request > 0 else None,
-        actual, curve)
+    cost, payback = _cost_and_payback(reqs, post, best.threshold)
+    return ModelThreshold(model, best.threshold, source, len(posts), post, cost, payback,
+                          actual, curve)
+
+
+def _cost_and_payback(reqs: list[_Req], post: int, threshold: int) -> tuple[float, float | None]:
+    """Compaction cost and payback at `threshold`, priced at the average prices of `reqs`."""
+    if not reqs:
+        return 0.0, None
+    cost_per_post = sum(r.cost_per_post for r in reqs) / len(reqs)
+    read = sum(r.read_price for r in reqs) / len(reqs)
+    saved_per_request = (threshold - post) * read
+    cost = post * cost_per_post
+    return cost, cost / saved_per_request if saved_per_request > 0 else None
 
 
 def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
@@ -140,8 +156,13 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         if before:  # a compaction belongs to the model of the request just before it
             posts.setdefault(before[-1], []).append(c["post_tokens"])
     all_posts = [p for ps in posts.values() for p in ps]
+    own_prices: dict[str, tuple[float, float]] = {}
+    for model in {r.model for r in reqs}:
+        mine = [r for r in reqs if r.model == model]
+        own_prices[model] = (sum(r.cost_per_post for r in mine) / len(mine),
+                             sum(r.read_price for r in mine) / len(mine))
     if not all_posts:
-        return CompactAnalysis((), None, stream_of)
+        return CompactAnalysis((), None, stream_of, own_prices)
 
     global_ = _fit(None, reqs, all_posts, "global", step)
     models = []
@@ -149,11 +170,13 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         if len(ps) >= min_sample:
             models.append(_fit(model, [r for r in reqs if r.model == model], ps, "model", step))
         else:
-            own = _fit(model, [r for r in reqs if r.model == model], ps, "model", step)
+            mine = [r for r in reqs if r.model == model]
+            own = _fit(model, mine, ps, "model", step)
+            cost, payback = _cost_and_payback(mine, own.post_tokens_p75, global_.threshold)
             models.append(ModelThreshold(
                 model, global_.threshold, "global", len(ps), own.post_tokens_p75,
-                own.compaction_cost, own.payback_requests, own.actual_cost, global_.curve))
-    return CompactAnalysis(tuple(models), global_, stream_of)
+                cost, payback, own.actual_cost, global_.curve))
+    return CompactAnalysis(tuple(models), global_, stream_of, own_prices)
 
 
 def read_price(model: str, day: date, table=None) -> float | None:
