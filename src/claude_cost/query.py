@@ -17,6 +17,14 @@ class DaySpend:
     requests: int
 
 
+@dataclass(frozen=True)
+class SessionSummary:
+    session_id: str  # the logical Session: its earliest transcript's id
+    cost: float
+    requests: int
+    transcripts: tuple[str, ...]  # every transcript grouped into this Session
+
+
 class QueryService:
     def __init__(self, conn: sqlite3.Connection, timezone: str | None = None):
         self._conn = conn
@@ -37,6 +45,20 @@ class QueryService:
         days = (end - start).days + 1
         return [DaySpend(d, *totals.get(d, (0.0, 0)))
                 for d in (start + timedelta(n) for n in range(days))]
+
+    def session_summaries(self) -> list[SessionSummary]:
+        """One row per Session (logical conversation), oldest first."""
+        rows = self._conn.execute(
+            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, "
+            f"SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
+            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            "GROUP BY sid ORDER BY first, sid").fetchall()
+        members: dict[str, list[str]] = {}
+        for r in self._conn.execute(
+                "SELECT stem, logical_session_id FROM session_links ORDER BY stem"):
+            members.setdefault(r["logical_session_id"], []).append(r["stem"])
+        return [SessionSummary(r["sid"], r["cost"], r["n"],
+                               tuple(members.get(r["sid"], [r["sid"]]))) for r in rows]
 
     def unpriced_models(self) -> list[str]:
         rows = self._conn.execute(
