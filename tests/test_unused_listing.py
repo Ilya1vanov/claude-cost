@@ -100,3 +100,16 @@ def test_drains_command_lists_unused_listing(root, configure):
     out = io.StringIO()
     assert cli.main(["drains"], env=configure(root), now=NOW, out=out) == 0
     assert "Unused listing" in out.getvalue() and "skill big in p" in out.getvalue()
+
+
+def test_a_removed_listing_stops_counting_from_the_removal(root, service_for):
+    servers = {"srv": "x" * 36_000}   # 10,000 tokens
+    root.write_transcript("p", "s1", [
+        req("s1-1", "2026-10-30T10:00:00Z", write_1h=1000),
+        req("s1-2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+        req("s1-3", "2026-10-30T10:10:00Z", cache_read=1_000_000),
+    ], extra_lines=[mcp_listing_line("2026-10-30T09:59:00Z", servers),
+                    mcp_listing_line("2026-10-30T10:07:00Z", {}, uuid="rm", removed=("srv",))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    # only the request before the removal read the listing: 1 x 10K x $0.20/M
+    assert f.avoidable == pytest.approx(0.002, rel=1e-3)

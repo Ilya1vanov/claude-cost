@@ -58,6 +58,13 @@ def _attachment_listings(att: dict, ts: float) -> list[tuple]:
     return out
 
 
+def _attachment_removals(att: dict, ts: float) -> list[tuple]:
+    if att.get("type") != "mcp_instructions_delta":
+        return []
+    return [("mcp", server_key(n), ts) for n in att.get("removedNames") or []
+            if isinstance(n, str)]
+
+
 def _tool_uses(rec: dict, ts: float) -> list[tuple]:
     content = (rec.get("message") or {}).get("content")
     out = []
@@ -93,6 +100,7 @@ class Parsed:
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
     compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
     listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
+    removals: list[tuple] = field(default_factory=list)  # (kind, name, ts)
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
     # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
     title: str | None = None
@@ -182,8 +190,9 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             att = rec.get("attachment")
             if isinstance(att, dict):
                 try:
-                    parsed.listings.extend(_attachment_listings(
-                        att, _parse_ts(rec["timestamp"]).timestamp()))
+                    ts = _parse_ts(rec["timestamp"]).timestamp()
+                    parsed.listings.extend(_attachment_listings(att, ts))
+                    parsed.removals.extend(_attachment_removals(att, ts))
                 except (KeyError, TypeError, ValueError):
                     pass
             continue
@@ -559,6 +568,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO listings VALUES (?,?,?,?,?,?,?)",
                                  [(stem, agent, project, k, n, ts, tok)
                                   for k, n, ts, tok in parsed.listings])
+                conn.executemany("INSERT OR IGNORE INTO listing_removals VALUES (?,?,?,?,?)",
+                                 [(stem, agent, k, n, ts) for k, n, ts in parsed.removals])
                 conn.executemany("INSERT OR IGNORE INTO tool_uses VALUES (?,?,?,?,?,?,?)",
                                  [(uid, stem, agent, project, k, n, ts)
                                   for uid, k, n, ts in parsed.uses])

@@ -45,6 +45,10 @@ def detect(ctx: FindingContext) -> Detection:
         sid = sid_of.get(x["stem"], x["stem"])
         key = (x["project"], sid, x["agent_id"], x["kind"], x["name"])
         listed.setdefault(key, (x["ts_epoch"], x["tokens"]))
+    removed: dict[tuple, list[float]] = defaultdict(list)  # removal times
+    for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals"):
+        sid = sid_of.get(x["stem"], x["stem"])
+        removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
     elsewhere: dict[str, int] = defaultdict(int)  # kind:name -> invocations in any project
     for proj, counts in used.items():
         for k, n in counts.items():
@@ -60,6 +64,9 @@ def detect(ctx: FindingContext) -> Detection:
             continue
         # requests after the one that wrote the Listing read it from the cache
         later = [r for r in sorted(reqs, key=lambda r: (r.ts, r.message_id)) if r.ts >= ts][1:]
+        gone = min((t for t in removed.get((sid, agent, kind, name), ()) if t > ts), default=None)
+        if gone is not None:  # a removed Listing is no longer read from that point
+            later = [r for r in later if r.ts < gone]
         cost = 0.0
         for r in later:
             c = _read_price(ctx, r, tokens)

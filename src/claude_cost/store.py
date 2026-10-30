@@ -171,6 +171,16 @@ CREATE TABLE IF NOT EXISTS listings (
   tokens INTEGER NOT NULL,
   PRIMARY KEY (stem, agent_id, kind, name)
 );
+-- Listing removals (review fix): an `mcp_instructions_delta` `removedNames` entry; the Listing
+-- stops being read from ts_epoch on.
+CREATE TABLE IF NOT EXISTS listing_removals (
+  stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ts_epoch REAL NOT NULL,
+  PRIMARY KEY (stem, agent_id, kind, name, ts_epoch)
+);
 -- Skill calls and MCP tool calls, deduped by tool_use id; mcp name = normalised server key
 CREATE TABLE IF NOT EXISTS tool_uses (
   tool_use_id TEXT PRIMARY KEY,

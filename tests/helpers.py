@@ -97,13 +97,14 @@ def skill_listing_line(ts: str, skills: dict[str, str], uuid: str = "sl") -> str
                                       "isInitial": True}})
 
 
-def mcp_listing_line(ts: str, servers: dict[str, str], uuid: str = "ml") -> str:
+def mcp_listing_line(ts: str, servers: dict[str, str], uuid: str = "ml",
+                     removed: tuple[str, ...] = ()) -> str:
     """An `mcp_instructions_delta` attachment; `servers` maps display name -> instructions."""
     return json.dumps({"type": "attachment", "uuid": f"{uuid}-{ts}", "timestamp": ts,
                        "attachment": {"type": "mcp_instructions_delta",
                                       "addedNames": list(servers),
                                       "addedBlocks": [f"## {n}\n{t}" for n, t in servers.items()],
-                                      "removedNames": []}})
+                                      "removedNames": list(removed)}})
 
 
 def tool_use_line(ts: str, tool_use_id: str, name: str, input: dict | None = None,
