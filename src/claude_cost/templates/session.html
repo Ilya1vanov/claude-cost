@@ -45,7 +45,7 @@
     <h2>Requests</h2>
     <div class="table-wrap"><table id="requests">
       <tr><th>Time</th><th class="num">Context</th><th class="num">Cost</th><th>Marks</th></tr>
-      {% for p in t.sequence %}{% if p.trigger is defined %}<tr class="compaction{% if p.late %} late-compact{% endif %}"><td>{{ when(p.ts) }}</td>
+      {% for kind, p in t.sequence %}{% if kind == "compaction" %}<tr class="compaction{% if p.late %} late-compact{% endif %}"><td>{{ when(p.ts) }}</td>
         <td colspan="3">Compaction ({{ p.trigger }}): {{ "{:,}".format(p.pre_tokens) }} to {{ "{:,}".format(p.post_tokens) }} tokens{% if p.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td></tr>
       {% else %}<tr><td>{{ when(p.ts) }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
         <td>{% if p.idle %}<span class="badge idle">idle gap {{ (p.gap_seconds / 60)|round|int }} min</span>{% endif %}

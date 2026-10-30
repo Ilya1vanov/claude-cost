@@ -183,15 +183,16 @@ class SessionTimeline:
     link_kind: str | None = None
 
     @property
-    def sequence(self) -> tuple[TimelinePoint | CompactionMark, ...]:
-        """The requests with each compaction placed where it happened, in time order."""
-        out: list[TimelinePoint | CompactionMark] = []
+    def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
+        """(kind, item) pairs, kind "request" or "compaction": the requests with each
+        compaction placed where it happened, in time order."""
+        out: list[tuple[str, TimelinePoint | CompactionMark]] = []
         pending = list(self.compactions)
         for i, p in enumerate(self.points):
             while pending and pending[0].before_index <= i:
-                out.append(pending.pop(0))
-            out.append(p)
-        return tuple(out + pending)
+                out.append(("compaction", pending.pop(0)))
+            out.append(("request", p))
+        return tuple(out + [("compaction", c) for c in pending])
 
 
 PERIOD_MODES = ("last7", "week", "month")
