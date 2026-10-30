@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
+from markupsafe import Markup, escape
 from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
 
 from . import explore
@@ -38,6 +39,17 @@ def create_app(service_factory: Callable[[], QueryService],
     def close_services(_exc):
         for svc in g.pop("services", []):
             svc.close()
+
+    @app.template_global()
+    def session_label(session_id: str, link: bool = True) -> Markup:
+        """A Session by its label, the id on hover; linked to its Session page unless `link` is off."""
+        if "session_labels" not in g:
+            g.session_labels = service_factory().session_labels()
+        label, sid = escape(g.session_labels.get(session_id, session_id)), escape(session_id)
+        if not link:
+            return Markup(f'<span class="id" title="{sid}">{label}</span>')
+        return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id))}" '
+                      f'class="id" title="{sid}">{label}</a>')
 
     @app.post("/refresh")
     def force_refresh():
@@ -266,6 +278,9 @@ def create_app(service_factory: Callable[[], QueryService],
                  "threshold": [p.threshold for p in timeline.points],
                  "over": [i for i, p in enumerate(timeline.points)
                           if p.threshold is not None and p.context_tokens > p.threshold],
+                 "compactions": [{"index": c.before_index, "trigger": c.trigger,
+                                  "pre": c.pre_tokens, "post": c.post_tokens, "late": c.late}
+                                 for c in timeline.compactions],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,

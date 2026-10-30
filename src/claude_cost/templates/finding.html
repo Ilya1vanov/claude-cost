@@ -17,13 +17,23 @@
       <div class="meta">{% if f.formula %}Formula: {{ f.formula }}{% else %}&nbsp;{% endif %}</div></div>
   </div>
   {% if f.detail %}<p class="note">{{ f.detail }}</p>{% endif %}
+  {% if f.table %}
+  <section class="card">
+    <h2>Details</h2>
+    <div class="table-wrap"><table id="detail">
+      <tr>{% for c in f.table.columns %}<th{% if loop.index > 3 %} class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr>
+      {% for row in f.table.rows %}<tr>{% for cell in row %}<td{% if loop.index > 3 %} class="num"{% endif %}>{% if cell is string %}{{ cell }}{% else %}<details><summary>{{ cell.summary }}</summary>{% for i in cell.items %}<div>{{ i }}</div>{% endfor %}</details>{% endif %}</td>{% endfor %}</tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% endif %}
   <p class="callout">{{ note }}</p>
 
   <section class="card">
     <h2>Sessions covered</h2>
     <div class="table-wrap"><table id="sessions">
       <tr><th>Session</th><th class="num">Requests</th><th class="num">Attributed</th>{% if f.formula %}<th class="num">Avoidable</th>{% endif %}</tr>
-      {% for s in f.sessions %}<tr><td>{{ ui.sid(s.session_id) }}</td><td class="num">{{ s.requests }}</td>
+      {% for s in f.sessions %}<tr><td>{{ session_label(s.session_id) }}</td><td class="num">{{ s.requests }}</td>
         <td class="num">${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td class="num">${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
       {% else %}<tr><td colspan="4" class="empty">None</td></tr>{% endfor %}
     </table></div>
@@ -33,7 +43,7 @@
     <h2>Subagents covered</h2>
     <div class="table-wrap"><table id="subagents">
       <tr><th>Subagent</th><th>Session</th><th>Subagent type</th><th class="num">Requests</th><th class="num">Attributed</th></tr>
-      {% for a in f.subagents %}<tr><td>{{ ui.sid(a.agent_id) }}</td><td>{{ ui.sid(a.session_id) }}</td><td>{{ a.agent_type or "" }}</td>
+      {% for a in f.subagents %}<tr><td>{{ ui.sid(a.agent_id) }}</td><td>{{ session_label(a.session_id) }}</td><td>{{ a.agent_type or "" }}</td>
         <td class="num">{{ a.requests }}</td><td class="num">${{ "%.2f"|format(a.attributed) }}</td></tr>
       {% endfor %}
     </table></div>
@@ -42,7 +52,7 @@
     <h2>Requests covered</h2>
     <div class="table-wrap"><table id="requests">
       <tr><th>Request</th><th>Session</th><th>Model</th><th class="num">Cost</th>{% if f.formula %}<th class="num">Avoidable (before $0 floor)</th>{% endif %}</tr>
-      {% for r in f.requests %}<tr><td>{{ ui.sid(r.message_id, 14) }}</td><td>{{ ui.sid(r.session_id) }}</td><td>{{ r.model }}</td>
+      {% for r in f.requests %}<tr><td>{{ ui.sid(r.message_id, 14) }}</td><td>{{ session_label(r.session_id) }}</td><td>{{ r.model }}</td>
         <td class="num">${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td class="num">{{ "%.2f"|format(r.avoidable) }}</td>{% endif %}</tr>
       {% endfor %}
     </table></div>
