@@ -7,6 +7,7 @@
   <div class="page-head">
     <div>
       <h1>Spotlight: {{ s.name }}</h1>
+      {% if s.kind != "auto" %}<form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>{% endif %}
       <p class="sub" id="spotlight-total">Lifetime: <strong>${{ "%.2f"|format(s.total) }}</strong> across {{ s.sessions }} Sessions and {{ s.requests }} requests
         ({{ {"auto": "Auto-spotlight for this key", "rule": "rule", "pinned": "pinned Sessions"}[s.kind] }}{% if s.rule and s.kind == "rule" %}: <code>{{ s.rule }}</code>{% endif %}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
@@ -16,6 +17,7 @@
     <form method="post" action="{{ url_for('spotlight_rule', name=s.name) }}" class="form-row">
       <label>Rule <input name="rule" value="{{ s.rule }}"></label> <button type="submit" class="ghost">Save rule</button>
     </form>
+    <form method="post" action="{{ url_for('spotlight_rule', name=s.name) }}" class="form-row"><input type="hidden" name="rule" value=""><button type="submit" class="ghost">Remove rule</button></form>
     {% endif %}
   </div>
 
@@ -84,9 +86,6 @@
       <button type="submit">Pin</button>
     </form>
   </section>
-  {% if s.kind != "auto" %}
-  <form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}"><button type="submit" class="danger">Delete Spotlight</button></form>
-  {% endif %}
 {% endblock %}
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>

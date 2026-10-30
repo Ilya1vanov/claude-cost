@@ -125,7 +125,8 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/spotlights")
     def spotlight_list():
         service = service_factory()
-        return render_template("spotlights.html", spotlights=service.spotlights())
+        return render_template("spotlights.html", spotlights=service.spotlights(),
+                               auto_enabled=service.auto_spotlights_enabled())
 
     @app.post("/spotlights")
     def spotlight_create():
