@@ -194,9 +194,11 @@ CREATE TABLE IF NOT EXISTS tool_uses (
 """
 
 
-def connect(path: Path) -> sqlite3.Connection:
+def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
+    """`schema=False` skips the CREATE script: for per-request opens of an initialised store."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
+    if schema:
+        conn.executescript(SCHEMA)
     return conn

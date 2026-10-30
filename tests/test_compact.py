@@ -131,3 +131,39 @@ def test_min_sample_and_step_are_configurable(root, service_for):
     opus = a.for_model("claude-opus-5-5")
     steps = {b.threshold - a_.threshold for a_, b in zip(opus.curve, opus.curve[1:])}
     assert steps == {5_000}
+
+
+def test_replay_resets_at_a_real_compaction_and_never_goes_negative():
+    from datetime import date  # noqa: F401
+    from claude_cost.compact import _Req, replay
+    # contexts 100K, 150K, real compaction to 20K, 30K; T=120K, post=10K; read $1/token, post $0
+    ctxs = [100_000, 150_000, 20_000, 30_000]
+    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, 1.0, 0.0) for i, c in enumerate(ctxs)]
+    # the 150K request is hypothetically compacted to 10K; the real drop to 20K resets that
+    assert replay(reqs, 120_000, 10_000) == 100_000 + 10_000 + 20_000 + 30_000
+
+
+def test_payback_is_for_the_threshold_applied_and_the_models_own_prices(root, service_for):
+    from claude_cost import pricing
+    _ramp_sessions(root, 20)                                   # opus: own threshold
+    _ramp_sessions(root, 3, model="claude-sonnet-5-5", prefix="x")
+    root.write_transcript("p", "h", [req("h1", "2026-10-02T10:00:00Z", model="claude-haiku-5-5", cache_read=50_000)])
+    a = service_for(root).compact_thresholds()
+    table = pricing.build_table(None)
+
+    def per_post(model):
+        p = pricing.find_price(model, __import__("datetime").date(2026, 10, 2), table)
+        return (p.output + p.input * pricing.WRITE_1H_MULT) / 1_000_000
+
+    def read(model):
+        return pricing.find_price(model, __import__("datetime").date(2026, 10, 2), table).cache_read / 1_000_000
+
+    sonnet = a.for_model("claude-sonnet-5-5")
+    assert sonnet.source == "global" and sonnet.threshold == a.global_.threshold
+    assert sonnet.compaction_cost == pytest.approx(10_000 * per_post("claude-sonnet-5-5"))
+    assert sonnet.payback_requests == pytest.approx(
+        sonnet.compaction_cost / ((a.global_.threshold - 10_000) * read("claude-sonnet-5-5")))
+    haiku = a.for_model("claude-haiku-5-5")  # no compactions: global T and p75, haiku prices
+    assert haiku.threshold == a.global_.threshold
+    assert haiku.compaction_cost == pytest.approx(a.global_.post_tokens_p75 * per_post("claude-haiku-5-5"))
+    assert haiku.compaction_cost != pytest.approx(a.global_.compaction_cost)

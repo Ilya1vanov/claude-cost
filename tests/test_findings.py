@@ -204,3 +204,11 @@ def test_web_since_accepts_days_back_like_the_cli(root, service_for):
     page = client.get("/findings/fable-usage?since=7d").get_data(as_text=True)
     assert "2026-10-23" in page   # NOW is 2026-10-30
     assert client.get("/findings?since=garbage").status_code == 400
+
+
+def test_cold_resume_gap_is_per_stream_not_per_session(root, service_for):
+    """A Subagent running during the idle period does not hide the main stream's Cold resume."""
+    _cold_session(root)  # main: 10:00 write, 13:00 cold resume
+    root.write_subagent_transcript("p", "s1", "a1", [req("sub", "2026-10-30T12:30:00Z", write_1h=1_000)])
+    f = _by_id(service_for(root).findings())["cold-resume"]
+    assert [r.message_id for r in f.requests] == ["resume"]

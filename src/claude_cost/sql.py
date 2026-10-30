@@ -2,8 +2,12 @@
 the findings, so each formula is written once. All assume `requests` aliased `r`."""
 from __future__ import annotations
 
-COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
-            "+ cost_cache_write_1h + cost_cache_read")
+# Cost components: (display name, `requests` column). The one list everything derives from.
+COMPONENTS = (("input", "cost_input"), ("output", "cost_output"),
+              ("cache write (5m)", "cost_cache_write_5m"),
+              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
+
+COST_SQL = " + ".join(col for _, col in COMPONENTS)
 
 # Prompt size of a request: everything the model read or wrote to the cache.
 CONTEXT_SQL = ("r.input_tokens + r.cache_read_tokens + r.cache_write_5m_tokens "

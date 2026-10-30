@@ -176,7 +176,7 @@ class FindingContext:
 
     def median_first_context(self) -> float:
         """Median context of the first request of every Session (all history)."""
-        firsts = [r.context for r in self.rows if r.gap is None]
+        firsts = [r.context for r in self.rows if r.gap is None and r.agent_id is None]
         return statistics.median(firsts) if firsts else 0.0
 
 
@@ -196,12 +196,13 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
            "LEFT JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
            "FROM subagent_files GROUP BY agent_id) sf ON sf.agent_id = sv.agent_id "
            "ORDER BY r.ts_epoch, r.message_id")
-    prev: dict[str, float] = {}
+    prev: dict[tuple, float] = {}  # per stream (session + agent), as the cache classification is
     out = []
     for x in conn.execute(sql):
         ts = x["ts_epoch"]
-        gap = ts - prev[x["sid"]] if x["sid"] in prev else None
-        prev[x["sid"]] = ts
+        stream = (x["sid"], x["agent_id"])
+        gap = ts - prev[stream] if stream in prev else None
+        prev[stream] = ts
         out.append(RequestRow(
             x["message_id"], x["sid"], x["project"], ts, local_day(ts, tz),
             x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],

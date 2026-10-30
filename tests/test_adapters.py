@@ -242,3 +242,44 @@ def test_cli_links_desktop_sessions_from_a_store_set_on_the_data_root(root, desk
         f'data_roots = [{{ path = "{root.path}", desktop_session_store = "{desktop.path}" }}, "/x"]\n'
         f'desktop_session_stores = ["{other}"]\n')
     assert cli.load_config(env).desktop_stores == [other, desktop.path]
+
+
+def test_today_and_since_use_the_configured_time_zone(root, configure):
+    from datetime import datetime, timezone
+    import pathlib
+    env = configure(_root_with_spend(root))
+    cfg_file = pathlib.Path(env["CLAUDE_COST_CONFIG_DIR"]) / "config.toml"
+    cfg_file.write_text(cfg_file.read_text().replace('"UTC"', '"Pacific/Auckland"'))
+    now = datetime(2026, 10, 30, 21, 30, tzinfo=timezone.utc)  # already Oct 31 in Auckland
+    out = io.StringIO()
+    assert cli.main(["today"], env=env, now=now, out=out) == 0
+    assert out.getvalue().startswith("Today (2026-10-31)")
+    cfg = cli.load_config(env)
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    page = create_app(factory, lambda: now).test_client().get("/").get_data(as_text=True)
+    assert "2026-10-31" in page
+
+
+def test_web_closes_its_connections_and_open_skips_the_schema(root, configure, tmp_path):
+    import pytest
+    import sqlite3
+    env = configure(_root_with_spend(root))
+    cfg = cli.load_config(env)
+    opened = []
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        opened.append(conn)
+        return QueryService(conn, cfg.timezone)
+    assert create_app(factory, lambda: NOW).test_client().get("/").status_code == 200
+    assert opened
+    for conn in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")  # closed when the request ended
+    fresh = store.connect(tmp_path / "nothing.sqlite", schema=False)  # per-request open: no DDL
+    assert fresh.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0

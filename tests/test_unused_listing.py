@@ -113,3 +113,14 @@ def test_a_removed_listing_stops_counting_from_the_removal(root, service_for):
     f = _by_id(service_for(root).findings())["unused-listing"]
     # only the request before the removal read the listing: 1 x 10K x $0.20/M
     assert f.avoidable == pytest.approx(0.002, rel=1e-3)
+
+
+def test_skill_used_via_attribution_skill_is_not_unused(root, service_for):
+    """A skill invoked by slash command is recorded as the request's attributionSkill."""
+    import json
+    from helpers import assistant_lines
+    rec = assistant_lines(req("slash", "2026-10-30T10:06:00Z", output=10), "s1")[0]
+    rec["attributionSkill"] = "tdd"
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000)), json.dumps(rec)]
+    _session(root, "p", "s1", listing)
+    assert _by_id(service_for(root).findings())["unused-listing"].requests == ()

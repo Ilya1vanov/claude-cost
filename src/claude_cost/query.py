@@ -15,7 +15,7 @@ from . import findings as findings_mod
 from . import pricing, spotlights
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
-from .sql import CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
+from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
 
@@ -183,9 +183,6 @@ class SessionTimeline:
 
 
 PERIOD_MODES = ("last7", "week", "month")
-COMPONENTS = (("input", "cost_input"), ("output", "cost_output"),
-              ("cache write (5m)", "cost_cache_write_5m"),
-              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
 
 
 @dataclass(frozen=True)
@@ -339,6 +336,9 @@ class QueryService:
         self._key_pattern = key_pattern
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
+
+    def close(self) -> None:
+        self._conn.close()
 
     def local_time(self, epoch: float) -> datetime:
         """An epoch timestamp as an aware datetime in the configured time zone."""
@@ -533,7 +533,7 @@ class QueryService:
 
         `include_today` only affects `last7`; calendar periods always run through today.
         """
-        today = self._today(now)
+        today = self.today(now)
         cur, base, full = resolve_periods(mode, today, include_today)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
         components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
@@ -587,7 +587,7 @@ class QueryService:
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
         """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
-        today = self._today(now)
+        today = self.today(now)
         cur, base, _ = resolve_periods(mode, today, include_today)
         return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
 
@@ -629,7 +629,7 @@ class QueryService:
                      top_n: int = 10) -> list[findings_mod.Finding]:
         """The findings covering the most spend inside the Period (same periods as
         period_comparison), costliest first; findings that cover nothing are left out."""
-        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
         hits = [f for f in self.findings(cur.start, cur.end) if f.attributed > 0]
         return sorted(hits, key=lambda f: (-f.attributed, f.id))[:top_n]
 
@@ -646,7 +646,7 @@ class QueryService:
         row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
         if row["first"] is None:
             return []
-        today = self._today(now)
+        today = self.today(now)
         first = self._local_day(row["first"])
         if mode == "week":
             cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
@@ -667,7 +667,7 @@ class QueryService:
         starts = sorted(set(starts))
         if len(starts) < 2:
             raise ValueError("select at least two different periods")
-        today = self._today(now)
+        today = self.today(now)
         periods = [calendar_period(mode, s) for s in starts]
         if periods[-1].start > today:
             raise ValueError(f"{periods[-1].start} has not started yet")
@@ -692,7 +692,8 @@ class QueryService:
             for p, c, d in zip(periods, costs, dailies))
         return Comparison(mode, baseline, entries, max(p.days for p in periods))
 
-    def _today(self, now: datetime) -> date:
+    def today(self, now: datetime) -> date:
+        """`now` as a calendar day in the configured time zone."""
         return today(now, self._tz)
 
     def price_table(self) -> list[PriceRow]:
@@ -779,8 +780,8 @@ class QueryService:
     def _request_rows(self) -> list:
         return self._conn.execute(
             f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent, "
-            "r.ts_epoch AS ts, r.cost_input, r.cost_output, r.cost_cache_write_5m, "
-            "r.cost_cache_write_1h, r.cost_cache_read "
+            f"r.ts_epoch AS ts, {COST_SQL} AS cost, "
+            + ", ".join(f"r.{c}" for _, c in COMPONENTS) + " "
             f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id").fetchall()
 
@@ -788,7 +789,7 @@ class QueryService:
         mine = [r for r in rows if r["sid"] in members]
         times = [r["ts"] for r in mine]
         return SpotlightSummary(
-            defn.name, defn.kind, defn.rule, sum(sum(r[c] for _, c in COMPONENTS) for r in mine),
+            defn.name, defn.kind, defn.rule, sum(r["cost"] for r in mine),
             len(mine), len(members), self._local_day(min(times)) if times else None,
             self._local_day(max(times)) if times else None)
 
@@ -805,14 +806,14 @@ class QueryService:
     def top_spotlights(self, mode: str, now: datetime, include_today: bool = True,
                        top_n: int = 10) -> list[SpotlightRank]:
         """Spotlights ranked by spend inside the Period (same periods as period_comparison)."""
-        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
         lo, hi = self._bounds(cur)
         _, defs, member = self._spotlight_state()
         rows = self._request_rows()
         ranked = []
         for d in defs:
             members = member[d.name].members
-            period_cost = sum(sum(r[c] for _, c in COMPONENTS) for r in rows
+            period_cost = sum(r["cost"] for r in rows
                               if r["sid"] in members and lo <= r["ts"] < hi)
             if period_cost > 0:
                 ranked.append(SpotlightRank(self._summary(d, members, rows), period_cost))
@@ -935,4 +936,4 @@ class QueryService:
 
     def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
         """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit, self.findings)
+        return explore.options(self._conn, limit)

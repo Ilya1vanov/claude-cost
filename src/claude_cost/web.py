@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from flask import Flask, Response, abort, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
 
 from . import explore
 from .cache import COLD
@@ -25,6 +25,17 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
+    make_service = service_factory
+
+    def service_factory() -> QueryService:
+        svc = make_service()
+        g.setdefault("services", []).append(svc)
+        return svc
+
+    @app.teardown_appcontext
+    def close_services(_exc):
+        for svc in g.pop("services", []):
+            svc.close()
 
     @app.post("/refresh")
     def force_refresh():
@@ -45,7 +56,7 @@ def create_app(service_factory: Callable[[], QueryService],
             if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
-        today = now().date()
+        today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
         return render_template(
             "dashboard.html",
@@ -84,7 +95,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def _since_arg():
         try:
             text = request.args.get("since")
-            return parse_since(text, now().date()) if text else None
+            return parse_since(text, service_factory().today(now())) if text else None
         except ValueError:
             abort(400, "since must be a date like 2026-10-01 or days like 7d")
 

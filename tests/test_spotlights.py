@@ -224,3 +224,20 @@ def test_user_spotlight_overrides_auto_of_same_name(root, service_for):
     svc.save_spotlight("PROJ-1", "other")
     [s] = [s for s in svc.spotlights() if s.name == "PROJ-1"]
     assert s.kind == "rule" and s.sessions == 1
+
+
+def test_fork_does_not_inherit_keys_from_copied_history_records(root, service_for):
+    """Copied (forkedFrom) records carry the parent's branch/title/prompt: not the Fork's own."""
+    import json
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M)], branch="proj-12")
+    copied = [
+        json.dumps({"type": "custom-title", "customTitle": "PROJ-12 work", "sessionId": "s9",
+                    "forkedFrom": {"sessionId": "s1"}}),
+        json.dumps({"type": "user", "sessionId": "s9", "timestamp": "2026-10-01T00:00:00Z",
+                    "gitBranch": "proj-12", "cwd": "/w/proj-12", "forkedFrom": {"sessionId": "s1"},
+                    "message": {"role": "user", "content": "fix PROJ-12"}})]
+    root.write_transcript("p", "s9", [req("m1", "2026-10-29T01:00:00Z", output=M, forked_from="s1"),
+                                      req("m9", "2026-10-30T01:00:00Z", output=M)], extra_lines=copied)
+    d = service_for(root, key_pattern=KEY).spotlight("PROJ-12")
+    assert [s.session_id for s in d.sessions] == ["s1"]
+    assert [r.session_id for r in d.related] == ["s9"]
