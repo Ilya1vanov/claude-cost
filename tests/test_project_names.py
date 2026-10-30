@@ -33,6 +33,16 @@ def test_worktree_shows_repo_and_worktree_name(root, service_for):
     assert n["-a-shop--claude-worktrees-fix"] == "shop (fix)"
 
 
+def test_a_plain_folder_named_worktrees_is_not_a_worktree(root, service_for):
+    n = _names(root, service_for, {"-a": "/Users/me/worktrees/myrepo"})
+    assert n["-a"] == "myrepo"
+
+
+def test_collisions_extend_with_more_parents_until_unique(root, service_for):
+    n = _names(root, service_for, {"-a": "/a/work/x/api", "-b": "/a/play/x/api", "-c": "/a/shop"})
+    assert n["-a"] == "work/x/api" and n["-b"] == "play/x/api" and n["-c"] == "shop"
+
+
 def test_project_without_working_directory_shows_raw_key(root, service_for):
     n = _names(root, service_for, {"-a-mystery": None})
     assert n["-a-mystery"] == "-a-mystery"

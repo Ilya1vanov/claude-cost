@@ -7,15 +7,14 @@ from collections import Counter
 from pathlib import PurePosixPath
 
 
-def _split(cwd: str) -> tuple[str, str, str | None]:
-    """(name, parent, worktree-display or None) for a working directory."""
+def _split(cwd: str) -> tuple[tuple[str, ...], str | None]:
+    """(path parts, worktree-display or None) for a working directory. A worktree is the
+    `<repo>/.claude/worktrees/<name>` layout Claude Code creates, nothing looser."""
     parts = PurePosixPath(cwd).parts
-    if "worktrees" in parts[:-1]:
-        i = parts.index("worktrees")
-        repo_at = i - 2 if i >= 2 and parts[i - 1] == ".claude" else i - 1
-        if repo_at >= 0 and i + 1 < len(parts):
-            return parts[-1], "", f"{parts[repo_at]} ({parts[i + 1]})"
-    return parts[-1] if parts else cwd, parts[-2] if len(parts) > 1 else "", None
+    for i in range(2, len(parts) - 1):
+        if parts[i] == "worktrees" and parts[i - 1] == ".claude":
+            return parts, f"{parts[i - 2]} ({parts[i + 1]})"
+    return parts or (cwd,), None
 
 
 def project_display_names(conn: sqlite3.Connection) -> dict[str, str]:
@@ -32,13 +31,25 @@ def project_display_names(conn: sqlite3.Connection) -> dict[str, str]:
     for r in conn.execute("SELECT DISTINCT project FROM requests"):
         cwds.setdefault(r["project"], "")
     split = {p: _split(c) if c else None for p, c in cwds.items()}
-    plain = Counter(s[0] for s in split.values() if s and s[2] is None)
+    plain = Counter(s[0][-1] for s in split.values() if s and s[1] is None)
     out = {}
     for p, s in split.items():
         if s is None:
             out[p] = p
-        elif s[2] is not None:
-            out[p] = s[2]
+        elif s[1] is not None:
+            out[p] = s[1]
         else:
-            out[p] = f"{s[1]}/{s[0]}" if plain[s[0]] > 1 and s[1] else s[0]
+            out[p] = s[0][-1] if plain[s[0][-1]] < 2 else _unique(p, s[0], split)
     return out
+
+
+def _unique(key: str, parts: tuple[str, ...], split: dict) -> str:
+    """The name with as many parent folders as it takes to tell it from the other plain
+    projects of the same name."""
+    rivals = [s[0] for p, s in split.items()
+              if p != key and s and s[1] is None and s[0][-1] == parts[-1]]
+    for depth in range(2, len(parts) + 1):
+        label = parts[-depth:]
+        if all(r[-depth:] != label for r in rivals):
+            break
+    return "/".join(label)
