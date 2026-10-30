@@ -76,6 +76,36 @@ def test_oversized_context_drain_is_reads_above_threshold_minus_one_compaction(r
     assert f.kind == "drain" and f.formula
 
 
+def test_autocompact_window_is_threshold_plus_the_autocompact_offset(root, service_for):
+    _ramp_sessions(root, 20)                                   # opus: own threshold 130K
+    _ramp_sessions(root, 3, model="claude-sonnet-5-5", prefix="x")
+    a = service_for(root).compact_thresholds()
+    opus, sonnet = a.for_model("claude-opus-5-5"), a.for_model("claude-sonnet-5-5")
+    assert (opus.autocompact_window, opus.window_clamp) == (163_000, None)
+    assert (sonnet.source, sonnet.autocompact_window) == ("global", a.global_.threshold + 33_000)
+    assert a.global_.autocompact_window == a.global_.threshold + 33_000
+
+
+def _ramp_to(root, ctxs, post, model="claude-opus-5-5"):
+    reqs = [req(f"r{k}", f"2026-10-01T10:{k:02d}:00Z", model=model, cache_read=c) for k, c in enumerate(ctxs)]
+    root.write_transcript("p", "r", reqs, extra_lines=[
+        compact_line("c", "2026-10-01T11:00:00Z", ctxs[-1], post, "auto")])
+
+
+def test_autocompact_window_is_raised_to_the_minimum_claude_code_accepts(root, service_for):
+    _ramp_to(root, [5_000 * (k + 1) for k in range(10)], 10_000)
+    low = service_for(root).compact_thresholds().global_
+    assert low.threshold + 33_000 < 100_000
+    assert (low.autocompact_window, low.window_clamp) == (100_000, "raised")
+
+
+def test_autocompact_window_is_lowered_to_the_maximum_claude_code_accepts(root, service_for):
+    _ramp_to(root, [100_000 * (k + 1) for k in range(12)], 990_000)
+    high = service_for(root).compact_thresholds().global_
+    assert high.threshold + 33_000 > 1_000_000
+    assert (high.autocompact_window, high.window_clamp) == (1_000_000, "lowered")
+
+
 def test_timeline_shows_threshold_and_highlights_late_compacts(root, service_for):
     _ramp_sessions(root, 20)
     root.write_transcript("p", "t", [req("t1", "2026-10-25T10:00:00Z", cache_read=30_000),
@@ -97,7 +127,10 @@ def test_timeline_without_compaction_history_has_no_threshold(root, service_for)
 
 
 def test_cli_compact_and_pages(root, configure):
+    import html
     import io
+    import json
+    import re
     from claude_cost import cli, ingest, store
     from claude_cost.query import QueryService
     from claude_cost.web import create_app
@@ -111,6 +144,9 @@ def test_cli_compact_and_pages(root, configure):
     assert cli.main(["compact"], env=env, now=NOW, out=out) == 0
     text = out.getvalue()
     assert "claude-opus-5-5: Compact threshold 130,000 tokens (model)" in text and "payback" in text
+    assert "autoCompactWindow 163,000" in text
+    snippet = json.loads(text[text.index("{\n"):])
+    assert snippet == {"modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 163_000}}}
     cfg = cli.load_config(env)
 
     def factory():
@@ -120,6 +156,10 @@ def test_cli_compact_and_pages(root, configure):
     client = create_app(factory, lambda: NOW).test_client()
     page = client.get("/compact").get_data(as_text=True)
     assert "130,000" in page and "Cost vs threshold" in page
+    assert "Recommended autoCompactWindow" in page and "163,000" in page
+    assert "33,000" in page and "2.1.314" in page
+    page_snippet = json.loads(html.unescape(re.search(r'<pre id="model-settings">(.*?)</pre>', page, re.S).group(1)))
+    assert page_snippet == snippet
     assert "Late compact" in client.get("/session/t").get_data(as_text=True)
 
 

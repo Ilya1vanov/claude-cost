@@ -11,13 +11,21 @@
   {% else %}
   <section class="card">
     <div class="table-wrap"><table id="thresholds">
-      <tr><th>Model</th><th class="num">Compact threshold</th><th>Source</th><th class="num">Compactions</th><th class="num">p75 compaction cost</th><th class="num">Payback</th><th class="num">Observed cost</th></tr>
+      <tr><th>Model</th><th class="num">Compact threshold</th><th>Source</th><th class="num">Compactions</th><th class="num">p75 compaction cost</th><th class="num">Payback</th><th class="num">Observed cost</th><th class="num">Recommended autoCompactWindow</th></tr>
       {% for m in a.models + (a.global_,) %}<tr>
         <td>{{ m.model or "all models (global)" }}</td><td class="num">{{ "{:,}".format(m.threshold) }}</td><td><span class="badge">{{ m.source }}</span></td>
         <td class="num">{{ m.sample_size }}</td><td class="num">${{ "%.2f"|format(m.compaction_cost) }}</td>
         <td class="num">{% if m.payback_requests is none %}n/a{% else %}{{ m.payback_requests|round|int }} requests{% endif %}</td>
-        <td class="num">${{ "%.2f"|format(m.actual_cost) }}</td></tr>{% endfor %}
+        <td class="num">${{ "%.2f"|format(m.actual_cost) }}</td>
+        <td class="num">{{ "{:,}".format(m.autocompact_window) }}{% if m.window_note %}<br><small>{{ m.window_note }}</small>{% endif %}</td></tr>{% endfor %}
     </table></div>
+  </section>
+  <section class="card">
+    <h2>Claude Code settings</h2>
+    <p>Claude Code autocompacts 33,000 tokens before <code>autoCompactWindow</code> (a 20,000 output reserve plus a
+      13,000 buffer, read from Claude Code {{ claude_code_version }}), so the recommended window is the Compact threshold plus 33,000,
+      kept within the 100,000 to 1,000,000 Claude Code accepts. Paste into your Claude Code settings:</p>
+    <pre id="model-settings">{{ a.model_settings_json() }}</pre>
   </section>
   <div class="grid grid-2">
   {% for m in a.models + (a.global_,) if m.model is none or m.source == "model" %}
