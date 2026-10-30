@@ -68,6 +68,29 @@ def cmd_drains(config: Config, now: datetime, out, err, since: str | None) -> in
     return 0
 
 
+def format_compact(analysis) -> str:
+    """Compact threshold per model: T, source, sample size, payback and the cost-vs-T curve."""
+    if analysis.global_ is None:
+        return "No compactions observed yet, so no Compact threshold can be learned."
+    lines = []
+    for m in (*analysis.models, analysis.global_):
+        label = m.model or "all models (global)"
+        payback = "n/a" if m.payback_requests is None else f"{m.payback_requests:,.0f} requests"
+        lines.append(f"{label}: Compact threshold {m.threshold:,} tokens ({m.source}), "
+                     f"{m.sample_size} compactions, p75 compaction ${m.compaction_cost:.2f}, "
+                     f"payback {payback}")
+        if m.model is None or m.source == "model":
+            lines.append("  cost vs threshold: " + ", ".join(
+                f"{c.threshold // 1000}K=${c.cost:.2f}" for c in m.curve) +
+                f" (observed ${m.actual_cost:.2f})")
+    return "\n".join(lines)
+
+
+def cmd_compact(config: Config, now: datetime, out, err) -> int:
+    print(format_compact(_service(config, now, err).compact_thresholds()), file=out)
+    return 0
+
+
 def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> int:
     """Run ingest; on the first run print retention warnings to `err` (stderr)."""
     conn = store.connect(config.store_path)
@@ -192,6 +215,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sub.add_parser("week", help="print this calendar week's spend compared with the previous week")
     p_drains = sub.add_parser("drains", help="list findings: Drains and Opportunities")
     p_drains.add_argument("--since", help="only requests from this date (2026-10-01) or N days back (7d)")
+    sub.add_parser("compact", help="show the learned Compact threshold per model")
     sub.add_parser("prices", help="list the price table in effect and unpriced models")
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
@@ -221,6 +245,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         return cmd_today(config, now_fn(), out, err)
     if args.command == "week":
         return cmd_week(config, now_fn(), out, err)
+    if args.command == "compact":
+        return cmd_compact(config, now_fn(), out, err)
     if args.command == "prices":
         return cmd_prices(config, now_fn(), out, err)
     if args.command == "drains":

@@ -59,6 +59,10 @@ def create_app(service_factory: Callable[[], QueryService],
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
 
+    @app.get("/compact")
+    def compact():
+        return render_template("compact.html", a=service_factory().compact_thresholds())
+
     @app.get("/findings")
     def findings():
         service = service_factory()
@@ -236,7 +240,12 @@ def create_app(service_factory: Callable[[], QueryService],
                  "context": [p.context_tokens for p in timeline.points],
                  "cost": [round(p.cost, 4) for p in timeline.points],
                  "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == "cold"],
-                 "idle": [i for i, p in enumerate(timeline.points) if p.idle]}
+                 "idle": [i for i, p in enumerate(timeline.points) if p.idle],
+                 "threshold": [p.threshold for p in timeline.points],
+                 "over": [i for i, p in enumerate(timeline.points)
+                          if p.threshold is not None and p.context_tokens > p.threshold],
+                 "late": [{"index": c.before_index, "pre": c.pre_tokens}
+                          for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,
                                when=lambda ts: datetime.fromtimestamp(ts, timezone.utc)
                                .strftime("%Y-%m-%d %H:%M:%S UTC"))
