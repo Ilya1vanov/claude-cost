@@ -28,7 +28,8 @@ def _now(config: Config) -> datetime:
 
 def _open(config: Config) -> QueryService:
     return QueryService(store.connect(config.store_path), config.timezone,
-                        price_table=pricing.build_table(config.prices))
+                        price_table=pricing.build_table(config.prices),
+                        key_pattern=config.spotlight_key_pattern)
 
 
 def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> int:

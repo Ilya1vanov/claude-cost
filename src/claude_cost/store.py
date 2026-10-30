@@ -116,6 +116,25 @@ CREATE TABLE IF NOT EXISTS session_relations (
   parent_stem TEXT NOT NULL,
   kind TEXT NOT NULL
 );
+-- Spotlights (ticket #13). session_meta: what rules and key detection read, per main
+-- transcript stem. spotlights/spotlight_pins: user-defined Spotlights (a rule and/or pinned
+-- Sessions, by logical session id); these are user data and survive `ingest --rebuild`.
+CREATE TABLE IF NOT EXISTS session_meta (
+  stem TEXT PRIMARY KEY,
+  custom_title TEXT,
+  git_branch TEXT,
+  cwd TEXT,
+  first_prompt TEXT
+);
+CREATE TABLE IF NOT EXISTS spotlights (
+  name TEXT PRIMARY KEY,
+  rule TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS spotlight_pins (
+  spotlight TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (spotlight, session_id)
+);
 """
 
 

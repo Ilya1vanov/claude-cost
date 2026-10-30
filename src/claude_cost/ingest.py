@@ -46,6 +46,35 @@ class Parsed:
     reqs: dict[str, dict] = field(default_factory=dict)
     relocated: bool = False
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
+    # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
+    title: str | None = None
+    cwd: str | None = None
+    branch: str | None = None
+    prompt: str | None = None
+
+
+def _prompt_text(rec: dict) -> str | None:
+    """The real user prompt of a `user` record (not meta, not an injected `<...>` wrapper)."""
+    if rec.get("type") != "user" or rec.get("isMeta"):
+        return None
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = next((b.get("text") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"), None)
+    if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
+        return content[:300]
+    return None
+
+
+def _scan_meta(rec: dict, parsed: Parsed) -> None:
+    title = rec.get("customTitle")
+    if rec.get("type") == "custom-title" and isinstance(title, str) and title:
+        parsed.title = title  # repeated; the last one wins
+    for key, attr in (("cwd", "cwd"), ("gitBranch", "branch")):
+        if getattr(parsed, attr) is None and isinstance(rec.get(key), str) and rec[key]:
+            setattr(parsed, attr, rec[key])
+    if parsed.prompt is None:
+        parsed.prompt = _prompt_text(rec)
 
 
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
@@ -59,6 +88,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             continue  # corrupt line
         if not isinstance(rec, dict):
             continue
+        _scan_meta(rec, parsed)
         kind = rec.get("type")
         if kind == "relocated":
             parsed.relocated = True
@@ -403,6 +433,14 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
                 _store_copies(conn, path, parsed.reqs)
+                if sub is None:  # Spotlight metadata of main transcripts only
+                    conn.execute(
+                        "INSERT INTO session_meta VALUES (?,?,?,?,?) ON CONFLICT(stem) DO UPDATE SET "
+                        "custom_title = COALESCE(excluded.custom_title, custom_title), "
+                        "git_branch = COALESCE(git_branch, excluded.git_branch), "
+                        "cwd = COALESCE(cwd, excluded.cwd), "
+                        "first_prompt = COALESCE(first_prompt, excluded.first_prompt)",
+                        (stem, parsed.title, parsed.branch, parsed.cwd, parsed.prompt))
                 touched.update(parsed.reqs)
                 if parsed.relocated:  # a relocated flag changes ownership of all its requests
                     touched.update(r[0] for r in conn.execute(

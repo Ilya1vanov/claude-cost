@@ -32,6 +32,7 @@ class Config:
     top_n: int = DEFAULT_TOP_N
     desktop_stores: list[Path] = field(default_factory=list)  # Desktop session store folders
     prices: dict[str, dict[str, float]] = field(default_factory=dict)  # model -> price override
+    spotlight_key_pattern: str | None = None  # regex; one Auto-spotlight per key it finds
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
 
 
@@ -106,6 +107,16 @@ def _coerce_prices(v: Any) -> dict[str, dict[str, float]]:
     return out
 
 
+def _coerce_key_pattern(v: Any) -> str:
+    if not isinstance(v, str) or not v:
+        raise ConfigError(f"spotlight_key_pattern must be a regular expression, got {v!r}")
+    try:
+        re.compile(v)
+    except re.error as e:
+        raise ConfigError(f"spotlight_key_pattern {v!r} is not a valid regular expression: {e}") from None
+    return v
+
+
 def _parse_prices(text: str) -> Any:
     raise ConfigError("prices cannot be set from the command line; use `claude-cost config edit`")
 
@@ -130,6 +141,10 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             "(cache_read defaults to 0.1x input); also adds new models.",
             None, "(none)", '{ "claude-example-1" = { input = 3.0, output = 15.0, cache_read = 0.3 } }',
             _coerce_prices, _parse_prices),
+    Setting("spotlight_key_pattern",
+            "Regular expression whose matches (such as a ticket id) become Auto-spotlights, "
+            "searched in custom title, git branch, worktree path and first prompt.",
+            None, "(none)", '"PROJ-\\\\d+"', _coerce_key_pattern, str),
 ]}
 
 
@@ -191,6 +206,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         top_n=values["top_n"],
         desktop_stores=[Path(p).expanduser() for p in values["desktop_session_stores"]],
         prices=values["prices"] or {},
+        spotlight_key_pattern=values["spotlight_key_pattern"],
         sources=sources,
     )
 
