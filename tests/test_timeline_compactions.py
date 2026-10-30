@@ -74,4 +74,4 @@ def test_purple_means_only_above_the_compact_threshold():
     from pathlib import Path
     css = (Path(__file__).parent.parent / "src" / "claude_cost" / "static" / "app.css").read_text()
     users = [l for l in css.splitlines() if "var(--late" in l and not l.strip().startswith("--late")]
-    assert all(".over" in l for l in users), users  # only the Oversized context badge
+    assert all(".over" in l or "swatch.line" in l for l in users), users  # Oversized context, threshold line
