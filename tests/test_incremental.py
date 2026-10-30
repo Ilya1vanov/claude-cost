@@ -194,3 +194,30 @@ def test_staleness_window_is_configurable(root, configure):
     root.append_to_transcript("p", "s1", [req("m2", "2026-10-30T02:00:00Z", output=1_000_000)])
     clock[0] = NOW + timedelta(seconds=10)
     assert "$40.00" in client.get("/").get_data(as_text=True)   # 10 s > the 5 s window
+
+
+def test_ingest_with_no_changes_does_not_rebuild_links_or_cache(root, desktop, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", write_1h=1_000)])
+    desktop.write_session("d1", "s1")
+    conn = store.connect(tmp_path / "s.sqlite")
+
+    def run():
+        ingest.ingest(conn, [root.path], desktop_stores=[desktop.path])
+
+    def sentinel():
+        conn.execute("UPDATE request_cache SET event = 'sentinel'")
+        conn.commit()
+
+    def event():
+        return conn.execute("SELECT event FROM request_cache").fetchone()[0]
+    run()
+    sentinel()
+    run()
+    assert event() == "sentinel"  # nothing changed: classification was not rerun
+    desktop.write_session("d2", "s1", priorCliSessionIds=["s0"])  # a Desktop store file changed
+    run()
+    assert event() == "warm"
+    sentinel()
+    root.append_to_transcript("p", "s1", [req("m2", "2026-10-30T02:00:00Z", write_1h=1_000)])
+    run()
+    assert event() != "sentinel"  # a transcript changed

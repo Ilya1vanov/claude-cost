@@ -383,6 +383,19 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
         conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
 
 
+def _desktop_signature(stores: list[Path]) -> str:
+    """Path, mtime and size of every Desktop store file: changes when any of them does."""
+    files = []
+    for store in stores:
+        for p in sorted(store.rglob("local_*.json")):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            files.append((str(p), st.st_mtime_ns, st.st_size))
+    return json.dumps(files)
+
+
 def _store_desktop(conn: sqlite3.Connection, stores: list[Path]) -> None:
     """Replace the kept Desktop session records with those found in `stores`."""
     conn.execute("DELETE FROM desktop_sessions")
@@ -582,10 +595,17 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         # A file with no requests yet has no first_ts; it has no copies either, so the
         # join in _recompute never sees it.
         _recompute(conn, sorted(touched), price_table)
+        desktop_changed = False
         if desktop_stores is not None:
-            _store_desktop(conn, desktop_stores)
-        _regroup_sessions(conn)
-        if changed or desktop_stores is not None or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
+            sig = _desktop_signature(desktop_stores)
+            row = conn.execute("SELECT value FROM meta WHERE key = 'desktop_sig'").fetchone()
+            if rebuild or row is None or row["value"] != sig:
+                _store_desktop(conn, desktop_stores)
+                conn.execute("INSERT OR REPLACE INTO meta VALUES ('desktop_sig', ?)", (sig,))
+                desktop_changed = True
+        if changed or desktop_changed or not conn.execute("SELECT 1 FROM session_links LIMIT 1").fetchone():
+            _regroup_sessions(conn)
+        if changed or desktop_changed or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
