@@ -16,10 +16,11 @@ from __future__ import annotations
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Mapping
 
 from . import pricing
+from .localtime import price_day
 from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
@@ -110,7 +111,7 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
         actual, curve)
 
 
-def analyze(conn: sqlite3.Connection, tz=None, table=None, min_sample: int = MIN_SAMPLE,
+def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
             step: int = STEP) -> CompactAnalysis:
     rows = conn.execute(
         f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, a.agent_id, "
@@ -121,8 +122,7 @@ def analyze(conn: sqlite3.Connection, tz=None, table=None, min_sample: int = MIN
     reqs: list[_Req] = []
     last_model: dict[str, list[tuple[float, str]]] = {}
     for x in rows:
-        day = datetime.fromtimestamp(x["ts_epoch"], tz or timezone.utc).date()
-        p = pricing.find_price(x["model"], day, table)
+        p = pricing.find_price(x["model"], price_day(x["ts_epoch"]), table)
         if p is None:
             continue
         out_per_token = (p.output + p.input * pricing.WRITE_1H_MULT) / 1_000_000

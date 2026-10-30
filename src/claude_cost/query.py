@@ -14,6 +14,7 @@ from . import explore
 from . import findings as findings_mod
 from . import pricing, spotlights
 from .findings import cold_resume as cold_resume_mod
+from .localtime import day_end, day_start, local_day, today
 from .sql import CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
@@ -340,7 +341,7 @@ class QueryService:
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
     def _local_day(self, epoch: float) -> date:
-        return datetime.fromtimestamp(epoch, self._tz).date()
+        return local_day(epoch, self._tz)
 
     @staticmethod
     def _filter(surface: str | None, data_root: str | Path | None) -> tuple[str, list]:
@@ -436,7 +437,7 @@ class QueryService:
 
     def compact_thresholds(self) -> compact_mod.CompactAnalysis:
         """Compact threshold per model (global fallback), with cost-vs-T curve and payback."""
-        return compact_mod.analyze(self._conn, self._tz, self._table,
+        return compact_mod.analyze(self._conn, self._table,
                                    self._threshold("compact_min_sample"),
                                    self._threshold("compact_step"))
 
@@ -528,7 +529,7 @@ class QueryService:
 
         `include_today` only affects `last7`; calendar periods always run through today.
         """
-        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        today = self._today(now)
         cur, base, full = resolve_periods(mode, today, include_today)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
         components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
@@ -541,8 +542,7 @@ class QueryService:
 
     def _bounds(self, p: Period) -> tuple[float, float]:
         """Epoch range [start, end) covering the Period's local days."""
-        return (datetime.combine(p.start, time.min, self._tz).timestamp(),
-                datetime.combine(p.end + timedelta(1), time.min, self._tz).timestamp())
+        return day_start(p.start, self._tz), day_end(p.end, self._tz)
 
     def _sums(self, p: Period) -> dict[str, float]:
         lo, hi = self._bounds(p)
@@ -583,7 +583,7 @@ class QueryService:
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
         """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
-        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        today = self._today(now)
         cur, base, _ = resolve_periods(mode, today, include_today)
         return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
 
@@ -611,8 +611,8 @@ class QueryService:
                  until: date | None = None) -> list[findings_mod.Finding]:
         """Every Drain, then every Opportunity, over requests from local day `since` through
         `until` (all history when None). Findings overlap: never sum their avoidable figures."""
-        lo = datetime.combine(since, time.min, self._tz).timestamp() if since else None
-        hi = datetime.combine(until + timedelta(1), time.min, self._tz).timestamp() if until else None
+        lo = day_start(since, self._tz) if since else None
+        hi = day_end(until, self._tz) if until else None
         rows = findings_mod.load_rows(self._conn, self._tz, lo, hi)
         by_id = {r.message_id: r for r in rows}
         defs = findings_mod.all_findings()
@@ -689,7 +689,7 @@ class QueryService:
         return Comparison(mode, baseline, entries, max(p.days for p in periods))
 
     def _today(self, now: datetime) -> date:
-        return now.astimezone(self._tz).date() if self._tz else now.date()
+        return today(now, self._tz)
 
     def price_table(self) -> list[PriceRow]:
         """The price table in effect (defaults plus config overrides), $ per million tokens."""

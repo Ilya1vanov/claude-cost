@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import cache, ownership, pricing, sources
+from .localtime import price_day
 
 
 def _parse_ts(value: str) -> datetime:
@@ -316,7 +317,7 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
         attrs = conn.execute("SELECT speed, inference_geo FROM request_attrs WHERE message_id = ?",
                              (mid,)).fetchone()
         cost = pricing.price_request(
-            r["model"], r["ts"].date(), input=r["input"], output=r["output"],
+            r["model"], price_day(r["ts"].timestamp()), input=r["input"], output=r["output"],
             cache_read=r["cache_read"], write_5m=r["write_5m"], write_1h=r["write_1h"],
             speed=attrs["speed"] if attrs else None,
             inference_geo=attrs["inference_geo"] if attrs else None, table=table,
@@ -367,7 +368,7 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
         "LEFT JOIN request_attrs a ON a.message_id = r.message_id").fetchall()
     for r in rows:
         cost = pricing.price_request(
-            r["model"], datetime.fromtimestamp(r["ts_epoch"], timezone.utc).date(),
+            r["model"], price_day(r["ts_epoch"]),
             input=r["input_tokens"], output=r["output_tokens"], cache_read=r["cache_read_tokens"],
             write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
             speed=r["speed"], inference_geo=r["inference_geo"], table=table)

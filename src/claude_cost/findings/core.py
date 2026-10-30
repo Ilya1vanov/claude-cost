@@ -14,6 +14,7 @@ from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
 from .. import compact, pricing
+from ..localtime import local_day
 from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
@@ -202,7 +203,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
         gap = ts - prev[x["sid"]] if x["sid"] in prev else None
         prev[x["sid"]] = ts
         out.append(RequestRow(
-            x["message_id"], x["sid"], x["project"], ts, datetime.fromtimestamp(ts, tz).date(),
+            x["message_id"], x["sid"], x["project"], ts, local_day(ts, tz),
             x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
             x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
             x["inference_geo"] or None, gap,
