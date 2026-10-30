@@ -28,6 +28,10 @@ class Req:
     entrypoint: str | None = None  # record entrypoint: cli | claude-desktop | sdk-cli
     speed: str | None = None  # usage.speed ("fast"); None = key absent
     inference_geo: str | None = None  # usage.inference_geo ("us", "global"); None = absent
+    git_branch: str | None = None  # record gitBranch
+    effort: str | None = None  # record effort ("low" | "medium" | "high")
+    tools: tuple[str, ...] = ()  # tool_use blocks (names) on the first streamed line
+    skills: tuple[str, ...] = ()  # Skill tool calls (input.skill) on the last streamed line
 
 
 def req(message_id: str, ts: str, **kw) -> Req:
@@ -58,6 +62,18 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
         }
         if r.entrypoint:
             rec["entrypoint"] = r.entrypoint
+        if r.git_branch:
+            rec["gitBranch"] = r.git_branch
+        if r.effort:
+            rec["effort"] = r.effort
+        if i == 0:
+            rec["message"]["content"] += [
+                {"type": "tool_use", "id": f"t{n}", "name": t, "input": {}}
+                for n, t in enumerate(r.tools)]
+        if i == r.lines - 1:
+            rec["message"]["content"] += [
+                {"type": "tool_use", "id": f"s{n}", "name": "Skill", "input": {"skill": s}}
+                for n, s in enumerate(r.skills)]
         if r.forked_from:
             rec["forkedFrom"] = {"sessionId": r.forked_from, "messageUuid": f"{r.message_id}-u{i}"}
         out.append(rec)

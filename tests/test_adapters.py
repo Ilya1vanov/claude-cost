@@ -180,6 +180,33 @@ def test_spotlight_pages_edit_pins_and_compare(root, configure):
     assert client.get("/spotlights/nope").status_code == 404
 
 
+def test_explore_page_filters_in_url_drill_down_and_csv(root, configure):
+    root.write_transcript("proj-a", "s1", [
+        req("m1", "2026-10-29T01:00:00Z", output=1_000_000, tools=("Bash",)),
+        req("m2", "2026-10-29T02:00:00Z", model="claude-sonnet-5", output=1_000_000)])
+    root.write_transcript("proj-b", "s2", [req("m3", "2026-10-30T01:00:00Z", output=500_000)])
+    client = _client(configure(root))
+    html = client.get("/explore").get_data(as_text=True)
+    assert 'id="explore-chart"' in html and "2026-10-29" in html
+    for dim in ("Git branch", "Subagent type", "Cost component", "Cache event", "Tool", "Skill"):
+        assert dim in html
+    page = client.get("/explore?group=model&project=proj-a&project=proj-b&tool=Bash")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and "Project = proj-a" in html and "Project = proj-b" in html
+    table = html.split('id="explore-table"')[1]
+    assert "claude-opus-5-5" in table and "claude-sonnet-5" not in table  # filtered slice
+    assert "/explore/requests?" in client.get("/explore?group=session").get_data(as_text=True)
+    assert "group=session" in html and "model=claude-opus-5-5" in html  # drill-down link
+    reqs = client.get("/explore/requests?session=s1").get_data(as_text=True)
+    assert "m1" in reqs and "m2" in reqs and "m3" not in reqs
+    csv_resp = client.get("/explore.csv?group=project")
+    assert csv_resp.mimetype == "text/csv"
+    assert csv_resp.get_data(as_text=True).splitlines() == [
+        "Project,Cost,Requests,Share %", "proj-a,30.00,2,75.0", "proj-b,10.00,1,25.0"]
+    assert client.get("/explore?group=bogus").status_code == 400
+    assert client.get("/explore.csv?group=bogus").status_code == 400
+
+
 def test_session_timeline_page_loads(root, configure):
     root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1000)])
     root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T01:01:00Z", output=1000)])

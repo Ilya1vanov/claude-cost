@@ -4,13 +4,17 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, redirect, render_template, request, url_for
 
+from . import explore
+from .explore import ExploreSpec
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 from .spotlights import SpotlightError
 
 DASHBOARD_DAYS = 30
+CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
+REQUEST_ROWS = 1000
 STALE_AFTER_SECONDS = 60
 
 
@@ -169,6 +173,57 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_delete(name):
         service_factory().delete_spotlight(name)
         return redirect(url_for("spotlight_list"))
+
+    def explore_service() -> QueryService:
+        service = service_factory()
+        if refresh:
+            last = service.last_ingest_epoch()
+            if last is None or now().timestamp() - last > STALE_AFTER_SECONDS:
+                refresh()
+                service = service_factory()
+        return service
+
+    def explore_spec() -> ExploreSpec:
+        try:
+            return ExploreSpec.from_query(request.args.items(multi=True))
+        except ValueError as e:
+            abort(400, str(e))
+
+    @app.template_global()
+    def explore_url(endpoint: str, spec: ExploreSpec, **extra) -> str:
+        """URL of an Explore page for `spec`: filters live in the query string."""
+        params: dict[str, list[str]] = {}
+        for key, value in spec.to_query():
+            params.setdefault(key, []).append(value)
+        return url_for(endpoint, **{**params, **extra})
+
+    @app.get("/explore")
+    def explore_page():
+        spec = explore_spec()
+        service = explore_service()
+        result = service.explore(spec)
+        return render_template(
+            "explore.html", spec=spec, result=result, dims=explore.DIMENSIONS,
+            options=service.explore_options(), fmt_cost=explore.fmt_cost,
+            fmt_share=explore.fmt_share,
+            chart_data={"label": result.label,
+                        "labels": [r.value for r in result.rows[:CHART_ROWS]],
+                        "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
+
+    @app.get("/explore.csv")
+    def explore_csv():
+        spec = explore_spec()
+        body = explore.to_csv(explore_service().explore(spec))
+        return Response(body, mimetype="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="claude-cost-{spec.group}.csv"'})
+
+    @app.get("/explore/requests")
+    def explore_requests():
+        spec = explore_spec()
+        reqs = explore_service().explore_requests(spec)
+        return render_template(
+            "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
+            requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
 
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")
