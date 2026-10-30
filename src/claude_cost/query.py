@@ -219,6 +219,13 @@ class RankedSpend:
     key: str  # Session id or project name
     cost: float
     requests: int
+    # Top sessions only: the Session's label, its Subagents (included in cost) and the Side
+    # sessions / Forks started from it (not included)
+    label: str = ""
+    subagents: int = 0
+    subagent_cost: float = 0.0
+    side_sessions: int = 0
+    forks: int = 0
 
 
 @dataclass(frozen=True)
@@ -553,7 +560,7 @@ class QueryService:
         return PeriodComparison(
             mode, cur, base, cur.days < full and mode != "last7", cur.days, full,
             sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
-            components, self._top(SESSION_ID_SQL, cur, top_n),
+            components, self._top_sessions(cur, top_n),
             self._top("r.project", cur, top_n))
 
     def project_names(self) -> dict[str, str]:
@@ -579,6 +586,27 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def _top_sessions(self, p: Period, n: int) -> tuple[RankedSpend, ...]:
+        """Top sessions with label, Subagent count/cost and Side session/Fork counts.
+        Cost and requests are unchanged: Subagents included, Side sessions and Forks not."""
+        ranked = self._top(SESSION_ID_SQL, p, n)
+        lo, hi = self._bounds(p)
+        subs = {r["k"]: (r["n"], r["cost"]) for r in self._conn.execute(
+            f"SELECT {SESSION_ID_SQL} AS k, COUNT(DISTINCT a.agent_id) AS n, "
+            f"SUM({COST_SQL}) AS cost FROM requests r {SESSION_JOIN} "
+            "JOIN request_surface a ON a.message_id = r.message_id AND a.agent_id IS NOT NULL "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k", (lo, hi))}
+        linked: dict[tuple[str, str], int] = {}
+        for s in self.session_summaries():
+            if s.parent_session_id:
+                key = (s.parent_session_id, s.link_kind)
+                linked[key] = linked.get(key, 0) + 1
+        labels = self.session_labels()
+        return tuple(RankedSpend(
+            r.key, r.cost, r.requests, labels.get(r.key, r.key),
+            *subs.get(r.key, (0, 0.0)),
+            linked.get((r.key, "side"), 0), linked.get((r.key, "fork"), 0)) for r in ranked)
 
     def cache_events(self) -> dict[str, str]:
         """Cache write event per request: message id -> 'cold' | 'warm' | 'none' (no write)."""
