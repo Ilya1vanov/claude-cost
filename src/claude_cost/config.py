@@ -30,6 +30,7 @@ class Config:
     timezone: str | None = None  # IANA name; None = system local time
     port: int = DEFAULT_PORT
     top_n: int = DEFAULT_TOP_N
+    desktop_stores: list[Path] = field(default_factory=list)  # Desktop session store folders
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
 
 
@@ -74,6 +75,12 @@ def _parse_roots(text: str) -> list[str]:
     return [p.strip() for p in text.split(",") if p.strip()]  # comma-separated on the CLI
 
 
+def _coerce_stores(v: Any) -> list[str]:
+    if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+        raise ConfigError(f"desktop_session_stores must be a list of paths, got {v!r}")
+    return v
+
+
 def _coerce_tz(v: Any) -> str:
     if not isinstance(v, str) or not v:
         raise ConfigError(f"timezone must be an IANA time zone name, got {v!r}")
@@ -93,6 +100,11 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
     Setting("top_n", "Number of items in the top-N cards.",
             DEFAULT_TOP_N, str(DEFAULT_TOP_N), str(DEFAULT_TOP_N),
             _int_in("top_n", 1), _parse_int("top_n")),
+    Setting("desktop_session_stores",
+            "Desktop session store folders (scanned recursively for local_*.json) that link Side "
+            "sessions, Forks and earlier transcripts; CLI: comma-separated. Empty = no Desktop links.",
+            [], "[]", '["~/Library/Application Support/Claude/claude-code-sessions"]',
+            _coerce_stores, _parse_roots),
     Setting("timezone", "IANA time zone for days and weeks; unset = system local time.",
             None, "(system local time)", '"Europe/Berlin"', _coerce_tz, str),
 ]}
@@ -154,6 +166,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         timezone=values["timezone"],
         port=values["port"],
         top_n=values["top_n"],
+        desktop_stores=[Path(p).expanduser() for p in values["desktop_session_stores"]],
         sources=sources,
     )
 

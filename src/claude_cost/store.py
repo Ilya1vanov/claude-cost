@@ -30,6 +30,28 @@ CREATE TABLE IF NOT EXISTS session_links (
   stem TEXT PRIMARY KEY,
   logical_session_id TEXT NOT NULL
 );
+-- Surface and subagent attribution per request (ticket #7)
+CREATE TABLE IF NOT EXISTS request_attrs (
+  message_id TEXT PRIMARY KEY,
+  surface TEXT NOT NULL,
+  agent_id TEXT  -- set when a Subagent made the request; requests.session_id is its parent Session
+);
+CREATE TABLE IF NOT EXISTS subagents (
+  session_stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  agent_type TEXT,
+  is_fork INTEGER NOT NULL,
+  tool_use_id TEXT,
+  parent_agent_id TEXT,
+  description TEXT,
+  PRIMARY KEY (session_stem, agent_id)
+);
+-- Side session / Fork links resolved to transcript stems from the Desktop store
+CREATE TABLE IF NOT EXISTS session_relations (
+  child_stem TEXT PRIMARY KEY,
+  parent_stem TEXT NOT NULL,
+  kind TEXT NOT NULL  -- 'side' | 'fork'
+);
 """
 
 

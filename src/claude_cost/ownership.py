@@ -14,10 +14,13 @@ def pick_owner(candidates: Sequence[dict]) -> dict:
     `is_copy` marks a record that its transcript flags as copied history (a Fork's
     `forkedFrom`); `relocated` marks a transcript that carries a `relocated` record (a
     worktree-move copy). Both lose to an unflagged candidate, so the original transcript
-    keeps the request. Ties are broken deterministically.
+    keeps the request. `is_subagent` marks a candidate from a Subagent transcript: the
+    sidechain run made the request, so it beats an unflagged main-transcript copy. Ties
+    are broken deterministically.
     """
     def key(c):
-        return (bool(c.get("is_copy")), bool(c.get("relocated")), c["file_first_ts"],
+        return (bool(c.get("is_copy")), bool(c.get("relocated")), not c.get("is_subagent"),
+                c["file_first_ts"],
                 c.get("project", ""), c["file_stem"])
 
     matching = [c for c in candidates if c["file_stem"] == c["session_id"]]

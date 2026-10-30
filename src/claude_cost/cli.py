@@ -26,7 +26,7 @@ def _now(config: Config) -> datetime:
 
 def _service(config: Config) -> QueryService:
     conn = store.connect(config.store_path)
-    ingest_mod.ingest(conn, config.data_roots)
+    ingest_mod.ingest(conn, config.data_roots, desktop_stores=config.desktop_stores)
     return QueryService(conn, config.timezone)
 
 

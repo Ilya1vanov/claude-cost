@@ -8,7 +8,7 @@ from claude_cost import ingest as ingest_mod
 from claude_cost import store
 from claude_cost.query import QueryService
 
-from helpers import DataRoot
+from helpers import DataRoot, DesktopStore
 
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
 
@@ -26,6 +26,11 @@ def isolated_home(tmp_path, monkeypatch):
 @pytest.fixture
 def root(tmp_path) -> DataRoot:
     return DataRoot(tmp_path / "claude")
+
+
+@pytest.fixture
+def desktop(tmp_path) -> DesktopStore:
+    return DesktopStore(tmp_path / "desktop" / "acct" / "org")
 
 
 @pytest.fixture
@@ -53,8 +58,9 @@ def configure(env):
 @pytest.fixture
 def service_for(tmp_path):
     """Ingest the given Data roots into a temp store; return a UTC QueryService."""
-    def _service(*roots: DataRoot) -> QueryService:
+    def _service(*roots: DataRoot, desktop: DesktopStore | None = None) -> QueryService:
         conn = store.connect(tmp_path / "store.sqlite")
-        ingest_mod.ingest(conn, [r.path for r in roots])
+        stores = [desktop.path.parent.parent] if desktop else []  # a parent dir is scanned
+        ingest_mod.ingest(conn, [r.path for r in roots], desktop_stores=stores)
         return QueryService(conn, "UTC")
     return _service
