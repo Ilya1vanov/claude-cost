@@ -7,6 +7,7 @@
 </head>
 <body>
   <h1>Dashboard</h1>
+  <form method="post" action="{{ url_for('force_refresh') }}"><button type="submit">Refresh</button></form>
   <p>Last {{ days|length }} days: <strong>${{ "%.2f"|format(total) }}</strong></p>
   {% if unpriced %}<p class="unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>

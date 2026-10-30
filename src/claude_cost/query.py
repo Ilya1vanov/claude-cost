@@ -46,6 +46,11 @@ class QueryService:
         return [DaySpend(d, *totals.get(d, (0.0, 0)))
                 for d in (start + timedelta(n) for n in range(days))]
 
+    def last_ingest_epoch(self) -> float | None:
+        """When the store was last refreshed (epoch seconds), None if never."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = 'last_ingest_epoch'").fetchone()
+        return float(row["value"]) if row else None
     def session_summaries(self) -> list[SessionSummary]:
         """One row per Session (logical conversation), oldest first."""
         rows = self._conn.execute(
