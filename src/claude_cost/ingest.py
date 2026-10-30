@@ -9,6 +9,7 @@ recomputes all Requests from the kept copies.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -89,6 +90,8 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             "cache_read": usage.get("cache_read_input_tokens") or 0,
             "write_5m": w5m,
             "write_1h": w1h,
+            "speed": usage.get("speed") or "standard",
+            "inference_geo": usage.get("inference_geo") or "",
         }
     return parsed
 
@@ -112,13 +115,15 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
             (str(path), mid, r["session_id"], r["ts"].timestamp(), r["model"], r["input"],
              r["output"], r["cache_read"], r["write_5m"], r["write_1h"],
              1 if r["is_copy"] else 0))
+        conn.execute("INSERT OR IGNORE INTO request_attrs VALUES (?,?,?)",
+                     (mid, r["speed"], r["inference_geo"]))
 
 
 def _epoch_dt(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, timezone.utc)
 
 
-def _recompute(conn: sqlite3.Connection, mids: list[str]) -> None:
+def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
     """(Re)decide the owner of each message id from all kept copies and upsert the Request."""
     for mid in mids:
         rows = conn.execute(
@@ -140,9 +145,13 @@ def _recompute(conn: sqlite3.Connection, mids: list[str]) -> None:
         } for row in rows]
         owner = ownership.pick_owner(cands)
         r = owner["req"]
+        attrs = conn.execute("SELECT speed, inference_geo FROM request_attrs WHERE message_id = ?",
+                             (mid,)).fetchone()
         cost = pricing.price_request(
             r["model"], r["ts"].date(), input=r["input"], output=r["output"],
             cache_read=r["cache_read"], write_5m=r["write_5m"], write_1h=r["write_1h"],
+            speed=attrs["speed"] if attrs else None,
+            inference_geo=attrs["inference_geo"] if attrs else None, table=table,
         )
         c = cost or pricing.CostComponents()
         conn.execute(
@@ -174,6 +183,32 @@ def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) 
         groups.setdefault(find(stem), []).append(stem)
     return {stem: min(members, key=lambda s: (first_ts[s], s))
             for members in groups.values() for stem in members}
+
+
+def reprice(conn: sqlite3.Connection, table: dict) -> None:
+    """Re-price every stored Request when the price table in effect changed since last time."""
+    fp = hashlib.sha256(repr(sorted(table.items())).encode()).hexdigest()
+    row = conn.execute("SELECT fingerprint FROM pricing_state").fetchone()
+    if row and row["fingerprint"] == fp:
+        return
+    updates = []
+    rows = conn.execute(
+        "SELECT r.*, a.speed, a.inference_geo FROM requests r "
+        "LEFT JOIN request_attrs a ON a.message_id = r.message_id").fetchall()
+    for r in rows:
+        cost = pricing.price_request(
+            r["model"], datetime.fromtimestamp(r["ts_epoch"], timezone.utc).date(),
+            input=r["input_tokens"], output=r["output_tokens"], cache_read=r["cache_read_tokens"],
+            write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
+            speed=r["speed"], inference_geo=r["inference_geo"], table=table)
+        c = cost or pricing.CostComponents()
+        updates.append((1 if cost else 0, c.input, c.output, c.cache_write_5m,
+                        c.cache_write_1h, c.cache_read, r["message_id"]))
+    with conn:
+        conn.executemany(
+            "UPDATE requests SET priced=?, cost_input=?, cost_output=?, cost_cache_write_5m=?, "
+            "cost_cache_write_1h=?, cost_cache_read=? WHERE message_id=?", updates)
+        conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
 
 
 def _regroup_sessions(conn: sqlite3.Connection) -> None:
@@ -226,8 +261,9 @@ def retention_warnings(roots: list[Path]) -> list[str]:
 
 
 def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False,
-           now: datetime | None = None) -> int:
+           now: datetime | None = None, price_table: dict | None = None) -> int:
     """Ingest all Data roots; returns the number of Requests in the store afterwards."""
+    price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
     changed = rebuild
@@ -275,10 +311,11 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                         "SELECT message_id FROM request_copies WHERE path = ?", (str(path),)))
         # A file with no requests yet has no first_ts; it has no copies either, so the
         # join in _recompute never sees it.
-        _recompute(conn, sorted(touched))
+        _recompute(conn, sorted(touched), price_table)
         _regroup_sessions(conn)
         if changed or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
+    reprice(conn, price_table)
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

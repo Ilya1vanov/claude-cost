@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS request_cache (
   message_id TEXT PRIMARY KEY,
   event TEXT NOT NULL
 );
+-- pricing inputs not in `requests`, so a price change can re-price stored rows (ticket #5)
+CREATE TABLE IF NOT EXISTS request_attrs (
+  message_id TEXT PRIMARY KEY,
+  speed TEXT NOT NULL,
+  inference_geo TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pricing_state (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT);
 """
 
 

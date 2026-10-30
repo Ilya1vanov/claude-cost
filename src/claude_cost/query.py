@@ -7,6 +7,8 @@ import calendar
 from datetime import date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo
 
+from . import pricing
+
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
 
@@ -111,6 +113,36 @@ class CacheEventSpend:
     requests: int
 
 
+COMPARISON_MODES = ("week", "month")
+
+
+@dataclass(frozen=True)
+class ComparisonEntry:
+    period: Period  # the full calendar period
+    cost: float
+    daily: list[float]  # cost per day of period; stops at today for a period still running
+    partial: bool
+    delta_cost: float  # vs the Baseline (0 for the Baseline itself)
+    delta_pct: float | None  # None when the Baseline cost is zero
+
+
+@dataclass(frozen=True)
+class Comparison:
+    mode: str
+    baseline: date  # start of the Baseline period
+    entries: tuple[ComparisonEntry, ...]  # earliest first
+    day_count: int  # length of the longest selected period (the chart's x axis)
+
+
+def calendar_period(mode: str, start: date) -> Period:
+    """The full calendar week (Monday start) or month beginning at `start`."""
+    if mode == "week" and start.weekday() == 0:
+        return Period(start, start + timedelta(6))
+    if mode == "month" and start.day == 1:
+        return Period(start, start.replace(day=calendar.monthrange(start.year, start.month)[1]))
+    raise ValueError(f"{start} is not the start of a {mode}")
+
+
 def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple[Period, Period, int]:
     """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days."""
     if mode == "last7":
@@ -129,9 +161,24 @@ def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple
     raise ValueError(f"unknown period mode {mode!r}; expected one of {PERIOD_MODES}")
 
 
+@dataclass(frozen=True)
+class PriceRow:
+    model: str  # model-name prefix
+    effective_from: date
+    input: float  # $ per million tokens
+    output: float
+    cache_write_5m: float
+    cache_write_1h: float
+    cache_read: float
+    tier_note: str  # e.g. "x2.0 above 100000 prompt tokens", "" when flat
+    source: str  # "default" or "config"
+
+
 class QueryService:
-    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None):
+    def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
+                 price_table: dict | None = None):
         self._conn = conn
+        self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
     def _local_day(self, epoch: float) -> date:
@@ -252,6 +299,69 @@ class QueryService:
         if rd["n"]:
             out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
         return sorted(out, key=lambda e: e.event)
+
+
+    def available_periods(self, mode: str, now: datetime) -> list[date]:
+        """Start dates of every calendar period from the first request to now, newest first."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}")
+        row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
+        if row["first"] is None:
+            return []
+        today = self._today(now)
+        first = self._local_day(row["first"])
+        if mode == "week":
+            cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
+        else:
+            cur = first.replace(day=1)
+            step = lambda d: (d.replace(day=28) + timedelta(4)).replace(day=1)
+        out = []
+        while cur <= today:
+            out.append(cur)
+            cur = step(cur)
+        return out[::-1]
+
+    def comparison(self, mode: str, starts: list[date], now: datetime,
+                   baseline: date | None = None) -> Comparison:
+        """Two or more calendar periods of one mode, against a Baseline (default: the earliest)."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}, not {mode!r}")
+        starts = sorted(set(starts))
+        if len(starts) < 2:
+            raise ValueError("select at least two different periods")
+        today = self._today(now)
+        periods = [calendar_period(mode, s) for s in starts]
+        if periods[-1].start > today:
+            raise ValueError(f"{periods[-1].start} has not started yet")
+        baseline = baseline or starts[0]
+        if baseline not in starts:
+            raise ValueError("the baseline must be one of the selected periods")
+        costs, dailies = [], []
+        for p in periods:
+            daily = [d.cost for d in self.daily_spend(p.start, min(p.end, today))]
+            dailies.append(daily)
+            costs.append(sum(daily))
+        base_cost = costs[starts.index(baseline)]
+        entries = tuple(
+            ComparisonEntry(p, c, d, p.end > today, c - base_cost,
+                            (c - base_cost) / base_cost * 100 if base_cost else None)
+            for p, c, d in zip(periods, costs, dailies))
+        return Comparison(mode, baseline, entries, max(p.days for p in periods))
+
+    def _today(self, now: datetime) -> date:
+        return now.astimezone(self._tz).date() if self._tz else now.date()
+
+    def price_table(self) -> list[PriceRow]:
+        """The price table in effect (defaults plus config overrides), $ per million tokens."""
+        rows = []
+        for model in sorted(self._table):
+            for e in sorted(self._table[model], key=lambda e: e.effective_from):
+                note = (f"x{e.tier_mult:g} above {e.tier_threshold} prompt tokens"
+                        if e.tier_threshold else "")
+                rows.append(PriceRow(model, e.effective_from, e.input, e.output,
+                                     e.input * pricing.WRITE_5M_MULT, e.input * pricing.WRITE_1H_MULT,
+                                     e.cache_read, note, e.source))
+        return rows
 
     def unpriced_models(self) -> list[str]:
         rows = self._conn.execute(

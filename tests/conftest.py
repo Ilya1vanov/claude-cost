@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from claude_cost import ingest as ingest_mod
+from claude_cost import pricing
 from claude_cost import store
 from claude_cost.query import QueryService
 
@@ -53,8 +54,9 @@ def configure(env):
 @pytest.fixture
 def service_for(tmp_path):
     """Ingest the given Data roots into a temp store; return a UTC QueryService."""
-    def _service(*roots: DataRoot) -> QueryService:
+    def _service(*roots: DataRoot, prices: dict | None = None) -> QueryService:
         conn = store.connect(tmp_path / "store.sqlite")
-        ingest_mod.ingest(conn, [r.path for r in roots])
-        return QueryService(conn, "UTC")
+        table = pricing.build_table(prices)
+        ingest_mod.ingest(conn, [r.path for r in roots], price_table=table)
+        return QueryService(conn, "UTC", price_table=table)
     return _service
