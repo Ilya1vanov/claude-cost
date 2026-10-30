@@ -8,7 +8,9 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import explore, pricing
+from . import explore
+from . import findings as findings_mod
+from . import pricing
 
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
@@ -46,6 +48,65 @@ class SubagentSummary:
     description: str | None
     cost: float
     requests: int
+
+
+IDLE_GAP_SECONDS = 300  # a gap longer than the 5m cache TTL is marked as an idle gap
+
+
+@dataclass(frozen=True)
+class TimelinePoint:
+    message_id: str
+    ts: float  # epoch seconds
+    model: str
+    context_tokens: int  # prompt size: input + cache read + cache writes
+    cost: float
+    gap_seconds: float | None  # idle time since the previous request (None for the first)
+    idle: bool  # gap_seconds > IDLE_GAP_SECONDS
+    cache_event: str  # cold | warm | none (a Cold write is marked)
+
+
+@dataclass(frozen=True)
+class CompactionMark:
+    ts: float
+    trigger: str  # manual | auto
+    pre_tokens: int
+    post_tokens: int
+    before_index: int  # number of timeline points before the compaction
+
+
+@dataclass(frozen=True)
+class SubagentLaunch:
+    agent_id: str
+    agent_type: str | None
+    description: str | None
+    is_fork: bool
+    ts: float  # its first request
+    before_index: int
+    cost: float
+    requests: int  # its own timeline: SessionTimeline(session_id, agent_id=agent_id)
+
+
+@dataclass(frozen=True)
+class SideSessionMark:
+    session_id: str  # the Side session's own timeline
+    ts: float
+    before_index: int
+    cost: float
+    requests: int
+
+
+@dataclass(frozen=True)
+class SessionTimeline:
+    """How a Session's (or one Subagent's) cost built up, request by request."""
+    session_id: str
+    agent_id: str | None  # set for a Subagent's timeline
+    cost: float  # of the requests on this timeline
+    points: tuple[TimelinePoint, ...]
+    compactions: tuple[CompactionMark, ...]
+    subagents: tuple[SubagentLaunch, ...]  # launched from this timeline (direct children)
+    side_sessions: tuple[SideSessionMark, ...]
+    parent_session_id: str | None = None  # of a Side session / Fork
+    link_kind: str | None = None
 
 
 PERIOD_MODES = ("last7", "week", "month")
@@ -196,8 +257,9 @@ class PriceRow:
 
 class QueryService:
     def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
-                 price_table: dict | None = None):
+                 price_table: dict | None = None, thresholds: dict[str, int] | None = None):
         self._conn = conn
+        self._thresholds = thresholds or {}
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
@@ -296,6 +358,67 @@ class QueryService:
                                 r["tool_use_id"], r["parent_agent_id"], r["description"],
                                 r["cost"], r["n"]) for r in rows]
 
+    def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
+        """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
+        or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
+        rows = self._conn.execute(
+            f"SELECT r.message_id, r.ts_epoch, r.model, r.input_tokens + r.cache_read_tokens "
+            "+ r.cache_write_5m_tokens + r.cache_write_1h_tokens AS ctx, "
+            f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event "
+            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
+            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ? "
+            "ORDER BY r.ts_epoch, r.message_id", (session_id, agent_id)).fetchall()
+        if not rows:
+            return None
+        points, prev = [], None
+        for r in rows:
+            gap = None if prev is None else r["ts_epoch"] - prev
+            prev = r["ts_epoch"]
+            points.append(TimelinePoint(r["message_id"], r["ts_epoch"], r["model"], r["ctx"],
+                                        r["cost"], gap, gap is not None and gap > IDLE_GAP_SECONDS,
+                                        r["event"]))
+        times = [p.ts for p in points]
+
+        def index(ts: float) -> int:
+            return sum(1 for t in times if t < ts)
+
+        stems = [r["stem"] for r in self._conn.execute(
+            "SELECT stem FROM session_links WHERE logical_session_id = ?", (session_id,))] or [session_id]
+        marks = ",".join("?" * len(stems))
+        compactions = tuple(CompactionMark(c["ts_epoch"], c["trigger"], c["pre_tokens"],
+                                           c["post_tokens"], index(c["ts_epoch"]))
+                            for c in self._conn.execute(
+                                f"SELECT * FROM compactions WHERE stem IN ({marks}) "
+                                "ORDER BY ts_epoch, uuid", stems)) if agent_id is None else ()
+        launches = tuple(
+            SubagentLaunch(a.agent_id, a.agent_type, a.description, a.is_fork, first, index(first),
+                           a.cost, a.requests)
+            for a, first in self._subagent_starts(session_id) if a.parent_agent_id == agent_id)
+        sides = tuple(SideSessionMark(s.session_id, first, index(first), s.cost, s.requests)
+                      for s, first in self._side_sessions(session_id)) if agent_id is None else ()
+        parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
+        return SessionTimeline(
+            session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
+            sides, parent.parent_session_id if parent and agent_id is None else None,
+            parent.link_kind if parent and agent_id is None else None)
+
+    def _first_ts(self, session_id: str, agent_id: str | None = None) -> float:
+        return self._conn.execute(
+            "SELECT MIN(r.ts_epoch) FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ?",
+            (session_id, agent_id)).fetchone()[0]
+
+    def _subagent_starts(self, session_id: str) -> list[tuple[SubagentSummary, float]]:
+        return [(a, self._first_ts(session_id, a.agent_id))
+                for a in self.subagent_summaries() if a.session_id == session_id]
+
+    def _side_sessions(self, session_id: str) -> list[tuple[SessionSummary, float]]:
+        return [(s, self._first_ts(s.session_id)) for s in self.session_summaries()
+                if s.parent_session_id == session_id and s.link_kind == "side"]
+
     def period_comparison(self, mode: str, now: datetime, include_today: bool = True,
                           top_n: int = 10) -> PeriodComparison:
         """Spend for a Period against the baseline before it, in the service's time zone.
@@ -380,6 +503,23 @@ class QueryService:
             out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
         return sorted(out, key=lambda e: e.event)
 
+
+    def findings(self, since: date | None = None) -> list[findings_mod.Finding]:
+        """Every Drain, then every Opportunity, over requests from local day `since` on
+        (all history when None). Findings overlap: never sum their avoidable figures."""
+        lo = datetime.combine(since, time.min, self._tz).timestamp() if since else None
+        rows = findings_mod.load_rows(self._conn, self._tz, lo, None)
+        by_id = {r.message_id: r for r in rows}
+        defs = findings_mod.all_findings()
+        ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
+                                          self._table)
+        return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
+
+    def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:
+        for f in self.findings(since):
+            if f.id == finding_id:
+                return f
+        raise KeyError(finding_id)
 
     def available_periods(self, mode: str, now: datetime) -> list[date]:
         """Start dates of every calendar period from the first request to now, newest first."""

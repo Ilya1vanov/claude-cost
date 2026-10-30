@@ -46,6 +46,7 @@ class Parsed:
     reqs: dict[str, dict] = field(default_factory=dict)
     relocated: bool = False
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
+    compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
 
 
 def _str_or_empty(value: object) -> str:
@@ -88,6 +89,17 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             nxt = rec.get("continuedInSessionId")
             if isinstance(nxt, str) and nxt:
                 parsed.links.add(nxt)
+            continue
+        if kind == "system" and rec.get("subtype") == "compact_boundary":
+            meta = rec.get("compactMetadata")
+            meta = meta if isinstance(meta, dict) else {}
+            try:
+                parsed.compactions.append((
+                    str(rec["uuid"]), _parse_ts(rec["timestamp"]).timestamp(),
+                    str(meta.get("trigger") or "manual"),
+                    int(meta.get("preTokens") or 0), int(meta.get("postTokens") or 0)))
+            except (KeyError, TypeError, ValueError):
+                pass
             continue
         if kind != "assistant":
             continue
@@ -440,6 +452,11 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
                 _store_copies(conn, path, parsed.reqs)
+                if sub is None:  # a Subagent's own compactions are not the Session's
+                    conn.executemany("INSERT OR IGNORE INTO compactions "
+                                     "VALUES (?,?,?,?,?,?)",
+                                     [(u, stem, ts, trig, pre, post)
+                                      for u, ts, trig, pre, post in parsed.compactions])
                 touched.update(parsed.reqs)
                 if parsed.relocated:  # a relocated flag changes ownership of all its requests
                     touched.update(r[0] for r in conn.execute(

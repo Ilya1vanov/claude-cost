@@ -1,13 +1,14 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 from flask import Flask, Response, abort, redirect, render_template, request, url_for
 
 from . import explore
 from .explore import ExploreSpec
+from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 
 DASHBOARD_DAYS = 30
@@ -55,6 +56,28 @@ def create_app(service_factory: Callable[[], QueryService],
             unpriced=service.unpriced_models(),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
+
+    @app.get("/findings")
+    def findings():
+        service = service_factory()
+        since = _since_arg()
+        return render_template("findings.html", findings=service.findings(since), since=since,
+                               note=NOT_ADDITIVE_NOTE, drain=DRAIN, opportunity=OPPORTUNITY)
+
+    @app.get("/findings/<finding_id>")
+    def finding_detail(finding_id: str):
+        since = _since_arg()
+        try:
+            f = service_factory().finding(finding_id, since)
+        except KeyError:
+            abort(404)
+        return render_template("finding.html", f=f, since=since, note=NOT_ADDITIVE_NOTE)
+
+    def _since_arg():
+        try:
+            return date.fromisoformat(request.args["since"]) if request.args.get("since") else None
+        except ValueError:
+            abort(400, "since must be a date like 2026-10-01")
 
     @app.get("/compare")
     def compare():
@@ -129,5 +152,21 @@ def create_app(service_factory: Callable[[], QueryService],
         return render_template(
             "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
             requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
+
+    @app.get("/session/<session_id>")
+    @app.get("/session/<session_id>/agent/<agent_id>")
+    def session_timeline(session_id: str, agent_id: str | None = None):
+        timeline = service_factory().session_timeline(session_id, agent_id)
+        if timeline is None:
+            abort(404)
+        chart = {"labels": [datetime.fromtimestamp(p.ts, timezone.utc).strftime("%H:%M:%S")
+                            for p in timeline.points],
+                 "context": [p.context_tokens for p in timeline.points],
+                 "cost": [round(p.cost, 4) for p in timeline.points],
+                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == "cold"],
+                 "idle": [i for i, p in enumerate(timeline.points) if p.idle]}
+        return render_template("session.html", t=timeline, chart_data=chart,
+                               when=lambda ts: datetime.fromtimestamp(ts, timezone.utc)
+                               .strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     return app

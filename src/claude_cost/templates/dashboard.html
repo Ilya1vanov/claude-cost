@@ -7,7 +7,7 @@
 </head>
 <body>
   <h1>Dashboard</h1>
-  <p><a href="{{ url_for('compare') }}">Compare periods</a> | <a href="{{ url_for('explore_page') }}">Explore</a></p>
+  <p><a href="{{ url_for('compare') }}">Compare periods</a> | <a href="{{ url_for('explore_page') }}">Explore</a> | <a href="{{ url_for('findings') }}">Drains and Opportunities</a></p>
   <form method="post" action="{{ url_for('force_refresh') }}"><button type="submit">Refresh</button></form>
   <p>Last {{ days|length }} days: <strong>${{ "%.2f"|format(total) }}</strong></p>
   {% if unpriced %}<p class="unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}
@@ -48,7 +48,7 @@
     <tr><td>Rebuilds</td><td>{{ k.current.rebuilds }} ({{ "%+d"|format(k.current.rebuilds - k.baseline.rebuilds) }} vs baseline {{ k.baseline.rebuilds }})</td></tr>
   </table>
   <h3>Top sessions</h3>
-  <ol>{% for s in c.top_sessions %}<li>{{ s.key }}: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
+  <ol>{% for s in c.top_sessions %}<li><a href="{{ url_for('session_timeline', session_id=s.key) }}">{{ s.key }}</a>: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <h3>Top projects</h3>
   <ol>{% for p in c.top_projects %}<li>{{ p.key }}: ${{ "%.2f"|format(p.cost) }} ({{ p.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>

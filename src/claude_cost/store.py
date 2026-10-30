@@ -129,6 +129,16 @@ CREATE TABLE IF NOT EXISTS session_relations (
   parent_stem TEXT NOT NULL,
   kind TEXT NOT NULL
 );
+-- compact_boundary records of main transcripts (ticket #12), deduped by record uuid (resume
+-- copies repeat them); `stem` is the transcript that held it first
+CREATE TABLE IF NOT EXISTS compactions (
+  uuid TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
+  ts_epoch REAL NOT NULL,
+  trigger TEXT NOT NULL,
+  pre_tokens INTEGER NOT NULL,
+  post_tokens INTEGER NOT NULL
+);
 """
 
 

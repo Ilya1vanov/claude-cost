@@ -80,6 +80,14 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
     return out
 
 
+def compact_line(uuid: str, ts: str, pre: int, post: int, trigger: str = "manual") -> str:
+    """A `compact_boundary` system record, for `write_transcript(extra_lines=[...])`."""
+    return json.dumps({"type": "system", "subtype": "compact_boundary", "uuid": uuid,
+                       "timestamp": ts, "parentUuid": None,
+                       "compactMetadata": {"trigger": trigger, "preTokens": pre,
+                                           "postTokens": post}})
+
+
 class DataRoot:
     """A synthetic ~/.claude. Always a path under pytest's tmp_path, never the real one."""
 
