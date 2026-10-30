@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 import calendar
 from datetime import date, datetime, time, timedelta, tzinfo
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import pricing
@@ -26,6 +27,25 @@ class SessionSummary:
     cost: float
     requests: int
     transcripts: tuple[str, ...]  # every transcript grouped into this Session
+    # cost/requests above include the Session's Subagents; these are the Subagent part
+    subagent_cost: float = 0.0
+    subagent_requests: int = 0
+    # Side session / Fork link to the parent Session (None = top-level)
+    parent_session_id: str | None = None
+    link_kind: str | None = None  # "side" | "fork"
+
+
+@dataclass(frozen=True)
+class SubagentSummary:
+    session_id: str  # the parent logical Session
+    agent_id: str
+    agent_type: str | None  # None when the metadata file is missing
+    is_fork: bool
+    tool_use_id: str | None  # id of the parent's Agent tool call (None for forks and nested agents)
+    parent_agent_id: str | None  # set on nested Subagents
+    description: str | None
+    cost: float
+    requests: int
 
 
 PERIOD_MODES = ("last7", "week", "month")
@@ -184,10 +204,28 @@ class QueryService:
     def _local_day(self, epoch: float) -> date:
         return datetime.fromtimestamp(epoch, self._tz).date()
 
-    def daily_spend(self, start: date, end: date) -> list[DaySpend]:
-        """Cost per local day for start..end inclusive; days without requests are zero."""
+    @staticmethod
+    def _filter(surface: str | None, data_root: str | Path | None) -> tuple[str, list]:
+        """WHERE clause (over `requests r`) for the Surface and Data root filters."""
+        where, args = [], []
+        if surface is not None:
+            where.append("r.message_id IN (SELECT message_id FROM request_surface WHERE surface = ?)")
+            args.append(surface)
+        if data_root is not None:
+            where.append("r.data_root = ?")
+            args.append(str(data_root))
+        return (" WHERE " + " AND ".join(where)) if where else "", args
+
+    def daily_spend(self, start: date, end: date, surface: str | None = None,
+                    data_root: str | Path | None = None) -> list[DaySpend]:
+        """Cost per local day for start..end inclusive; days without requests are zero.
+
+        `surface` ("CLI", "Desktop", "SDK") and `data_root` restrict the requests counted.
+        """
         totals: dict[date, list] = {}
-        for row in self._conn.execute(f"SELECT ts_epoch, {COST_SQL} AS cost FROM requests"):
+        where, args = self._filter(surface, data_root)
+        for row in self._conn.execute(
+                f"SELECT r.ts_epoch, {COST_SQL} AS cost FROM requests r{where}", args):
             d = self._local_day(row["ts_epoch"])
             if start <= d <= end:
                 t = totals.setdefault(d, [0.0, 0])
@@ -202,19 +240,61 @@ class QueryService:
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = 'last_ingest_epoch'").fetchone()
         return float(row["value"]) if row else None
-    def session_summaries(self) -> list[SessionSummary]:
-        """One row per Session (logical conversation), oldest first."""
+
+    def session_summaries(self, surface: str | None = None,
+                          data_root: str | Path | None = None) -> list[SessionSummary]:
+        """One row per Session (logical conversation), oldest first.
+
+        Costs include the Session's Subagents. Side sessions and Forks carry their parent
+        Session's id when the Desktop store linked them; everything else is top-level.
+        """
+        where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
             f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, "
-            f"SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
+            f"SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first, "
+            f"SUM(CASE WHEN a.agent_id IS NOT NULL THEN {COST_SQL} ELSE 0 END) AS sub_cost, "
+            f"SUM(a.agent_id IS NOT NULL) AS sub_n "
             "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
-            "GROUP BY sid ORDER BY first, sid").fetchall()
+            f"LEFT JOIN request_surface a ON a.message_id = r.message_id{where} "
+            "GROUP BY sid ORDER BY first, sid", args).fetchall()
         members: dict[str, list[str]] = {}
+        logical: dict[str, str] = {}
         for r in self._conn.execute(
                 "SELECT stem, logical_session_id FROM session_links ORDER BY stem"):
             members.setdefault(r["logical_session_id"], []).append(r["stem"])
+            logical[r["stem"]] = r["logical_session_id"]
+        parents: dict[str, tuple[str, str]] = {}
+        for rel in self._conn.execute(
+                "SELECT child_stem, parent_stem, kind FROM session_relations ORDER BY child_stem"):
+            child = logical.get(rel["child_stem"], rel["child_stem"])
+            parent = logical.get(rel["parent_stem"], rel["parent_stem"])
+            if child != parent:
+                parents.setdefault(child, (parent, rel["kind"]))
         return [SessionSummary(r["sid"], r["cost"], r["n"],
-                               tuple(members.get(r["sid"], [r["sid"]]))) for r in rows]
+                               tuple(members.get(r["sid"], [r["sid"]])),
+                               r["sub_cost"], r["sub_n"] or 0,
+                               *parents.get(r["sid"], (None, None))) for r in rows]
+
+    def subagent_summaries(self, surface: str | None = None,
+                           data_root: str | Path | None = None) -> list[SubagentSummary]:
+        """One row per Subagent that made requests, with its own cost, oldest first."""
+        where, args = self._filter(surface, data_root)
+        rows = self._conn.execute(
+            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent_id, "
+            "s.agent_type, COALESCE(s.is_fork, 0) AS is_fork, s.tool_use_id, s.parent_agent_id, "
+            f"s.description, SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
+            "FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
+            "LEFT JOIN session_links l ON l.stem = r.session_id "
+            "LEFT JOIN (SELECT f.file_stem AS stem, sf.agent_id, MAX(sf.agent_type) AS agent_type, "
+            "MAX(sf.is_fork) AS is_fork, MAX(sf.tool_use_id) AS tool_use_id, "
+            "MAX(sf.parent_agent_id) AS parent_agent_id, MAX(sf.description) AS description "
+            "FROM subagent_files sf JOIN ingest_files f ON f.path = sf.path "
+            "GROUP BY f.file_stem, sf.agent_id) s ON s.stem = r.session_id AND s.agent_id = a.agent_id "
+            f"{where}{' AND' if where else ' WHERE'} a.agent_id IS NOT NULL "
+            "GROUP BY r.session_id, a.agent_id ORDER BY first, sid, a.agent_id", args).fetchall()
+        return [SubagentSummary(r["sid"], r["agent_id"], r["agent_type"], bool(r["is_fork"]),
+                                r["tool_use_id"], r["parent_agent_id"], r["description"],
+                                r["cost"], r["n"]) for r in rows]
 
     def period_comparison(self, mode: str, now: datetime, include_today: bool = True,
                           top_n: int = 10) -> PeriodComparison:

@@ -39,7 +39,8 @@ def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> i
             for warning in ingest_mod.retention_warnings(config.data_roots):
                 print(warning, file=err)
         return ingest_mod.ingest(conn, config.data_roots, rebuild=rebuild, now=now,
-                                 price_table=pricing.build_table(config.prices))
+                                 price_table=pricing.build_table(config.prices),
+                                 desktop_stores=config.desktop_stores)
     finally:
         conn.close()
 

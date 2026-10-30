@@ -61,7 +61,7 @@ def test_request_copied_into_another_transcript_counts_once_for_its_owner(root, 
     assert (day.requests, day.cost) == (1, pytest.approx(20.0))
 
 
-def test_skips_synthetic_corrupt_lines_subagents_and_superseded_copies(root, service_for):
+def test_skips_synthetic_corrupt_lines_and_superseded_copies_but_counts_subagents(root, service_for):
     f = root.write_transcript("p", "s1", [
         req("m1", "2026-10-30T01:00:00Z", output=1_000_000),
         req("syn", "2026-10-30T02:00:00Z", model="<synthetic>", output=999),
@@ -69,7 +69,7 @@ def test_skips_synthetic_corrupt_lines_subagents_and_superseded_copies(root, ser
     root.write_subagent_transcript("p", "s1", "a1", [req("sub", "2026-10-30T03:00:00Z", output=1_000_000)])
     (f.parent / "s1.jsonl.superseded-1760000000000").write_text(f.read_text())
     day = service_for(root).daily_spend(D30, D30)[0]
-    assert (day.requests, day.cost) == (1, pytest.approx(20.0))
+    assert (day.requests, day.cost) == (2, pytest.approx(40.0))  # m1 + the subagent's request
 
 
 def test_days_follow_the_configured_timezone_and_gaps_are_zero(root, tmp_path):
