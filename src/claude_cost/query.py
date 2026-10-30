@@ -1,6 +1,7 @@
 """Query service: the one interface the web server and CLI use for every number."""
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from dataclasses import dataclass
 import calendar
@@ -8,6 +9,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from . import compact as compact_mod
 from . import findings as findings_mod
 from . import pricing
 
@@ -62,6 +64,7 @@ class TimelinePoint:
     gap_seconds: float | None  # idle time since the previous request (None for the first)
     idle: bool  # gap_seconds > IDLE_GAP_SECONDS
     cache_event: str  # cold | warm | none (a Cold write is marked)
+    threshold: int | None = None  # Compact threshold of this request's model (None: unknown)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,8 @@ class CompactionMark:
     pre_tokens: int
     post_tokens: int
     before_index: int  # number of timeline points before the compaction
+    threshold: int | None = None  # Compact threshold of the model it ran on
+    late: bool = False  # Late compact: started above the threshold
 
 
 @dataclass(frozen=True)
@@ -357,6 +362,10 @@ class QueryService:
                                 r["tool_use_id"], r["parent_agent_id"], r["description"],
                                 r["cost"], r["n"]) for r in rows]
 
+    def compact_thresholds(self) -> compact_mod.CompactAnalysis:
+        """Compact threshold per model (global fallback), with cost-vs-T curve and payback."""
+        return compact_mod.analyze(self._conn, self._tz, self._table)
+
     def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
         or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
@@ -378,6 +387,12 @@ class QueryService:
             points.append(TimelinePoint(r["message_id"], r["ts_epoch"], r["model"], r["ctx"],
                                         r["cost"], gap, gap is not None and gap > IDLE_GAP_SECONDS,
                                         r["event"]))
+        analysis = self.compact_thresholds()
+
+        def threshold(model: str) -> int | None:
+            t = analysis.for_model(model)
+            return t.threshold if t else None
+        points = [dataclasses.replace(p, threshold=threshold(p.model)) for p in points]
         times = [p.ts for p in points]
 
         def index(ts: float) -> int:
@@ -386,8 +401,7 @@ class QueryService:
         stems = [r["stem"] for r in self._conn.execute(
             "SELECT stem FROM session_links WHERE logical_session_id = ?", (session_id,))] or [session_id]
         marks = ",".join("?" * len(stems))
-        compactions = tuple(CompactionMark(c["ts_epoch"], c["trigger"], c["pre_tokens"],
-                                           c["post_tokens"], index(c["ts_epoch"]))
+        compactions = tuple(self._mark(c, index(c["ts_epoch"]), points)
                             for c in self._conn.execute(
                                 f"SELECT * FROM compactions WHERE stem IN ({marks}) "
                                 "ORDER BY ts_epoch, uuid", stems)) if agent_id is None else ()
@@ -402,6 +416,12 @@ class QueryService:
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None)
+
+    @staticmethod
+    def _mark(c, before: int, points: list[TimelinePoint]) -> CompactionMark:
+        t = points[before - 1].threshold if before else None  # the model it ran on
+        return CompactionMark(c["ts_epoch"], c["trigger"], c["pre_tokens"], c["post_tokens"],
+                              before, t, t is not None and c["pre_tokens"] > t)
 
     def _first_ts(self, session_id: str, agent_id: str | None = None) -> float:
         return self._conn.execute(
@@ -511,7 +531,7 @@ class QueryService:
         by_id = {r.message_id: r for r in rows}
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
-                                          self._table)
+                                          self._table, compact_mod.analyze(self._conn, self._tz, self._table))
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:

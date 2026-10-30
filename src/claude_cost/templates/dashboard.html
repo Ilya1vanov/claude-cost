@@ -7,7 +7,7 @@
 </head>
 <body>
   <h1>Dashboard</h1>
-  <p><a href="{{ url_for('compare') }}">Compare periods</a> | <a href="{{ url_for('findings') }}">Drains and Opportunities</a></p>
+  <p><a href="{{ url_for('compare') }}">Compare periods</a> | <a href="{{ url_for('findings') }}">Drains and Opportunities</a> | <a href="{{ url_for('compact') }}">Compact threshold</a></p>
   <form method="post" action="{{ url_for('force_refresh') }}"><button type="submit">Refresh</button></form>
   <p>Last {{ days|length }} days: <strong>${{ "%.2f"|format(total) }}</strong></p>
   {% if unpriced %}<p class="unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}

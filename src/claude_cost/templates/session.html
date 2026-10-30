@@ -10,6 +10,7 @@
     {% if t.agent_id %} | <a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ t.session_id }}</a>{% endif %}
     {% if t.parent_session_id %} | {{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ t.parent_session_id }}</a>{% endif %}</p>
   <h1>{% if t.agent_id %}Subagent {{ t.agent_id }} of session {{ t.session_id }}{% else %}Session {{ t.session_id }}{% endif %}</h1>
+  <p><a href="{{ url_for('compact') }}">Compact threshold</a></p>
   <p>{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
   <div style="max-width:1000px"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
@@ -17,8 +18,9 @@
   <h2>Events</h2>
   <table id="events">
     <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
-    {% for c in t.compactions %}<tr class="compaction"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }})</td>
-      <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens</td></tr>{% endfor %}
+    {% for c in t.compactions %}<tr class="compaction{% if c.late %} late{% endif %}"{% if c.late %} style="background:#f3e5f5"{% endif %}><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <strong>Late compact</strong>{% endif %}</td>
+      <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
+        (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
     {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
       <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{{ a.agent_type or a.agent_id }}</a>
         {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
@@ -30,7 +32,7 @@
   <table id="requests">
     <tr><th>Time</th><th>Context</th><th>Cost</th><th>Marks</th></tr>
     {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td>{{ "{:,}".format(p.context_tokens) }}</td><td>${{ "%.4f"|format(p.cost) }}</td>
-      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}</td></tr>{% endfor %}
+      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}{% if p.threshold and p.context_tokens > p.threshold %} Oversized context (above {{ "{:,}".format(p.threshold) }}){% endif %}</td></tr>{% endfor %}
   </table>
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
   <script src="{{ url_for('static', filename='session.js') }}"></script>
