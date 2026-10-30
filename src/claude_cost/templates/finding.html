@@ -19,6 +19,18 @@
     {% for s in f.sessions %}<tr><td>{{ s.session_id }}</td><td>{{ s.requests }}</td><td>${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td>${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
     {% else %}<tr><td colspan="4">None</td></tr>{% endfor %}
   </table>
+  {% if f.subagents %}<h2>Subagents covered</h2>
+  <table id="subagents">
+    <tr><th>Subagent</th><th>Session</th><th>Type</th><th>Requests</th><th>Attributed</th></tr>
+    {% for a in f.subagents %}<tr><td>{{ a.agent_id }}</td><td>{{ a.session_id }}</td><td>{{ a.agent_type or "" }}</td><td>{{ a.requests }}</td><td>${{ "%.2f"|format(a.attributed) }}</td></tr>
+    {% endfor %}
+  </table>{% endif %}
+  {% if f.subagents %}<h2>Subagents covered</h2>
+  <table id="subagents">
+    <tr><th>Subagent</th><th>Session</th><th>Type</th><th>Requests</th><th>Attributed</th></tr>
+    {% for a in f.subagents %}<tr><td>{{ a.agent_id }}</td><td>{{ a.session_id }}</td><td>{{ a.agent_type or "" }}</td><td>{{ a.requests }}</td><td>${{ "%.2f"|format(a.attributed) }}</td></tr>
+    {% endfor %}
+  </table>{% endif %}
   <h2>Requests covered</h2>
   <table id="requests">
     <tr><th>Request</th><th>Session</th><th>Model</th><th>Cost</th>{% if f.formula %}<th>Avoidable (before $0 floor)</th>{% endif %}</tr>

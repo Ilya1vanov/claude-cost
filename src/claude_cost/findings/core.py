@@ -51,6 +51,9 @@ class RequestRow:
     inference_geo: str | None
     gap: float | None
     in_period: bool
+    agent_id: str | None = None  # the Subagent that made the request (None = main transcript)
+    agent_type: str | None = None
+    agent_fork: bool = False  # that Subagent is a fork (subagent metadata)
 
     @property
     def context(self) -> int:
@@ -98,6 +101,17 @@ class CoveredRequest:
     model: str
     cost: float
     avoidable: float | None  # raw, may be negative
+    agent_id: str | None = None
+
+
+@dataclass(frozen=True)
+class SubagentCoverage:
+    """A Subagent a finding covers (drill-down for Subagent findings)."""
+    agent_id: str
+    session_id: str
+    agent_type: str | None
+    attributed: float
+    requests: int
 
 
 @dataclass(frozen=True)
@@ -112,6 +126,7 @@ class Finding:
     avoidable: float | None  # lower bound, never below 0; None = not estimated
     sessions: tuple[SessionCoverage, ...]
     requests: tuple[CoveredRequest, ...]
+    subagents: tuple[SubagentCoverage, ...] = ()
 
 
 class FindingContext:
@@ -153,10 +168,14 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
            "r.cost_input + r.cost_output + r.cost_cache_write_5m + r.cost_cache_write_1h "
            "+ r.cost_cache_read AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
-           "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo "
+           "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
+           "sf.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
+           "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "
+           "LEFT JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
+           "FROM subagent_files GROUP BY agent_id) sf ON sf.agent_id = sv.agent_id "
            "ORDER BY r.ts_epoch, r.message_id")
     prev: dict[str, float] = {}
     out = []
@@ -169,7 +188,8 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
             x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
             x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
             x["inference_geo"] or None, gap,
-            (lo is None or ts >= lo) and (hi is None or ts < hi)))
+            (lo is None or ts >= lo) and (hi is None or ts < hi),
+            x["agent_id"], x["agent_type"], bool(x["is_fork"])))
     return out
 
 
@@ -186,10 +206,18 @@ def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow])
                          len(rc)) for sid, rc in by_session.items()),
         key=lambda s: (-s.attributed, s.session_id)))
     requests = tuple(CoveredRequest(r.message_id, r.session_id, r.project, r.ts, r.model, r.cost,
-                                    c.avoidable if has_avoidable else None)
+                                    c.avoidable if has_avoidable else None, r.agent_id)
                      for r, c in sorted(covered, key=lambda rc: (rc[0].ts, rc[0].message_id)))
+    agents: dict[str, list[RequestRow]] = {}
+    for r, _ in covered:
+        if r.agent_id:
+            agents.setdefault(r.agent_id, []).append(r)
+    subagents = tuple(sorted(
+        (SubagentCoverage(a, rs[0].session_id, rs[0].agent_type, sum(r.cost for r in rs), len(rs))
+         for a, rs in agents.items()),
+        key=lambda s: (-s.attributed, s.agent_id)))
     return Finding(
         d.id, d.kind, d.title, d.description, d.formula, det.detail,
         sum(r.cost for r, _ in covered),
         max(0.0, sum(c.avoidable or 0.0 for _, c in covered)) if has_avoidable else None,
-        sessions, requests)
+        sessions, requests, subagents)
