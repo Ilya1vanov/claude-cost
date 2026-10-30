@@ -19,6 +19,9 @@
   --info-soft: #e3f0fc;
   --late: #8e3fb8;
   --late-soft: #f4e9fa;
+  --compact: #0b66c3;
+  --compact-soft: #e3f0fc;
+  --up-soft: #fbe6e6;
   --bar-soft: rgba(93, 103, 118, 0.35);
 
   /* Cost components: same color in every chart and table */
@@ -56,6 +59,9 @@
     --info-soft: #132a40;
     --late: #c58ae6;
     --late-soft: #2c1d36;
+    --compact: #6cb0f5;
+    --compact-soft: #132a40;
+    --up-soft: #3a1818;
     --bar-soft: rgba(154, 163, 176, 0.35);
 
     --c-input: #6f9bd1;
@@ -178,7 +184,9 @@ td.empty { color: var(--muted); text-align: center; padding: 20px; }
 td.nowrap { white-space: nowrap; }
 td.title { min-width: 260px; max-width: 420px; }
 .rank { color: var(--muted); width: 1%; font-variant-numeric: tabular-nums; }
-tr.late td { background: var(--late-soft); }
+tr.late-compact td { background: var(--up-soft); }
+tr.compaction td { background: var(--compact-soft); }
+tr.late-compact td { background: var(--up-soft); }
 tr.best td { background: var(--accent-soft); font-weight: 600; }
 tr.baseline td { background: var(--surface-2); }
 
@@ -191,7 +199,9 @@ tr.baseline td { background: var(--surface-2); }
 }
 .badge.drain { background: var(--warn-soft); color: var(--warn); }
 .badge.opportunity { background: var(--info-soft); color: var(--info); }
-.badge.late, .badge.over { background: var(--late-soft); color: var(--late); }
+.badge.late-compact { background: var(--up-soft); color: var(--up); font-weight: 600; }
+.badge.compaction { background: var(--compact-soft); color: var(--compact); }
+.badge.over { background: var(--late-soft); color: var(--late); }
 .badge.cold, .badge.idle { background: var(--warn-soft); color: var(--warn); }
 .card.drain { border-top: 3px solid var(--warn); }
 .card.opportunity { border-top: 3px solid var(--info); }
@@ -263,3 +273,14 @@ details summary { cursor: pointer; color: var(--accent); margin-bottom: 8px; }
 .filters td:first-child { width: 140px; white-space: nowrap; }
 .filters tr:hover td { background: none; }
 .filters input { width: 100%; }
+
+/* Chart legend: one swatch per mark */
+.legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; padding: 0; color: var(--muted); font-size: 13px; }
+.legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+.legend .swatch.line { width: 16px; height: 0; border-radius: 0; border-top: 2px dashed; }
+.legend .swatch.bar { width: 2px; height: 12px; border-radius: 0; vertical-align: -2px; }
+.legend .swatch.cold { background: var(--up); }
+.legend .swatch.idle { background: var(--warn); }
+.legend .swatch.over { background: var(--late); }
+.legend .swatch.line { color: var(--late); }
+.legend .swatch.bar { background: var(--compact); }

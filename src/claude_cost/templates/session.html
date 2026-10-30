@@ -16,13 +16,20 @@
   <section class="card">
     <h2>Context and cost per request</h2>
     <div class="chart tall"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
+    <ul class="legend" id="legend">
+      <li><span class="swatch cold"></span>Cold write</li>
+      <li><span class="swatch idle"></span>Request after an idle gap</li>
+      <li><span class="swatch over"></span>Oversized context (above the Compact threshold)</li>
+      <li><span class="swatch line"></span>Compact threshold</li>
+      <li><span class="swatch bar"></span>Compaction (red when it is a Late compact)</li>
+    </ul>
   </section>
 
   <section class="card">
     <h2>Events</h2>
     <div class="table-wrap"><table id="events">
       <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
-      {% for c in t.compactions %}<tr class="compaction{% if c.late %} late{% endif %}"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <span class="badge late">Late compact</span>{% endif %}</td>
+      {% for c in t.compactions %}<tr class="compaction{% if c.late %} late-compact{% endif %}"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td>
         <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
           (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
       {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
@@ -38,11 +45,13 @@
     <h2>Requests</h2>
     <div class="table-wrap"><table id="requests">
       <tr><th>Time</th><th class="num">Context</th><th class="num">Cost</th><th>Marks</th></tr>
-      {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
+      {% for p in t.sequence %}{% if p.trigger is defined %}<tr class="compaction{% if p.late %} late-compact{% endif %}"><td>{{ when(p.ts) }}</td>
+        <td colspan="3">Compaction ({{ p.trigger }}): {{ "{:,}".format(p.pre_tokens) }} to {{ "{:,}".format(p.post_tokens) }} tokens{% if p.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td></tr>
+      {% else %}<tr><td>{{ when(p.ts) }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
         <td>{% if p.idle %}<span class="badge idle">idle gap {{ (p.gap_seconds / 60)|round|int }} min</span>{% endif %}
           {% if p.cache_event == "cold" %}<span class="badge cold">Cold write</span>{% endif %}
           {% if p.cold_resume %}<span class="badge cold">Cold resume</span>{% endif %}
-          {% if p.threshold and p.context_tokens > p.threshold %}<span class="badge over">Oversized context (above {{ "{:,}".format(p.threshold) }})</span>{% endif %}</td></tr>{% endfor %}
+          {% if p.threshold and p.context_tokens > p.threshold %}<span class="badge over">Oversized context (above {{ "{:,}".format(p.threshold) }})</span>{% endif %}</td></tr>{% endif %}{% endfor %}
     </table></div>
   </section>
 {% endblock %}

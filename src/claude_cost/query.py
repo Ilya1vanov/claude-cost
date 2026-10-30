@@ -181,6 +181,17 @@ class SessionTimeline:
     parent_session_id: str | None = None  # of a Side session / Fork
     link_kind: str | None = None
 
+    @property
+    def sequence(self) -> tuple[TimelinePoint | CompactionMark, ...]:
+        """The requests with each compaction placed where it happened, in time order."""
+        out: list[TimelinePoint | CompactionMark] = []
+        pending = list(self.compactions)
+        for i, p in enumerate(self.points):
+            while pending and pending[0].before_index <= i:
+                out.append(pending.pop(0))
+            out.append(p)
+        return tuple(out + pending)
+
 
 PERIOD_MODES = ("last7", "week", "month")
 
