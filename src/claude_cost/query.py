@@ -82,6 +82,37 @@ class PeriodComparison:
         return self.delta_cost / self.baseline_cost * 100 if self.baseline_cost else None
 
 
+@dataclass(frozen=True)
+class CacheStats:
+    """Cache behaviour over one Period. Costs are $; hit ratio is by tokens (None if no tokens)."""
+    hit_ratio: float | None  # cache read / (cache read + cache write + uncached input)
+    cold_cost: float
+    warm_cost: float
+    write_5m_cost: float
+    write_1h_cost: float
+    rebuilds: int  # requests whose write was Cold
+
+
+@dataclass(frozen=True)
+class CacheCard:
+    mode: str
+    current: CacheStats
+    baseline: CacheStats
+
+    @property
+    def delta_hit_ratio(self) -> float | None:
+        a, b = self.current.hit_ratio, self.baseline.hit_ratio
+        return None if a is None or b is None else a - b
+
+
+@dataclass(frozen=True)
+class CacheEventSpend:
+    event: str  # "cold write" | "warm write" | "cache read"
+    cost: float
+    tokens: int
+    requests: int
+
+
 COMPARISON_MODES = ("week", "month")
 
 
@@ -222,6 +253,53 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def cache_events(self) -> dict[str, str]:
+        """Cache write event per request: message id -> 'cold' | 'warm' | 'none' (no write)."""
+        return {r["message_id"]: r["event"]
+                for r in self._conn.execute("SELECT message_id, event FROM request_cache")}
+
+    def _cache_stats(self, p: Period) -> CacheStats:
+        lo, hi = self._bounds(p)
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(r.cache_read_tokens), 0) AS rd, "
+            "COALESCE(SUM(r.cache_write_5m_tokens + r.cache_write_1h_tokens), 0) AS wr, "
+            "COALESCE(SUM(r.input_tokens), 0) AS inp, "
+            "COALESCE(SUM(CASE WHEN c.event = 'cold' THEN r.cost_cache_write_5m + r.cost_cache_write_1h END), 0) AS cold, "
+            "COALESCE(SUM(CASE WHEN c.event = 'warm' THEN r.cost_cache_write_5m + r.cost_cache_write_1h END), 0) AS warm, "
+            "COALESCE(SUM(r.cost_cache_write_5m), 0) AS w5, COALESCE(SUM(r.cost_cache_write_1h), 0) AS w1, "
+            "COALESCE(SUM(c.event = 'cold'), 0) AS rebuilds "
+            "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
+        total = row["rd"] + row["wr"] + row["inp"]
+        return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
+                          row["w5"], row["w1"], row["rebuilds"])
+
+    def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
+        """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
+        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        cur, base, _ = resolve_periods(mode, today, include_today)
+        return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
+
+    def spend_by_cache_event(self, start: date, end: date) -> list[CacheEventSpend]:
+        """Cache event dimension: cost, tokens and requests per event over local days start..end."""
+        lo, hi = self._bounds(Period(start, end))
+        rows = self._conn.execute(
+            "SELECT c.event AS ev, COUNT(*) AS n, "
+            "SUM(r.cost_cache_write_5m + r.cost_cache_write_1h) AS cost, "
+            "SUM(r.cache_write_5m_tokens + r.cache_write_1h_tokens) AS tok "
+            "FROM requests r JOIN request_cache c ON c.message_id = r.message_id "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? AND c.event IN ('cold', 'warm') "
+            "GROUP BY c.event", (lo, hi)).fetchall()
+        out = [CacheEventSpend(f"{r['ev']} write", r["cost"], r["tok"], r["n"]) for r in rows]
+        rd = self._conn.execute(
+            "SELECT SUM(cost_cache_read) AS cost, SUM(cache_read_tokens) AS tok, COUNT(*) AS n "
+            "FROM requests WHERE ts_epoch >= ? AND ts_epoch < ? AND cache_read_tokens > 0",
+            (lo, hi)).fetchone()
+        if rd["n"]:
+            out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
+        return sorted(out, key=lambda e: e.event)
+
 
     def available_periods(self, mode: str, now: datetime) -> list[date]:
         """Start dates of every calendar period from the first request to now, newest first."""

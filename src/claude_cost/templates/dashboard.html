@@ -34,6 +34,19 @@
     <tr><th>Component</th><th>This period</th><th>Baseline</th></tr>
     {% for x in c.components %}<tr><td>{{ x.name }}</td><td>${{ "%.2f"|format(x.current) }}</td><td>${{ "%.2f"|format(x.baseline) }}</td></tr>{% endfor %}
   </table>
+  {% set k = cache %}
+  {% macro money(cur, base) %}${{ "%.2f"|format(cur) }} ({{ "+" if cur - base >= 0 else "-" }}${{ "%.2f"|format((cur - base)|abs) }} vs baseline ${{ "%.2f"|format(base) }}){% endmacro %}
+  <h3>Cache</h3>
+  <table id="cache-card">
+    <tr><th>Metric</th><th>This period (change vs baseline)</th></tr>
+    <tr><td>Hit ratio</td><td>{% if k.current.hit_ratio is none %}n/a{% else %}{{ "%.1f"|format(k.current.hit_ratio * 100) }}%{% endif %}
+      {% if k.delta_hit_ratio is not none %}({{ "%+.1f"|format(k.delta_hit_ratio * 100) }} pts){% endif %}</td></tr>
+    <tr><td>Cold writes</td><td>{{ money(k.current.cold_cost, k.baseline.cold_cost) }}</td></tr>
+    <tr><td>Warm writes</td><td>{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
+    <tr><td>5m writes</td><td>{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
+    <tr><td>1h writes</td><td>{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>
+    <tr><td>Rebuilds</td><td>{{ k.current.rebuilds }} ({{ "%+d"|format(k.current.rebuilds - k.baseline.rebuilds) }} vs baseline {{ k.baseline.rebuilds }})</td></tr>
+  </table>
   <h3>Top sessions</h3>
   <ol>{% for s in c.top_sessions %}<li>{{ s.key }}: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <h3>Top projects</h3>
