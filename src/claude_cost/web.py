@@ -13,6 +13,7 @@ from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 from .spotlights import SpotlightError
+from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
@@ -25,6 +26,7 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
+    app.jinja_env.globals["tooltips"] = TOOLTIPS
     make_service = service_factory
 
     def service_factory() -> QueryService:

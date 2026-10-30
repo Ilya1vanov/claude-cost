@@ -62,7 +62,7 @@
       <h2>Cost components</h2>
       <div class="table-wrap"><table>
         <tr><th>Component</th><th class="num">This period</th><th class="num">Baseline</th></tr>
-        {% for x in c.components %}<tr><td>{{ ui.component(x.name) }}</td><td class="num">${{ "%.2f"|format(x.current) }}</td>
+        {% for x in c.components %}<tr><td>{{ ui.component(x.name) }} {{ ui.info(x.name) }}</td><td class="num">${{ "%.2f"|format(x.current) }}</td>
           <td class="num">${{ "%.2f"|format(x.baseline) }}</td></tr>{% endfor %}
       </table></div>
     </section>
@@ -70,14 +70,13 @@
       <h2>Cache</h2>
       <div class="table-wrap"><table id="cache-card">
         <tr><th>Metric</th><th class="num">This period (change vs baseline)</th></tr>
-        <tr><td>Hit ratio</td><td class="num">{% if k.current.hit_ratio is none %}n/a{% else %}{{ "%.1f"|format(k.current.hit_ratio * 100) }}%{% endif %}
+        <tr><td>Hit ratio {{ ui.info("hit ratio") }}</td><td class="num">{% if k.current.hit_ratio is none %}n/a{% else %}{{ "%.1f"|format(k.current.hit_ratio * 100) }}%{% endif %}
           {% if k.delta_hit_ratio is not none %}<small>{{ ui.delta(-k.delta_hit_ratio, "%+.1f"|format(k.delta_hit_ratio * 100) ~ " pts") }}</small>{% endif %}</td></tr>
-        <tr><td>Cold writes</td><td class="num">{{ money(k.current.cold_cost, k.baseline.cold_cost) }}</td></tr>
-        <tr><td>Warm writes</td><td class="num">{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
-        <tr><td>5m writes</td><td class="num">{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
-        <tr><td>1h writes</td><td class="num">{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>
-        <tr><td>Rebuilds</td><td class="num">{{ k.current.rebuilds }}
-          <small>{{ ui.delta(k.current.rebuilds - k.baseline.rebuilds, "%+d"|format(k.current.rebuilds - k.baseline.rebuilds)) }} vs baseline {{ k.baseline.rebuilds }}</small></td></tr>
+        <tr><td>Cold writes {{ ui.info("cold writes") }}</td><td class="num">{{ money(k.current.cold_cost, k.baseline.cold_cost) }}
+          <small>across {{ k.current.rebuilds }} requests ({{ ui.delta(k.current.rebuilds - k.baseline.rebuilds, "%+d"|format(k.current.rebuilds - k.baseline.rebuilds)) }} vs baseline {{ k.baseline.rebuilds }})</small></td></tr>
+        <tr><td>Warm writes {{ ui.info("warm writes") }}</td><td class="num">{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
+        <tr><td>5m writes {{ ui.info("5m writes") }}</td><td class="num">{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
+        <tr><td>1h writes {{ ui.info("1h writes") }}</td><td class="num">{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>
       </table></div>
     </section>
   </div>
