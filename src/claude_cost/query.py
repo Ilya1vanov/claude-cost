@@ -633,7 +633,7 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k", (lo, hi))}
         linked: dict[tuple[str, str], int] = {}
         for s in self.session_summaries():
-            if s.parent_session_id:
+            if s.parent_session_id and lo <= self._first_ts(s.session_id) < hi:  # started in the period
                 key = (s.parent_session_id, s.link_kind)
                 linked[key] = linked.get(key, 0) + 1
         labels = self.session_labels()

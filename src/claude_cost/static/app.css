@@ -19,6 +19,8 @@
   --info-soft: #e3f0fc;
   --late: #8e3fb8;
   --late-soft: #f4e9fa;
+  --late-compact: #00838f;
+  --late-compact-soft: #dff4f6;
   --compact: #0b66c3;
   --compact-soft: #e3f0fc;
   --up-soft: #fbe6e6;
@@ -59,6 +61,8 @@
     --info-soft: #132a40;
     --late: #c58ae6;
     --late-soft: #2c1d36;
+    --late-compact: #4dd0e1;
+    --late-compact-soft: #0f3438;
     --compact: #6cb0f5;
     --compact-soft: #132a40;
     --up-soft: #3a1818;
@@ -184,9 +188,8 @@ td.empty { color: var(--muted); text-align: center; padding: 20px; }
 td.nowrap { white-space: nowrap; }
 td.title { min-width: 260px; max-width: 420px; }
 .rank { color: var(--muted); width: 1%; font-variant-numeric: tabular-nums; }
-tr.late-compact td { background: var(--up-soft); }
 tr.compaction td { background: var(--compact-soft); }
-tr.late-compact td { background: var(--up-soft); }
+tr.late-compact td { background: var(--late-compact-soft); }
 tr.best td { background: var(--accent-soft); font-weight: 600; }
 tr.baseline td { background: var(--surface-2); }
 
@@ -200,8 +203,7 @@ tr.baseline td { background: var(--surface-2); }
 }
 .badge.drain { background: var(--warn-soft); color: var(--warn); }
 .badge.opportunity { background: var(--info-soft); color: var(--info); }
-.badge.late-compact { background: var(--up-soft); color: var(--up); font-weight: 600; }
-.badge.compaction { background: var(--compact-soft); color: var(--compact); }
+.badge.late-compact { background: var(--late-compact-soft); color: var(--late-compact); font-weight: 600; }
 .badge.over { background: var(--late-soft); color: var(--late); }
 .badge.cold, .badge.idle { background: var(--warn-soft); color: var(--warn); }
 .card.drain { border-top: 3px solid var(--warn); }

@@ -49,3 +49,13 @@ def test_dashboard_row_shows_label_subagents_and_not_included_note(root, desktop
     assert '<td class="num">$40.00</td><td class="num">2</td>' in row
     assert "1 subagent = $20.00" in text
     assert "1 side session, 1 fork not included" in text
+
+
+def test_side_session_and_fork_counts_only_cover_those_started_in_the_period(root, desktop, service_for):
+    _family(root, desktop)
+    root.write_transcript("p", "oldside", [req("m5", "2026-09-01T03:00:00Z", output=M)])
+    root.write_transcript("p", "oldfork", [req("m6", "2026-09-01T04:00:00Z", output=M)])
+    desktop.write_session("d", "oldside", spawnedFrom={"sessionId": "local_a", "sideSession": True})
+    desktop.write_session("e", "oldfork", forkedFromSessionId="local_a")
+    top = {s.key: s for s in service_for(root, desktop=desktop).period_comparison("last7", NOW).top_sessions}
+    assert (top["s1"].side_sessions, top["s1"].forks) == (1, 1)

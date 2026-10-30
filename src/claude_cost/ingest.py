@@ -142,6 +142,9 @@ def _turn(rec: dict) -> tuple[str, float] | None:
         return None
     if kind == "user":
         text = (rec.get("message") or {}).get("content")
+        if isinstance(text, list):  # blocks: the typed text, ignoring images; tool results have none
+            text = next((b.get("text") for b in text
+                         if isinstance(b, dict) and b.get("type") == "text"), None)
     elif kind == "attachment" and (rec.get("attachment") or {}).get("type") == "queued_command":
         text = rec["attachment"].get("prompt")
     else:

@@ -113,6 +113,14 @@ def tool_result_line(uuid: str, ts: str) -> str:
     return _user(uuid, ts, [{"type": "tool_result", "tool_use_id": "t0", "content": "ok"}])
 
 
+def block_prompt_line(uuid: str, ts: str, text: str = "look at this", image: bool = True) -> str:
+    """A prompt whose content is a list of blocks: text, plus an image when `image`."""
+    blocks = [{"type": "text", "text": text}]
+    if image:
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}})
+    return _user(uuid, ts, blocks, origin={"kind": "human"})
+
+
 def compact_summary_line(uuid: str, ts: str) -> str:
     """The user record holding a compaction summary: not a prompt."""
     return _user(uuid, ts, "This session is being continued from a previous conversation...",

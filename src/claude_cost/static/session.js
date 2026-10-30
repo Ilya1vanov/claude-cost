@@ -4,7 +4,7 @@
     return d.context.map(function (_, i) { return list.indexOf(i) >= 0 ? color : "rgba(54,162,235,0.8)"; });
   }
   var line = theme.token("--text"), cold = theme.token("--up"), idle = theme.token("--warn"),
-      late = theme.token("--late"), mark = theme.token("--compact"), lateMark = theme.token("--up");
+      late = theme.token("--late"), mark = theme.token("--compact"), lateMark = theme.token("--late-compact");
   // Vertical line at every compaction, between the requests before and after it
   var compactionLines = { id: "compactionLines", afterDatasetsDraw: function (chart) {
     var x = chart.scales.x, a = chart.chartArea, ctx = chart.ctx;
