@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>claude-cost: compare Spotlights</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <h1>Compare Spotlights</h1>
+  <p><a href="{{ url_for('spotlight_list') }}">All Spotlights</a></p>
+  <form method="get" action="{{ url_for('spotlight_compare') }}">
+    {% for s in available %}<label><input type="checkbox" name="s" value="{{ s.name }}" {{ "checked" if s.name in selected }}> {{ s.name }}</label><br>
+    {% else %}<p>No Spotlights yet</p>{% endfor %}
+    <button type="submit">Compare</button>
+  </form>
+  {% if details %}
+  <p>Sessions can be in several Spotlights, so these totals overlap: they are shown side by side and never added.</p>
+  <table id="spotlight-compare-table">
+    <tr><th>Spotlight</th><th>Lifetime</th><th>Sessions</th><th>Requests</th><th>First activity</th><th>Last activity</th>
+      {% for n in details[0].components %}<th>{{ n }}</th>{% endfor %}</tr>
+    {% for d in details %}<tr><td><a href="{{ url_for('spotlight_page', name=d.summary.name) }}">{{ d.summary.name }}</a></td>
+      <td>${{ "%.2f"|format(d.summary.total) }}</td><td>{{ d.summary.sessions }}</td><td>{{ d.summary.requests }}</td>
+      <td>{{ d.summary.first_activity or "" }}</td><td>{{ d.summary.last_activity or "" }}</td>
+      {% for c in d.components.values() %}<td>${{ "%.2f"|format(c) }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  <div style="max-width:900px"><canvas id="spotlight-compare-chart" aria-label="Spotlights by day since first activity"></canvas></div>
+  <script id="compare-data" type="application/json">{{ chart_data|tojson }}</script>
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='spotlight_compare.js') }}"></script>
+  {% elif selected %}<p>Select at least two Spotlights.</p>{% endif %}
+</body>
+</html>

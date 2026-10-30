@@ -107,11 +107,27 @@ class DataRoot:
         (path / "projects").mkdir(parents=True, exist_ok=True)
 
     def write_transcript(self, project: str, session_id: str, reqs: list[Req],
-                         extra_lines: list[str] | None = None) -> Path:
+                         extra_lines: list[str] | None = None, title: str | None = None,
+                         branch: str | None = None, cwd: str | None = None,
+                         prompt: str | None = None) -> Path:
+        """`title`/`branch`/`cwd`/`prompt` add the records Spotlights read: a custom-title
+        record, and a first user record carrying gitBranch, cwd and the first prompt."""
         d = self.path / "projects" / project
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"{session_id}.jsonl"
-        lines = [json.dumps(rec) for r in reqs for rec in assistant_lines(r, session_id)]
+        head = []
+        if title:
+            head.append(json.dumps({"type": "custom-title", "customTitle": title,
+                                    "sessionId": session_id}))
+        if branch or cwd or prompt:
+            rec = {"type": "user", "sessionId": session_id, "timestamp": "2026-10-01T00:00:00Z",
+                   "message": {"role": "user", "content": prompt or "<system-reminder>x"}}
+            if branch:
+                rec["gitBranch"] = branch
+            if cwd:
+                rec["cwd"] = cwd
+            head.append(json.dumps(rec))
+        lines = head + [json.dumps(rec) for r in reqs for rec in assistant_lines(r, session_id)]
         f.write_text("\n".join(lines + (extra_lines or [])) + "\n")
         return f
 

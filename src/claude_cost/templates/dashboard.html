@@ -51,6 +51,15 @@
   <ol>{% for s in c.top_sessions %}<li><a href="{{ url_for('session_timeline', session_id=s.key) }}">{{ s.key }}</a>: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <h3>Top projects</h3>
   <ol>{% for p in c.top_projects %}<li>{{ p.key }}: ${{ "%.2f"|format(p.cost) }} ({{ p.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
+  <h3>Top Spotlights</h3>
+  <p><a href="{{ url_for('spotlight_list') }}">All Spotlights</a>. A Session can be in several Spotlights, so these totals overlap: never add them up.</p>
+  <table id="top-spotlights">
+    <tr><th>Spotlight</th><th>This period</th><th>Lifetime</th><th>First activity</th><th>Last activity</th></tr>
+    {% for r in spotlights %}<tr><td><a href="{{ url_for('spotlight_page', name=r.summary.name) }}">{{ r.summary.name }}</a></td>
+      <td>${{ "%.2f"|format(r.period_cost) }}</td><td>${{ "%.2f"|format(r.summary.total) }}</td>
+      <td>{{ r.summary.first_activity }}</td><td>{{ r.summary.last_activity }}</td></tr>
+    {% else %}<tr><td colspan="5">No Spotlight spend in this period</td></tr>{% endfor %}
+  </table>
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>

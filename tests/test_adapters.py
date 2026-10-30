@@ -140,6 +140,46 @@ def test_cli_ingest_reads_desktop_store_from_config(root, desktop, configure, en
     assert [(s.session_id, s.requests) for s in summaries] == [("old", 2)]
 
 
+def _spotlight_client(env):
+    cfg = cli.load_config(env)
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone, key_pattern=r"PROJ-\d+")
+    return create_app(factory, lambda: NOW).test_client()
+
+
+def test_spotlight_pages_edit_pins_and_compare(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=1_000_000)], title="PROJ-7 login")
+    root.write_transcript("p", "s2", [req("m2", "2026-10-29T01:00:00Z", output=2_000_000)], title="PROJ-8 cart")
+    root.write_transcript("p", "s3", [req("m3", "2026-10-29T01:00:00Z", output=1_000_000)], prompt="loose")
+    client = _spotlight_client(configure(root))
+    dash = client.get("/").get_data(as_text=True)
+    assert 'id="top-spotlights"' in dash and "PROJ-7" in dash and "PROJ-8" in dash
+    assert "never add them up" in client.get("/spotlights").get_data(as_text=True)
+    page = client.get("/spotlights/PROJ-7")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and 'id="spotlight-chart"' in html and "$20.00" in html
+    assert "/static/spotlight.js" in html and client.get("/static/spotlight.js").status_code == 200
+    # pin a Session in the web UI, then unpin it
+    assert client.post("/spotlights/PROJ-7/pin", data={"session": "s3"}).status_code == 302
+    def sessions_table():
+        return client.get("/spotlights/PROJ-7").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]
+    assert "loose" in sessions_table()
+    client.post("/spotlights/PROJ-7/unpin", data={"session": "s3"})
+    assert "loose" not in sessions_table()
+    # create a rule Spotlight, reject a bad rule, delete it
+    assert client.post("/spotlights", data={"name": "carts", "rule": "cart"}).status_code == 302
+    assert "PROJ-8" in client.get("/spotlights/carts").get_data(as_text=True)
+    assert client.post("/spotlights", data={"name": "bad", "rule": "("}).status_code == 400
+    client.post("/spotlights/carts/delete")
+    assert client.get("/spotlights/carts").status_code == 404
+    cmp = client.get("/spotlights/compare?s=PROJ-7&s=PROJ-8")
+    assert cmp.status_code == 200 and 'id="spotlight-compare-chart"' in cmp.get_data(as_text=True)
+    assert client.get("/spotlights/compare?s=PROJ-7&s=nope").status_code == 404
+    assert client.get("/spotlights/nope").status_code == 404
+
+
 def test_session_timeline_page_loads(root, configure):
     root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1000)])
     root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T01:01:00Z", output=1000)])

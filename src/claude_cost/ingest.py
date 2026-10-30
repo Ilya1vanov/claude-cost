@@ -94,6 +94,35 @@ class Parsed:
     compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
     listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
+    # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
+    title: str | None = None
+    cwd: str | None = None
+    branch: str | None = None
+    prompt: str | None = None
+
+
+def _prompt_text(rec: dict) -> str | None:
+    """The real user prompt of a `user` record (not meta, not an injected `<...>` wrapper)."""
+    if rec.get("type") != "user" or rec.get("isMeta"):
+        return None
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = next((b.get("text") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"), None)
+    if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
+        return content[:300]
+    return None
+
+
+def _scan_meta(rec: dict, parsed: Parsed) -> None:
+    title = rec.get("customTitle")
+    if rec.get("type") == "custom-title" and isinstance(title, str) and title:
+        parsed.title = title  # repeated; the last one wins
+    for key, attr in (("cwd", "cwd"), ("gitBranch", "branch")):
+        if getattr(parsed, attr) is None and isinstance(rec.get(key), str) and rec[key]:
+            setattr(parsed, attr, rec[key])
+    if parsed.prompt is None:
+        parsed.prompt = _prompt_text(rec)
 
 
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
@@ -107,6 +136,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             continue  # corrupt line
         if not isinstance(rec, dict):
             continue
+        _scan_meta(rec, parsed)
         kind = rec.get("type")
         if kind == "relocated":
             parsed.relocated = True
@@ -475,6 +505,14 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
                 _store_copies(conn, path, parsed.reqs)
+                if sub is None:  # Spotlight metadata of main transcripts only
+                    conn.execute(
+                        "INSERT INTO session_meta VALUES (?,?,?,?,?) ON CONFLICT(stem) DO UPDATE SET "
+                        "custom_title = COALESCE(excluded.custom_title, custom_title), "
+                        "git_branch = COALESCE(git_branch, excluded.git_branch), "
+                        "cwd = COALESCE(cwd, excluded.cwd), "
+                        "first_prompt = COALESCE(first_prompt, excluded.first_prompt)",
+                        (stem, parsed.title, parsed.branch, parsed.cwd, parsed.prompt))
                 if sub is None:  # a Subagent's own compactions are not the Session's
                     conn.executemany("INSERT OR IGNORE INTO compactions "
                                      "VALUES (?,?,?,?,?,?)",
