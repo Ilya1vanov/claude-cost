@@ -187,3 +187,10 @@ def test_dashboard_shows_top_findings_card_using_config_top_n(root, configure):
         return QueryService(conn, cfg.timezone)
     html = create_app(factory, lambda: NOW, top_n=cfg.top_n).test_client().get("/").get_data(as_text=True)
     assert 'id="top-findings"' in html and "Fable usage" in html and "Cold resume" not in html
+
+
+def test_fable_comparison_model_is_configurable(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("f", "2026-10-30T10:00:00Z", model="claude-fable-5", input=1_000_000, output=100_000)])
+    f = _by_id(service_for(root, compare_model="claude-sonnet-5-5").findings())["fable-usage"]
+    assert f.avoidable == pytest.approx(15 - (2 + 1))     # Sonnet 5.5: $2 input + $10/M output

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .findings import all_thresholds
+from .findings import DEFAULT_COMPARE_MODEL, all_thresholds
 
 DEFAULT_PORT = 8765
 DEFAULT_TOP_N = 10
@@ -37,6 +37,7 @@ class Config:
     spotlight_key_pattern: str | None = None  # regex; one Auto-spotlight per key it finds
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
     thresholds: dict[str, int] = field(default_factory=dict)  # finding thresholds in effect
+    fable_compare_model: str = DEFAULT_COMPARE_MODEL
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,12 @@ def _parse_int(name: str) -> Callable[[str], int]:
         except ValueError:
             raise ConfigError(f"{name} must be an integer, got {text!r}") from None
     return parse
+
+
+def _coerce_model(v: Any) -> str:
+    if not isinstance(v, str) or not v.strip():
+        raise ConfigError(f"fable_compare_model must be a model name, got {v!r}")
+    return v.strip()
 
 
 def _root_ok(x: Any) -> bool:
@@ -151,6 +158,10 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             "root; a store for one root is set in data_roots. Empty = no Desktop links.",
             [], "[]", '["~/Library/Application Support/Claude/claude-code-sessions"]',
             _coerce_stores, _parse_roots),
+    Setting("fable_compare_model",
+            "Model whose prices the Fable usage Opportunity compares Fable requests against.",
+            DEFAULT_COMPARE_MODEL, DEFAULT_COMPARE_MODEL, f'"{DEFAULT_COMPARE_MODEL}"',
+            _coerce_model, str),
     Setting("timezone", "IANA time zone for days and weeks; unset = system local time.",
             None, "(system local time)", '"Europe/Berlin"', _coerce_tz, str),
     Setting("prices", "Price overrides in $ per million tokens, by model-name prefix "
@@ -236,6 +247,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         spotlight_key_pattern=values["spotlight_key_pattern"],
         sources=sources,
         thresholds={n: values[n] for n in all_thresholds()},
+        fable_compare_model=values["fable_compare_model"],
     )
 
 

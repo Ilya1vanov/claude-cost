@@ -4,13 +4,20 @@ from __future__ import annotations
 from .core import DRAIN, Covered, Detection, FindingContext, FindingDef, Threshold
 
 
+def is_cold_resume(cache_event: str, gap: float | None, context: int,
+                   idle_minutes: int, min_context: int) -> bool:
+    """A cold cache write after at least `idle_minutes` idle, on a context of `min_context`+."""
+    return (cache_event == "cold" and gap is not None and gap >= idle_minutes * 60
+            and context >= min_context)
+
+
 def detect(ctx: FindingContext) -> Detection:
-    idle = ctx.threshold("cold_resume_idle_minutes") * 60
+    idle = ctx.threshold("cold_resume_idle_minutes")
     min_ctx = ctx.threshold("cold_resume_min_context")
     fresh = ctx.median_first_context()
     covered = []
     for r in ctx.period_rows:
-        if r.cache_event != "cold" or r.gap is None or r.gap < idle or r.context < min_ctx:
+        if not is_cold_resume(r.cache_event, r.gap, r.context, idle, min_ctx):
             continue
         written = r.write_5m + r.write_1h
         # a fresh session would write the median first-request context at this request's write price

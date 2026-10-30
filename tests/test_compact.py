@@ -121,3 +121,13 @@ def test_cli_compact_and_pages(root, configure):
     page = client.get("/compact").get_data(as_text=True)
     assert "130,000" in page and "Cost vs threshold" in page
     assert "Late compact" in client.get("/session/t").get_data(as_text=True)
+
+
+def test_min_sample_and_step_are_configurable(root, service_for):
+    _ramp_sessions(root, 20)
+    _ramp_sessions(root, 3, model="claude-sonnet-5-5", prefix="x")
+    a = service_for(root, thresholds={"compact_min_sample": 3, "compact_step": 5_000}).compact_thresholds()
+    assert a.for_model("claude-sonnet-5-5").source == "model"   # 3 compactions are now enough
+    opus = a.for_model("claude-opus-5-5")
+    steps = {b.threshold - a_.threshold for a_, b in zip(opus.curve, opus.curve[1:])}
+    assert steps == {5_000}

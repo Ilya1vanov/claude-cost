@@ -13,6 +13,7 @@ from . import compact as compact_mod
 from . import explore
 from . import findings as findings_mod
 from . import pricing, spotlights
+from .findings import cold_resume as cold_resume_mod
 
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
             "+ cost_cache_write_1h + cost_cache_read")
@@ -120,8 +121,6 @@ class SpotlightDetail:
     components: dict[str, float]  # lifetime cost per Cost component
     pins: tuple[str, ...]
 
-IDLE_GAP_SECONDS = 300  # a gap longer than the 5m cache TTL is marked as an idle gap
-
 
 @dataclass(frozen=True)
 class TimelinePoint:
@@ -131,8 +130,9 @@ class TimelinePoint:
     context_tokens: int  # prompt size: input + cache read + cache writes
     cost: float
     gap_seconds: float | None  # idle time since the previous request (None for the first)
-    idle: bool  # gap_seconds > IDLE_GAP_SECONDS
+    idle: bool  # gap_seconds > the timeline_idle_gap_seconds threshold
     cache_event: str  # cold | warm | none (a Cold write is marked)
+    cold_resume: bool = False  # Cold resume per its configured thresholds
     threshold: int | None = None  # Compact threshold of this request's model (None: unknown)
 
 
@@ -331,8 +331,10 @@ class PriceRow:
 class QueryService:
     def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
                  price_table: dict | None = None, thresholds: dict[str, int] | None = None,
-                 key_pattern: str | None = None):
+                 key_pattern: str | None = None,
+                 compare_model: str = findings_mod.DEFAULT_COMPARE_MODEL):
         self._conn = conn
+        self._compare_model = compare_model
         self._thresholds = thresholds or {}
         self._key_pattern = key_pattern
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
@@ -435,7 +437,16 @@ class QueryService:
 
     def compact_thresholds(self) -> compact_mod.CompactAnalysis:
         """Compact threshold per model (global fallback), with cost-vs-T curve and payback."""
-        return compact_mod.analyze(self._conn, self._tz, self._table)
+        return compact_mod.analyze(self._conn, self._tz, self._table,
+                                   self._threshold("compact_min_sample"),
+                                   self._threshold("compact_step"))
+
+    def _threshold(self, name: str) -> int:
+        return self._thresholds.get(name, findings_mod.all_thresholds()[name].default)
+
+    def stale_after_seconds(self) -> int:
+        """How old the last ingest may be before a page load re-ingests (config)."""
+        return self._threshold("refresh_stale_seconds")
 
     def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
@@ -451,13 +462,17 @@ class QueryService:
             "ORDER BY r.ts_epoch, r.message_id", (session_id, agent_id)).fetchall()
         if not rows:
             return None
+        idle_gap = self._threshold("timeline_idle_gap_seconds")
+        cold_idle = self._threshold("cold_resume_idle_minutes")
+        cold_ctx = self._threshold("cold_resume_min_context")
         points, prev = [], None
         for r in rows:
             gap = None if prev is None else r["ts_epoch"] - prev
             prev = r["ts_epoch"]
-            points.append(TimelinePoint(r["message_id"], r["ts_epoch"], r["model"], r["ctx"],
-                                        r["cost"], gap, gap is not None and gap > IDLE_GAP_SECONDS,
-                                        r["event"]))
+            points.append(TimelinePoint(
+                r["message_id"], r["ts_epoch"], r["model"], r["ctx"], r["cost"], gap,
+                gap is not None and gap > idle_gap, r["event"],
+                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx)))
         analysis = self.compact_thresholds()
 
         def threshold(model: str) -> int | None:
@@ -605,7 +620,7 @@ class QueryService:
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
-                                          compact_mod.analyze(self._conn, self._tz, self._table))
+                                          self.compact_thresholds(), self._compare_model)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,

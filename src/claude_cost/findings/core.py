@@ -13,9 +13,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
-from .. import pricing
+from .. import compact, pricing
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
+DEFAULT_COMPARE_MODEL = "claude-opus-5-5"  # Fable usage compares against it (fable_compare_model)
 NOT_ADDITIVE_NOTE = ("Avoidable figures are lower bounds and are not additive: findings overlap, "
                      "so they are never summed.")
 
@@ -27,6 +28,20 @@ class Threshold:
     default: int
     doc: str
     minimum: int = 0
+
+
+# Thresholds that belong to no single finding (Compact analysis, timeline, web refresh); they
+# are config settings like the finding thresholds and reach the query service the same way.
+CORE_THRESHOLDS = (
+    Threshold("compact_min_sample", compact.MIN_SAMPLE,
+              "Compactions a model needs before it gets its own Compact threshold.", 1),
+    Threshold("compact_step", compact.STEP,
+              "Compact threshold candidates are multiples of this many tokens.", 1),
+    Threshold("timeline_idle_gap_seconds", 300,
+              "Timeline: a gap longer than this many seconds is marked as an idle gap.", 1),
+    Threshold("refresh_stale_seconds", 60,
+              "Web: a page load re-ingests when the last ingest is older than this many seconds.", 0),
+)
 
 
 @dataclass(frozen=True)
@@ -134,11 +149,13 @@ class FindingContext:
 
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
-                 conn: sqlite3.Connection | None = None, compact=None):
+                 conn: sqlite3.Connection | None = None, compact=None,
+                 compare_model: str = DEFAULT_COMPARE_MODEL):
         self.rows = rows
         self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.compact = compact  # compact.CompactAnalysis: learned Compact thresholds
         self.price_table = price_table
+        self.compare_model = compare_model  # model the Fable usage Opportunity prices against
         self._thresholds, self._defs = thresholds, defs
 
     def threshold(self, name: str) -> int:

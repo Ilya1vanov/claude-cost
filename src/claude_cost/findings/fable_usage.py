@@ -3,15 +3,13 @@ from __future__ import annotations
 
 from .core import OPPORTUNITY, Covered, Detection, FindingContext, FindingDef
 
-COMPARE_MODEL = "claude-opus-5-5"
-
 
 def detect(ctx: FindingContext) -> Detection:
     covered = []
     for r in ctx.period_rows:
         if not r.model.startswith("claude-fable"):
             continue
-        alt = ctx.price(COMPARE_MODEL, r)
+        alt = ctx.price(ctx.compare_model, r)
         covered.append(Covered(r.message_id, r.cost - alt.total if alt else 0.0))
     return Detection(covered)
 
@@ -19,5 +17,6 @@ def detect(ctx: FindingContext) -> Detection:
 FINDING = FindingDef(
     id="fable-usage", kind=OPPORTUNITY, title="Fable usage",
     description="Requests that ran on a Fable model. May be intentional; shown for review.",
-    formula="avoidable = Fable cost - the same tokens at Opus 5.5 prices",
+    formula="avoidable = Fable cost - the same tokens at the comparison model's prices "
+            "(Opus 5.5 unless fable_compare_model is set)",
     detect=detect)

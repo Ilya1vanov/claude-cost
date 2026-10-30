@@ -175,3 +175,22 @@ def test_link_appended_later_groups_sessions(root, service_for):
     root.append_to_transcript("p", "a", [], raw=json.dumps(
         {"type": "continued-in", "continuedInSessionId": "b"}) + "\n")
     assert len(service_for(root).session_summaries()) == 1
+
+
+def test_staleness_window_is_configurable(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1_000_000)])
+    env = configure(root)
+    cfg = cli.load_config(env)
+    clock = [NOW]
+
+    def refresh():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots, now=clock[0])
+        conn.close()
+    client = create_app(lambda: QueryService(store.connect(cfg.store_path), "UTC",
+                                             thresholds={"refresh_stale_seconds": 5}),
+                        lambda: clock[0], refresh).test_client()
+    client.get("/")
+    root.append_to_transcript("p", "s1", [req("m2", "2026-10-30T02:00:00Z", output=1_000_000)])
+    clock[0] = NOW + timedelta(seconds=10)
+    assert "$40.00" in client.get("/").get_data(as_text=True)   # 10 s > the 5 s window

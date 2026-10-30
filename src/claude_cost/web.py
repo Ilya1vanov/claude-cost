@@ -15,14 +15,13 @@ from .spotlights import SpotlightError
 DASHBOARD_DAYS = 30
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
 REQUEST_ROWS = 1000
-STALE_AFTER_SECONDS = 60
 
 
 def create_app(service_factory: Callable[[], QueryService],
                now: Callable[[], datetime],
                refresh: Callable[[], object] | None = None, top_n: int = 10) -> Flask:
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
-    last ingest is older than 60 s, and on POST /refresh (the Refresh button)."""
+    last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
 
     @app.post("/refresh")
@@ -41,7 +40,7 @@ def create_app(service_factory: Callable[[], QueryService],
         include_today = request.args.getlist("include_today")[-1:] != ["0"]
         if refresh:
             last = service.last_ingest_epoch()
-            if last is None or now().timestamp() - last > STALE_AFTER_SECONDS:
+            if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
         today = now().date()
@@ -183,7 +182,7 @@ def create_app(service_factory: Callable[[], QueryService],
         service = service_factory()
         if refresh:
             last = service.last_ingest_epoch()
-            if last is None or now().timestamp() - last > STALE_AFTER_SECONDS:
+            if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
         return service
