@@ -16,7 +16,7 @@ from . import ingest as ingest_mod
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
-from .query import QueryService
+from .query import PeriodComparison, QueryService
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
 
@@ -59,6 +59,29 @@ def cmd_today(config: Config, now: datetime, out, err) -> int:
     return 0
 
 
+def _money(x: float) -> str:
+    return f"{'+' if x >= 0 else '-'}${abs(x):.2f}"
+
+
+def format_week(c: PeriodComparison) -> str:
+    partial = f" (partial: {c.elapsed_days} of {c.period_days} days)" if c.partial else ""
+    pct = "n/a" if c.delta_pct is None else f"{c.delta_pct:+.1f}%"
+    lines = [f"Week {c.current.start}..{c.current.end}{partial} vs {c.baseline.start}..{c.baseline.end}",
+             f"Cost: ${c.current_cost:.2f} vs ${c.baseline_cost:.2f} ({_money(c.delta_cost)}, {pct})",
+             "Cost components:"]
+    lines += [f"  {x.name}: ${x.current:.2f} vs ${x.baseline:.2f}" for x in c.components]
+    for title, rows in (("Top sessions:", c.top_sessions), ("Top projects:", c.top_projects)):
+        lines.append(title)
+        lines += [f"  {r.key}: ${r.cost:.2f} ({r.requests} requests)" for r in rows] or ["  none"]
+    return "\n".join(lines)
+
+
+def cmd_week(config: Config, now: datetime, out, err) -> int:
+    service = _service(config, now, err)
+    print(format_week(service.period_comparison("week", now, top_n=config.top_n)), file=out)
+    return 0
+
+
 def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
               run_server: Callable | None, open_browser: Callable[[str], object]) -> int:
     from .web import create_app
@@ -70,7 +93,7 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
             _ingest(config, now_fn())
 
     _ingest(config, now_fn(), err)  # ingest on start
-    app = create_app(lambda: _open(config), now_fn, refresh)
+    app = create_app(lambda: _open(config), now_fn, refresh, top_n=config.top_n)
     url = f"http://{HOST}:{config.port}/"
     print(f"Serving {url}", file=out)
     open_browser(url)
@@ -110,6 +133,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     parser = argparse.ArgumentParser(prog="claude-cost")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("today", help="print today's spend")
+    sub.add_parser("week", help="print this calendar week's spend compared with the previous week")
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
@@ -136,6 +160,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     now_fn = (lambda: now) if now else (lambda: _now(config))
     if args.command == "today":
         return cmd_today(config, now_fn(), out, err)
+    if args.command == "week":
+        return cmd_week(config, now_fn(), out, err)
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)
