@@ -8,6 +8,10 @@ Measures what Claude Code usage costs, from local transcripts, to find the parts
 A Claude config folder whose transcripts are read, such as `~/.claude`, plus the optional Desktop session store that links sessions to each other.
 _Avoid_: claude folder, profile
 
+**Project**:
+The working directory Claude Code groups a session's transcripts under; a worktree is a project of its own.
+_Avoid_: repo, folder, workspace
+
 **Surface**:
 The client that ran a session: CLI, Desktop, SDK.
 _Avoid_: app, interface, entrypoint
@@ -16,7 +20,11 @@ _Avoid_: app, interface, entrypoint
 
 **Request**:
 One billed API call, counted once no matter how many transcripts contain a copy of it.
-_Avoid_: message, turn, call
+_Avoid_: message, call
+
+**Turn**:
+One prompt the user typed into a session, with the requests made to answer it.
+_Avoid_: request, exchange, message
 
 **Session**:
 One logical conversation, which may span several transcripts through resumes and clears, owning the requests it made itself.
@@ -100,8 +108,12 @@ _Avoid_: tool definitions, manifest
 Requests whose context is above the compact threshold, whether or not the session later compacts.
 _Avoid_: overflow, context bloat
 
+**Autocompact window**:
+The context size a user sets per model for Claude Code to compact automatically, which fires a fixed amount before that size is reached.
+_Avoid_: compact window, compact threshold
+
 **Late compact**:
-A compaction, manual or automatic, that started from a context above the compact threshold.
+A compaction, manual or automatic, that came after a request whose context was above the compact threshold.
 _Avoid_: late auto-compact
 
 ## Time
