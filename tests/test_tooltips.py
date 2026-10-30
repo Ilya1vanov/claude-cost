@@ -35,6 +35,12 @@ def test_every_cost_component_and_cache_metric_has_a_tooltip(root, configure):
         assert re.search(rf"{re.escape(name)}\s*<span class=\"info\" title=\"", html), name
 
 
+def test_cold_writes_kpi_tile_has_a_tooltip(root, configure):
+    html = _dashboard(root, configure)
+    tile = re.search(r'<div class="label">Cold writes[^<]*(<span.*?)</div>', html, re.S).group(1)
+    assert 'class="info" title="' in tile
+
+
 def test_5m_and_1h_tooltips_say_when_each_ttl_is_used(root, configure):
     html = _dashboard(root, configure)
     assert "always use the 5-minute cache by default" in _row(html, "5m writes")

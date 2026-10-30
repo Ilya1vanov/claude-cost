@@ -4,8 +4,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from markupsafe import Markup, escape
 from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
+from markupsafe import Markup, escape
 
 from . import explore
 from .cache import COLD
@@ -51,6 +51,13 @@ def create_app(service_factory: Callable[[], QueryService],
         return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id))}" '
                       f'class="id" title="{sid}">{label}</a>')
 
+    @app.template_global()
+    def project_name(key: str) -> str:
+        """A project by its display name, the key when it has none."""
+        if "project_names" not in g:
+            g.project_names = service_factory().project_names()
+        return g.project_names.get(key, key)
+
     @app.post("/refresh")
     def force_refresh():
         if refresh:
@@ -84,7 +91,6 @@ def create_app(service_factory: Callable[[], QueryService],
             spotlights=service.top_spotlights(mode, now(), include_today, top_n),
             top_findings=service.top_findings(mode, now(), include_today, top_n),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
-            pnames=service.project_names(),
         )
 
     @app.get("/compact")
@@ -236,13 +242,12 @@ def create_app(service_factory: Callable[[], QueryService],
         spec = explore_spec()
         service = explore_service()
         result = service.explore(spec)
-        pnames = service.project_names()
         return render_template(
             "explore.html", spec=spec, result=result, dims=explore.DIMENSIONS,
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
-            fmt_share=explore.fmt_share, pnames=pnames,
+            fmt_share=explore.fmt_share,
             chart_data={"label": result.label,
-                        "labels": [pnames.get(r.value, r.value) if result.group == "project" else r.value
+                        "labels": [project_name(r.value) if result.group == "project" else r.value
                                    for r in result.rows[:CHART_ROWS]],
                         "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
 
@@ -259,7 +264,7 @@ def create_app(service_factory: Callable[[], QueryService],
         service = explore_service()
         reqs = service.explore_requests(spec)
         return render_template(
-            "explore_requests.html", spec=spec, pnames=service.project_names(), dims=explore.DIMENSIONS, total=len(reqs),
+            "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
             requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
 
     @app.get("/session/<session_id>")

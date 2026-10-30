@@ -148,6 +148,22 @@ def test_findings_pages_list_and_drill_down(root, configure):
     assert client.get("/findings/nope").status_code == 404
 
 
+def test_findings_list_shows_only_title_and_totals(root, configure):
+    _cold_session(root)
+    cfg = cli.load_config(configure(root))
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    client = create_app(factory, lambda: NOW).test_client()
+    f = next(f for f in factory().findings() if f.id == "cold-resume")
+    page = client.get("/findings").get_data(as_text=True)
+    assert f.title in page
+    for text in (f.description, f.formula, f.detail):
+        assert text and text not in page
+
+
 # ---- dashboard top-N findings card (story 44) ----
 
 def _fable_and_cold(root):

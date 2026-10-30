@@ -65,6 +65,9 @@ def format_findings(findings) -> str:
                          f"({len(f.requests)} requests, {len(f.sessions)} sessions)")
             if f.formula:
                 lines.append(f"    {f.formula}" + (f" [{f.detail}]" if f.detail else ""))
+            if f.table:  # one line per row; a collapsible cell shows its summary
+                lines += ["    " + "  ".join(c if isinstance(c, str) else c.summary for c in row)
+                          for row in f.table.rows]
         if not group:
             lines.append("  none")
     lines.append(NOT_ADDITIVE_NOTE)

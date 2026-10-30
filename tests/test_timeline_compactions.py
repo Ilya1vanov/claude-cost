@@ -1,4 +1,6 @@
 """Seams 1 and 2: compactions in the Session timeline (query service and Session page)."""
+import re
+
 from helpers import compact_line, req
 
 
@@ -73,5 +75,15 @@ def test_chart_data_carries_compaction_positions(root, tmp_path):
 def test_purple_means_only_above_the_compact_threshold():
     from pathlib import Path
     css = (Path(__file__).parent.parent / "src" / "claude_cost" / "static" / "app.css").read_text()
-    users = [l for l in css.splitlines() if "var(--late" in l and not l.strip().startswith("--late")]
+    users = [l for l in css.splitlines()
+             if re.search(r"var\(--late(-soft)?\)", l) and not l.strip().startswith("--late")]
     assert all(".over" in l or "swatch.line" in l for l in users), users  # Oversized context, threshold line
+
+
+def test_late_compact_has_its_own_colour_not_the_cold_write_red():
+    from pathlib import Path
+    root = Path(__file__).parent.parent / "src" / "claude_cost" / "static"
+    css = (root / "app.css").read_text()
+    late = [l for l in css.splitlines() if "late-compact" in l and not l.strip().startswith("--")]
+    assert late and not any("var(--up" in l for l in late), late
+    assert 'theme.token("--late-compact")' in (root / "session.js").read_text()

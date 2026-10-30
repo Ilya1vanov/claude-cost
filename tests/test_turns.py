@@ -3,7 +3,7 @@ import pytest
 
 from claude_cost import cli, ingest, store
 from conftest import NOW
-from helpers import (compact_summary_line, hook_injection_line, prompt_line, queued_prompt_line,
+from helpers import (block_prompt_line, compact_summary_line, hook_injection_line, prompt_line, queued_prompt_line,
                      req, slash_command_line, tool_result_line)
 
 D = "2026-10-29T"  # in this week; the previous week is 2026-10-19..25
@@ -23,6 +23,20 @@ def test_only_messages_the_user_typed_count_as_turns(root, service_for):
         hook_injection_line("u6", D + "09:50:00Z"),
     ])
     assert _cmp(service_for(root)).usage_current.turns == 3
+
+
+def test_prompts_made_of_content_blocks_count_as_turns(root, service_for):
+    root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")], extra_lines=[
+        block_prompt_line("u1", D + "09:00:00Z"),                # text plus image
+        block_prompt_line("u2", D + "09:10:00Z", image=False),   # text blocks only
+        tool_result_line("u3", D + "09:20:00Z"),                 # still not a prompt
+        _blocks_line("u4", D + "09:30:00Z", "<system-reminder>x</system-reminder>"),
+    ])
+    assert _cmp(service_for(root)).usage_current.turns == 2
+
+
+def _blocks_line(uuid, ts, text):
+    return block_prompt_line(uuid, ts, text, image=False)
 
 
 def test_subagent_messages_are_not_turns(root, service_for):

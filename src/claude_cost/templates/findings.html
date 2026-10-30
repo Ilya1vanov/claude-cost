@@ -13,16 +13,15 @@
   <section class="card {{ kind }}">
     <h2>{{ heading }}</h2>
     <div class="table-wrap"><table id="{{ kind }}s">
-      <tr><th>Finding</th><th class="num">Attributed spend</th><th class="num">Avoidable spend (lower bound)</th><th>Formula</th><th class="num">Covers</th></tr>
+      <tr><th>Finding</th><th class="num">Attributed spend</th><th class="num">Avoidable spend (lower bound)</th><th class="num">Covers</th></tr>
       {% for f in findings if f.kind == kind %}
       <tr>
-        <td class="title"><a href="{{ url_for('finding_detail', finding_id=f.id, since=since.isoformat() if since) }}">{{ f.title }}</a><small>{{ f.description }}</small></td>
+        <td class="title"><a href="{{ url_for('finding_detail', finding_id=f.id, since=since.isoformat() if since) }}">{{ f.title }}</a></td>
         <td class="num">${{ "%.2f"|format(f.attributed) }}</td>
         <td class="num">{% if f.avoidable is none %}<span class="muted">not estimated</span>{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</td>
-        <td>{{ f.formula or "none (attributed spend only)" }}{% if f.detail %}<small>{{ f.detail }}</small>{% endif %}</td>
         <td class="num">{{ f.requests|length }} requests<small>in {{ f.sessions|length }} sessions</small></td>
       </tr>
-      {% else %}<tr><td colspan="5" class="empty">None</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="4" class="empty">None</td></tr>{% endfor %}
     </table></div>
   </section>
   {% endmacro %}
