@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .. import pricing
+from ..projects import project_display_names
 from .core import DRAIN, Covered, Detection, FindingContext, FindingDef
 
 
@@ -84,7 +85,8 @@ def detect(ctx: FindingContext) -> Detection:
         it["sessions"].add(sid)
         it["cost"] += cost
     covered = [Covered(mid, a) for mid, a in avoidable.items()]
-    parts = [f"{kind} {name} in {project}: {len(i['sessions'])} sessions listed, "
+    names = project_display_names(ctx.conn)
+    parts = [f"{kind} {name} in {names.get(project, project)}: {len(i['sessions'])} sessions listed, "
              f"0 invocations here ({i['elsewhere']} in other projects), ${i['cost']:.2f}"
              for (project, kind, name), i in sorted(items.items(), key=lambda kv: -kv[1]["cost"])]
     return Detection(covered, "; ".join(parts))

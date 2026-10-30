@@ -70,6 +70,7 @@ def create_app(service_factory: Callable[[], QueryService],
             spotlights=service.top_spotlights(mode, now(), include_today, top_n),
             top_findings=service.top_findings(mode, now(), include_today, top_n),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
+            pnames=service.project_names(),
         )
 
     @app.get("/compact")
@@ -220,12 +221,14 @@ def create_app(service_factory: Callable[[], QueryService],
         spec = explore_spec()
         service = explore_service()
         result = service.explore(spec)
+        pnames = service.project_names()
         return render_template(
             "explore.html", spec=spec, result=result, dims=explore.DIMENSIONS,
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
-            fmt_share=explore.fmt_share,
+            fmt_share=explore.fmt_share, pnames=pnames,
             chart_data={"label": result.label,
-                        "labels": [r.value for r in result.rows[:CHART_ROWS]],
+                        "labels": [pnames.get(r.value, r.value) if result.group == "project" else r.value
+                                   for r in result.rows[:CHART_ROWS]],
                         "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
 
     @app.get("/explore.csv")
@@ -238,9 +241,10 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/explore/requests")
     def explore_requests():
         spec = explore_spec()
-        reqs = explore_service().explore_requests(spec)
+        service = explore_service()
+        reqs = service.explore_requests(spec)
         return render_template(
-            "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
+            "explore_requests.html", spec=spec, pnames=service.project_names(), dims=explore.DIMENSIONS, total=len(reqs),
             requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
 
     @app.get("/session/<session_id>")
