@@ -72,6 +72,33 @@ def compact_line(uuid: str, ts: str, pre: int, post: int, trigger: str = "manual
                                            "postTokens": post}})
 
 
+def skill_listing_line(ts: str, skills: dict[str, str], uuid: str = "sl") -> str:
+    """A `skill_listing` attachment; `skills` maps skill name -> description."""
+    content = "\n".join(f"- {n}: {d}" for n, d in skills.items())
+    return json.dumps({"type": "attachment", "uuid": f"{uuid}-{ts}", "timestamp": ts,
+                       "attachment": {"type": "skill_listing", "content": content,
+                                      "skillCount": len(skills), "names": list(skills),
+                                      "isInitial": True}})
+
+
+def mcp_listing_line(ts: str, servers: dict[str, str], uuid: str = "ml") -> str:
+    """An `mcp_instructions_delta` attachment; `servers` maps display name -> instructions."""
+    return json.dumps({"type": "attachment", "uuid": f"{uuid}-{ts}", "timestamp": ts,
+                       "attachment": {"type": "mcp_instructions_delta",
+                                      "addedNames": list(servers),
+                                      "addedBlocks": [f"## {n}\n{t}" for n, t in servers.items()],
+                                      "removedNames": []}})
+
+
+def tool_use_line(ts: str, tool_use_id: str, name: str, input: dict | None = None,
+                  message_id: str = "tu") -> str:
+    """An assistant record holding one `tool_use` block (no usage: not a Request)."""
+    return json.dumps({"type": "assistant", "uuid": f"u-{tool_use_id}", "timestamp": ts,
+                       "message": {"id": f"{message_id}-{tool_use_id}", "role": "assistant",
+                                   "content": [{"type": "tool_use", "id": tool_use_id,
+                                                "name": name, "input": input or {}}]}})
+
+
 class DataRoot:
     """A synthetic ~/.claude. Always a path under pytest's tmp_path, never the real one."""
 
