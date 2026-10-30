@@ -59,3 +59,31 @@ def test_side_session_and_fork_counts_only_cover_those_started_in_the_period(roo
     desktop.write_session("e", "oldfork", forkedFromSessionId="local_a")
     top = {s.key: s for s in service_for(root, desktop=desktop).period_comparison("last7", NOW).top_sessions}
     assert (top["s1"].side_sessions, top["s1"].forks) == (1, 1)
+
+
+def test_cli_fork_by_copied_history_counts_as_a_fork_of_its_parent(root, service_for):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M)])
+    root.write_transcript("p", "s9", [req("m1", "2026-10-29T01:00:00Z", output=M, forked_from="s1"),
+                                      req("m9", "2026-10-29T05:00:00Z", output=M)])
+    top = {s.key: s for s in service_for(root).period_comparison("last7", NOW).top_sessions}
+    assert (top["s1"].side_sessions, top["s1"].forks) == (0, 1)
+
+
+def test_linked_session_whose_requests_are_all_subagent_owned_does_not_break_the_dashboard(
+        root, desktop, service_for):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M)])
+    root.write_subagent_transcript("p", "side1", "a1", [req("m2", "2026-10-29T02:00:00Z", output=M)])
+    desktop.write_session("a", "s1")
+    desktop.write_session("b", "side1", spawnedFrom={"sessionId": "local_a", "sideSession": True})
+    top = {s.key: s for s in service_for(root, desktop=desktop).period_comparison("last7", NOW).top_sessions}
+    assert top["s1"].cost == pytest.approx(20.0)
+
+
+def test_dashboard_rolls_up_sessions_once_per_request(root, desktop, tmp_path, monkeypatch):
+    _family(root, desktop)
+    conn = store.connect(tmp_path / "store.sqlite")
+    ingest.ingest(conn, [root.path], desktop_stores=[desktop.path.parent.parent])
+    calls = []
+    conn.set_trace_callback(lambda sql: calls.append(1) if "FROM session_relations" in sql else None)
+    create_app(lambda: QueryService(conn, "UTC"), lambda: NOW).test_client().get("/")
+    assert len(calls) == 1
