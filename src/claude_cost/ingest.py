@@ -129,6 +129,8 @@ def _typed_text(text: object) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     text = text.lstrip()
+    if text.startswith("[Request interrupted by user"):  # written by Claude Code, not typed
+        return False
     return not text.startswith("<") or text.startswith(("<command-name>", "<command-message>"))
 
 
@@ -142,9 +144,10 @@ def _turn(rec: dict) -> tuple[str, float] | None:
         return None
     if kind == "user":
         text = (rec.get("message") or {}).get("content")
-        if isinstance(text, list):  # blocks: the typed text, ignoring images; tool results have none
-            text = next((b.get("text") for b in text
-                         if isinstance(b, dict) and b.get("type") == "text"), None)
+        if isinstance(text, list):  # blocks: any typed text counts, ignoring images; tool results have none
+            text = next((t for t in (b.get("text") for b in text
+                                     if isinstance(b, dict) and b.get("type") == "text")
+                         if _typed_text(t)), None)
     elif kind == "attachment" and (rec.get("attachment") or {}).get("type") == "queued_command":
         text = rec["attachment"].get("prompt")
     else:

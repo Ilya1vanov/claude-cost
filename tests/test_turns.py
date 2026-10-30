@@ -35,6 +35,25 @@ def test_prompts_made_of_content_blocks_count_as_turns(root, service_for):
     assert _cmp(service_for(root)).usage_current.turns == 2
 
 
+def test_a_prompt_with_an_injected_block_first_still_counts(root, service_for):
+    from helpers import _user
+    root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")], extra_lines=[
+        _user("u1", D + "09:00:00Z", [{"type": "text", "text": "<ide_opened_file>x</ide_opened_file>"},
+                                      {"type": "text", "text": "fix the bug"}]),
+        _user("u2", D + "09:10:00Z", [{"type": "text", "text": "<ide_opened_file>x</ide_opened_file>"}]),
+    ])
+    assert _cmp(service_for(root)).usage_current.turns == 1
+
+
+def test_interrupt_markers_are_not_turns(root, service_for):
+    root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")], extra_lines=[
+        prompt_line("u1", D + "09:00:00Z"),
+        prompt_line("u2", D + "09:10:00Z", "[Request interrupted by user]"),
+        prompt_line("u3", D + "09:20:00Z", "[Request interrupted by user for tool use]"),
+    ])
+    assert _cmp(service_for(root)).usage_current.turns == 1
+
+
 def _blocks_line(uuid, ts, text):
     return block_prompt_line(uuid, ts, text, image=False)
 
