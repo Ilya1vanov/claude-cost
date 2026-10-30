@@ -16,12 +16,14 @@ Semantics:
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable
 
+from .findings import all_findings
 from .sql import SESSION_ID_SQL, SESSION_JOIN
 
 NONE = "(none)"
@@ -143,6 +145,9 @@ class FindingDimension(Dimension):
 
     def __init__(self, key: str, label: str, kind: str):
         self.key, self.label, self.kind = key, label, kind
+
+    def titles(self) -> list[str]:
+        return [d.title for d in all_findings() if d.kind == self.kind]
 
     def load_with(self, conn, findings):
         out: dict[str, list[str]] = {}
@@ -275,6 +280,8 @@ def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list
 def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), findings=None):
     """Items left by the filters, and the loaded data of every dimension used."""
     used = {spec.group, *spec.filters, *extra}
+    if findings is not None:  # several finding dimensions share one pipeline run
+        findings = functools.cache(findings)
     data = {k: DIMENSIONS[k].load_with(conn, findings) for k in used}
     items = []
     for item in _items(conn, local_day):
@@ -310,16 +317,18 @@ def requests(conn, local_day, spec: ExploreSpec, findings=None) -> list[ExploreR
                            one("model", i), i.cost) for i in items]
 
 
-def options(conn, limit: int = 100, findings=None) -> dict[str, list[str]]:
-    """Most frequent values of each dimension (for form suggestions); dates are free text."""
+def options(conn, limit: int = 100) -> dict[str, list[str]]:
+    """Most frequent values of each dimension (for form suggestions); dates are free text.
+    Finding dimensions suggest every registered finding without running the pipeline."""
     out = {}
-    cache: list = []
-    findings_once = (lambda: cache or cache.extend(findings()) or cache) if findings else None
     for key, dim in DIMENSIONS.items():
         if isinstance(dim, (DateDimension, SplitDimension)):
             continue
+        if isinstance(dim, FindingDimension):
+            out[key] = dim.titles()
+            continue
         counts: dict[str, int] = {}
-        for values in dim.load_with(conn, findings_once).values():
+        for values in dim.load(conn).values():
             for v in values:
                 counts[v] = counts.get(v, 0) + 1
         out[key] = [v for v, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]

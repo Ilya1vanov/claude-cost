@@ -186,3 +186,16 @@ def test_drain_and_opportunity_dimensions_group_and_filter_by_finding(root, serv
     assert svc.explore(_spec("model", opportunity=["Fable usage"])).total_requests == 1
     assert svc.explore(_spec("model", drain=["Cold resume"])).total_requests == 1
     assert "Cold resume" in svc.explore_options()["drain"]
+
+
+def test_options_do_not_run_the_findings_pipeline_and_a_request_computes_them_once(root, service_for):
+    root.write_transcript("p", "s1", [req("a", "2026-10-30T10:00:00Z", output=1_000)])
+    svc = service_for(root)
+    calls = []
+    real = svc.findings
+    svc.findings = lambda *a, **k: calls.append(1) or real(*a, **k)
+    opts = svc.explore_options()
+    assert "Cold resume" in opts["drain"] and "Fable usage" in opts["opportunity"]
+    assert calls == []  # suggestions come from the registered findings, not from running them
+    svc.explore(_spec("drain", opportunity=["Fable usage"]))
+    assert calls == [1]  # one pipeline run although two finding dimensions are used

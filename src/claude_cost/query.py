@@ -936,4 +936,4 @@ class QueryService:
 
     def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
         """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit, self.findings)
+        return explore.options(self._conn, limit)
