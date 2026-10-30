@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ownership, pricing, sources
+from . import cache, ownership, pricing, sources
 
 
 def _parse_ts(value: str) -> datetime:
@@ -230,6 +230,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     """Ingest all Data roots; returns the number of Requests in the store afterwards."""
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
+    changed = rebuild
     with conn:
         if rebuild:
             # Forget what we read from files that still exist; copies from vanished
@@ -253,6 +254,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 lines, new_offset = _read_new(path, offset)
                 if row and new_offset == offset:
                     continue
+                changed = True
                 parsed = _parse_lines(lines, path.stem)
                 first = min((r["ts"].timestamp() for r in parsed.reqs.values()), default=None)
                 conn.execute(
@@ -275,6 +277,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         # join in _recompute never sees it.
         _recompute(conn, sorted(touched))
         _regroup_sessions(conn)
+        if changed or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
+            cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
