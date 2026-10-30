@@ -27,7 +27,7 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
-    app.jinja_env.globals["tooltips"] = TOOLTIPS
+    app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory
 
     def service_factory() -> QueryService:

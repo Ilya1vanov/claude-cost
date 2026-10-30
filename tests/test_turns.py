@@ -83,7 +83,6 @@ def test_turns_roll_up_to_the_logical_session(root, desktop, service_for):
     svc = service_for(root, desktop=desktop)
     assert _cmp(svc).usage_current.sessions == 1
     assert _cmp(svc).usage_current.turns == 2
-    assert svc.session_turns(svc.session_summaries()[0].session_id) == 2
 
 
 def test_usage_counts_sessions_turns_and_requests_per_period(root, service_for):

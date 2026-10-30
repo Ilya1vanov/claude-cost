@@ -594,12 +594,6 @@ class QueryService:
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
         return Usage(row["s"], turns, row["n"])
 
-    def session_turns(self, session_id: str) -> int:
-        """Turns the user typed in a logical Session, across all its transcripts."""
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM turns t LEFT JOIN session_links l ON l.stem = t.stem "
-            "WHERE COALESCE(l.logical_session_id, t.stem) = ?", (session_id,)).fetchone()[0]
-
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""
         return project_display_names(self._conn)
