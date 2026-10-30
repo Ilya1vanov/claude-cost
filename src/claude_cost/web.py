@@ -1,12 +1,12 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 from flask import Flask, abort, redirect, render_template, request, url_for
 
-from .query import PERIOD_MODES, QueryService
+from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 
 DASHBOARD_DAYS = 30
 STALE_AFTER_SECONDS = 60
@@ -50,5 +50,28 @@ def create_app(service_factory: Callable[[], QueryService],
             unpriced=service.unpriced_models(),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
+
+    @app.get("/compare")
+    def compare():
+        service = service_factory()
+        mode = request.args.get("mode", "week")
+        if mode not in COMPARISON_MODES:
+            abort(400, f"mode must be one of {', '.join(COMPARISON_MODES)}")
+        try:
+            starts = [date.fromisoformat(v) for v in request.args.getlist("p")]
+            baseline = (date.fromisoformat(request.args["baseline"])
+                        if request.args.get("baseline") else None)
+            result = service.comparison(mode, starts, now(), baseline) if len(set(starts)) >= 2 else None
+        except ValueError as e:
+            abort(400, str(e))
+        chart = None
+        if result:
+            chart = {"labels": list(range(1, result.day_count + 1)),
+                     "series": [{"label": f"{e.period.start}", "data": [round(c, 4) for c in e.daily]}
+                                for e in result.entries]}
+        return render_template(
+            "compare.html", mode=mode, modes=COMPARISON_MODES, result=result, chart_data=chart,
+            available=service.available_periods(mode, now()), selected=set(starts),
+            baseline=result.baseline if result else None)
 
     return app
