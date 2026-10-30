@@ -28,6 +28,51 @@ def _parse_ts(value: str) -> datetime:
 
 RETENTION_DAYS = 60
 
+CHARS_PER_TOKEN = 3.6  # Listing size estimate: characters / 3.6
+
+
+def listing_tokens(text: str) -> int:
+    return max(1, round(len(text) / CHARS_PER_TOKEN))
+
+
+def server_key(name: str) -> str:
+    """Normalise an MCP server (display name or the `mcp__<server>__` segment) for matching."""
+    return "".join(c if c.isalnum() else "_" for c in name).lower()
+
+
+def _attachment_listings(att: dict, ts: float) -> list[tuple]:
+    kind = att.get("type")
+    out = []
+    if kind == "skill_listing":
+        names = [n for n in att.get("names") or [] if isinstance(n, str)]
+        lines = [ln for ln in str(att.get("content") or "").splitlines() if ln.startswith("- ")]
+        for n in names:
+            line = next((ln for ln in lines if ln.startswith(f"- {n}:") or ln == f"- {n}"), n)
+            out.append(("skill", n, ts, listing_tokens(line)))
+    elif kind == "mcp_instructions_delta":
+        names = att.get("addedNames") or []
+        blocks = att.get("addedBlocks") or []
+        for n, b in zip(names, blocks):
+            if isinstance(n, str) and isinstance(b, str):
+                out.append(("mcp", server_key(n), ts, listing_tokens(b)))
+    return out
+
+
+def _tool_uses(rec: dict, ts: float) -> list[tuple]:
+    content = (rec.get("message") or {}).get("content")
+    out = []
+    for blk in content if isinstance(content, list) else []:
+        if not isinstance(blk, dict) or blk.get("type") != "tool_use" or not blk.get("id"):
+            continue
+        name = blk.get("name")
+        if name == "Skill":
+            skill = (blk.get("input") or {}).get("skill")
+            if isinstance(skill, str) and skill:
+                out.append((str(blk["id"]), "skill", skill, ts))
+        elif isinstance(name, str) and name.startswith("mcp__") and name.count("__") >= 2:
+            out.append((str(blk["id"]), "mcp", server_key(name[5:].split("__")[0]), ts))
+    return out
+
 _SURFACES = {"cli": "CLI", "claude-desktop": "Desktop", "sdk-cli": "SDK"}
 
 
@@ -47,6 +92,37 @@ class Parsed:
     relocated: bool = False
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
     compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
+    listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
+    uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
+    # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
+    title: str | None = None
+    cwd: str | None = None
+    branch: str | None = None
+    prompt: str | None = None
+
+
+def _prompt_text(rec: dict) -> str | None:
+    """The real user prompt of a `user` record (not meta, not an injected `<...>` wrapper)."""
+    if rec.get("type") != "user" or rec.get("isMeta"):
+        return None
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = next((b.get("text") for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"), None)
+    if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
+        return content[:300]
+    return None
+
+
+def _scan_meta(rec: dict, parsed: Parsed) -> None:
+    title = rec.get("customTitle")
+    if rec.get("type") == "custom-title" and isinstance(title, str) and title:
+        parsed.title = title  # repeated; the last one wins
+    for key, attr in (("cwd", "cwd"), ("gitBranch", "branch")):
+        if getattr(parsed, attr) is None and isinstance(rec.get(key), str) and rec[key]:
+            setattr(parsed, attr, rec[key])
+    if parsed.prompt is None:
+        parsed.prompt = _prompt_text(rec)
 
 
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
@@ -60,6 +136,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             continue  # corrupt line
         if not isinstance(rec, dict):
             continue
+        _scan_meta(rec, parsed)
         kind = rec.get("type")
         if kind == "relocated":
             parsed.relocated = True
@@ -80,8 +157,21 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             except (KeyError, TypeError, ValueError):
                 pass
             continue
+        if kind == "attachment":
+            att = rec.get("attachment")
+            if isinstance(att, dict):
+                try:
+                    parsed.listings.extend(_attachment_listings(
+                        att, _parse_ts(rec["timestamp"]).timestamp()))
+                except (KeyError, TypeError, ValueError):
+                    pass
+            continue
         if kind != "assistant":
             continue
+        try:
+            parsed.uses.extend(_tool_uses(rec, _parse_ts(rec["timestamp"]).timestamp()))
+        except (KeyError, TypeError, ValueError):
+            pass
         msg = rec.get("message") or {}
         usage = msg.get("usage")
         model = msg.get("model")
@@ -415,11 +505,26 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
                 _store_copies(conn, path, parsed.reqs)
+                if sub is None:  # Spotlight metadata of main transcripts only
+                    conn.execute(
+                        "INSERT INTO session_meta VALUES (?,?,?,?,?) ON CONFLICT(stem) DO UPDATE SET "
+                        "custom_title = COALESCE(excluded.custom_title, custom_title), "
+                        "git_branch = COALESCE(git_branch, excluded.git_branch), "
+                        "cwd = COALESCE(cwd, excluded.cwd), "
+                        "first_prompt = COALESCE(first_prompt, excluded.first_prompt)",
+                        (stem, parsed.title, parsed.branch, parsed.cwd, parsed.prompt))
                 if sub is None:  # a Subagent's own compactions are not the Session's
                     conn.executemany("INSERT OR IGNORE INTO compactions "
                                      "VALUES (?,?,?,?,?,?)",
                                      [(u, stem, ts, trig, pre, post)
                                       for u, ts, trig, pre, post in parsed.compactions])
+                agent = sub["agent_id"] if sub is not None else ""
+                conn.executemany("INSERT OR IGNORE INTO listings VALUES (?,?,?,?,?,?,?)",
+                                 [(stem, agent, project, k, n, ts, tok)
+                                  for k, n, ts, tok in parsed.listings])
+                conn.executemany("INSERT OR IGNORE INTO tool_uses VALUES (?,?,?,?,?,?,?)",
+                                 [(uid, stem, agent, project, k, n, ts)
+                                  for uid, k, n, ts in parsed.uses])
                 touched.update(parsed.reqs)
                 if parsed.relocated:  # a relocated flag changes ownership of all its requests
                     touched.update(r[0] for r in conn.execute(

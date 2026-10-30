@@ -30,7 +30,8 @@ def _now(config: Config) -> datetime:
 def _open(config: Config) -> QueryService:
     return QueryService(store.connect(config.store_path), config.timezone,
                         price_table=pricing.build_table(config.prices),
-                        thresholds=config.thresholds)
+                        thresholds=config.thresholds,
+                        key_pattern=config.spotlight_key_pattern)
 
 
 def parse_since(text: str, today: date) -> date:

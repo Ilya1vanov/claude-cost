@@ -72,6 +72,33 @@ def compact_line(uuid: str, ts: str, pre: int, post: int, trigger: str = "manual
                                            "postTokens": post}})
 
 
+def skill_listing_line(ts: str, skills: dict[str, str], uuid: str = "sl") -> str:
+    """A `skill_listing` attachment; `skills` maps skill name -> description."""
+    content = "\n".join(f"- {n}: {d}" for n, d in skills.items())
+    return json.dumps({"type": "attachment", "uuid": f"{uuid}-{ts}", "timestamp": ts,
+                       "attachment": {"type": "skill_listing", "content": content,
+                                      "skillCount": len(skills), "names": list(skills),
+                                      "isInitial": True}})
+
+
+def mcp_listing_line(ts: str, servers: dict[str, str], uuid: str = "ml") -> str:
+    """An `mcp_instructions_delta` attachment; `servers` maps display name -> instructions."""
+    return json.dumps({"type": "attachment", "uuid": f"{uuid}-{ts}", "timestamp": ts,
+                       "attachment": {"type": "mcp_instructions_delta",
+                                      "addedNames": list(servers),
+                                      "addedBlocks": [f"## {n}\n{t}" for n, t in servers.items()],
+                                      "removedNames": []}})
+
+
+def tool_use_line(ts: str, tool_use_id: str, name: str, input: dict | None = None,
+                  message_id: str = "tu") -> str:
+    """An assistant record holding one `tool_use` block (no usage: not a Request)."""
+    return json.dumps({"type": "assistant", "uuid": f"u-{tool_use_id}", "timestamp": ts,
+                       "message": {"id": f"{message_id}-{tool_use_id}", "role": "assistant",
+                                   "content": [{"type": "tool_use", "id": tool_use_id,
+                                                "name": name, "input": input or {}}]}})
+
+
 class DataRoot:
     """A synthetic ~/.claude. Always a path under pytest's tmp_path, never the real one."""
 
@@ -80,11 +107,27 @@ class DataRoot:
         (path / "projects").mkdir(parents=True, exist_ok=True)
 
     def write_transcript(self, project: str, session_id: str, reqs: list[Req],
-                         extra_lines: list[str] | None = None) -> Path:
+                         extra_lines: list[str] | None = None, title: str | None = None,
+                         branch: str | None = None, cwd: str | None = None,
+                         prompt: str | None = None) -> Path:
+        """`title`/`branch`/`cwd`/`prompt` add the records Spotlights read: a custom-title
+        record, and a first user record carrying gitBranch, cwd and the first prompt."""
         d = self.path / "projects" / project
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"{session_id}.jsonl"
-        lines = [json.dumps(rec) for r in reqs for rec in assistant_lines(r, session_id)]
+        head = []
+        if title:
+            head.append(json.dumps({"type": "custom-title", "customTitle": title,
+                                    "sessionId": session_id}))
+        if branch or cwd or prompt:
+            rec = {"type": "user", "sessionId": session_id, "timestamp": "2026-10-01T00:00:00Z",
+                   "message": {"role": "user", "content": prompt or "<system-reminder>x"}}
+            if branch:
+                rec["gitBranch"] = branch
+            if cwd:
+                rec["cwd"] = cwd
+            head.append(json.dumps(rec))
+        lines = head + [json.dumps(rec) for r in reqs for rec in assistant_lines(r, session_id)]
         f.write_text("\n".join(lines + (extra_lines or [])) + "\n")
         return f
 

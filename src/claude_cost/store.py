@@ -116,6 +116,25 @@ CREATE TABLE IF NOT EXISTS session_relations (
   parent_stem TEXT NOT NULL,
   kind TEXT NOT NULL
 );
+-- Spotlights (ticket #13). session_meta: what rules and key detection read, per main
+-- transcript stem. spotlights/spotlight_pins: user-defined Spotlights (a rule and/or pinned
+-- Sessions, by logical session id); these are user data and survive `ingest --rebuild`.
+CREATE TABLE IF NOT EXISTS session_meta (
+  stem TEXT PRIMARY KEY,
+  custom_title TEXT,
+  git_branch TEXT,
+  cwd TEXT,
+  first_prompt TEXT
+);
+CREATE TABLE IF NOT EXISTS spotlights (
+  name TEXT PRIMARY KEY,
+  rule TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS spotlight_pins (
+  spotlight TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (spotlight, session_id)
+);
 -- compact_boundary records of main transcripts (ticket #12), deduped by record uuid (resume
 -- copies repeat them); `stem` is the transcript that held it first
 CREATE TABLE IF NOT EXISTS compactions (
@@ -125,6 +144,29 @@ CREATE TABLE IF NOT EXISTS compactions (
   trigger TEXT NOT NULL,
   pre_tokens INTEGER NOT NULL,
   post_tokens INTEGER NOT NULL
+);
+-- Listings (ticket #16): one row per skill / MCP server listed in a session. `stem` is the
+-- (parent) transcript stem, `agent_id` '' for the main agent else the Subagent that loaded it.
+-- kind skill|mcp; name = skill name or the server's display name; tokens estimated from text.
+CREATE TABLE IF NOT EXISTS listings (
+  stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ts_epoch REAL NOT NULL,
+  tokens INTEGER NOT NULL,
+  PRIMARY KEY (stem, agent_id, kind, name)
+);
+-- Skill calls and MCP tool calls, deduped by tool_use id; mcp name = normalised server key
+CREATE TABLE IF NOT EXISTS tool_uses (
+  tool_use_id TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ts_epoch REAL NOT NULL
 );
 """
 
