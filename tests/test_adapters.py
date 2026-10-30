@@ -138,3 +138,19 @@ def test_cli_ingest_reads_desktop_store_from_config(root, desktop, configure, en
     assert cli.main(["today"], env=env, now=NOW, out=out) == 0
     summaries = QueryService(store.connect(cfg.store_path), "UTC").session_summaries()
     assert [(s.session_id, s.requests) for s in summaries] == [("old", 2)]
+
+
+def test_session_timeline_page_loads(root, configure):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1000)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T01:01:00Z", output=1000)])
+    cfg = cli.load_config(configure(root))
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    client = create_app(factory, lambda: NOW).test_client()
+    page = client.get("/session/s1")
+    assert page.status_code == 200 and 'id="timeline"' in page.get_data(as_text=True)
+    assert "/session/s1/agent/a1" in page.get_data(as_text=True)
+    assert client.get("/session/s1/agent/a1").status_code == 200
+    assert client.get("/session/nope").status_code == 404

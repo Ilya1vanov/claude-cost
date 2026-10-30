@@ -1,7 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 from flask import Flask, abort, redirect, render_template, request, url_for
@@ -74,5 +74,21 @@ def create_app(service_factory: Callable[[], QueryService],
             "compare.html", mode=mode, modes=COMPARISON_MODES, result=result, chart_data=chart,
             available=service.available_periods(mode, now()), selected=set(starts),
             baseline=result.baseline if result else None)
+
+    @app.get("/session/<session_id>")
+    @app.get("/session/<session_id>/agent/<agent_id>")
+    def session_timeline(session_id: str, agent_id: str | None = None):
+        timeline = service_factory().session_timeline(session_id, agent_id)
+        if timeline is None:
+            abort(404)
+        chart = {"labels": [datetime.fromtimestamp(p.ts, timezone.utc).strftime("%H:%M:%S")
+                            for p in timeline.points],
+                 "context": [p.context_tokens for p in timeline.points],
+                 "cost": [round(p.cost, 4) for p in timeline.points],
+                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == "cold"],
+                 "idle": [i for i, p in enumerate(timeline.points) if p.idle]}
+        return render_template("session.html", t=timeline, chart_data=chart,
+                               when=lambda ts: datetime.fromtimestamp(ts, timezone.utc)
+                               .strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     return app
