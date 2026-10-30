@@ -166,7 +166,8 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             continue  # corrupt line
         if not isinstance(rec, dict):
             continue
-        _scan_meta(rec, parsed)
+        if "forkedFrom" not in rec:  # copied Fork history is the parent's, not this session's
+            _scan_meta(rec, parsed)
         kind = rec.get("type")
         if kind == "relocated":
             parsed.relocated = True
