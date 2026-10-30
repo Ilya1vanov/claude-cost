@@ -48,7 +48,7 @@
     <tr><td>Rebuilds</td><td>{{ k.current.rebuilds }} ({{ "%+d"|format(k.current.rebuilds - k.baseline.rebuilds) }} vs baseline {{ k.baseline.rebuilds }})</td></tr>
   </table>
   <h3>Top sessions</h3>
-  <ol>{% for s in c.top_sessions %}<li>{{ s.key }}: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
+  <ol>{% for s in c.top_sessions %}<li><a href="{{ url_for('session_timeline', session_id=s.key) }}">{{ s.key }}</a>: ${{ "%.2f"|format(s.cost) }} ({{ s.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <h3>Top projects</h3>
   <ol>{% for p in c.top_projects %}<li>{{ p.key }}: ${{ "%.2f"|format(p.cost) }} ({{ p.requests }} requests)</li>{% else %}<li>No spend in this period</li>{% endfor %}</ol>
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
