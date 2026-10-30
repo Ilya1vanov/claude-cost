@@ -144,7 +144,7 @@ class CompactionMark:
     post_tokens: int
     before_index: int  # number of timeline points before the compaction
     threshold: int | None = None  # Compact threshold of the model it ran on
-    late: bool = False  # Late compact: started above the threshold
+    late: bool = False  # Late compact: came after a request above the threshold
 
 
 @dataclass(frozen=True)
@@ -508,9 +508,10 @@ class QueryService:
 
     @staticmethod
     def _mark(c, before: int, points: list[TimelinePoint]) -> CompactionMark:
-        t = points[before - 1].threshold if before else None  # the model it ran on
+        prev = points[before - 1] if before else None  # the request just before it, and its model
+        t = prev.threshold if prev else None
         return CompactionMark(c["ts_epoch"], c["trigger"], c["pre_tokens"], c["post_tokens"],
-                              before, t, t is not None and c["pre_tokens"] > t)
+                              before, t, t is not None and prev.context_tokens > t)
 
     def _first_ts(self, session_id: str, agent_id: str | None = None) -> float:
         return self._conn.execute(
