@@ -27,7 +27,7 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
-    app.jinja_env.globals["tooltips"] = TOOLTIPS
+    app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory
 
     def service_factory() -> QueryService:
@@ -40,11 +40,17 @@ def create_app(service_factory: Callable[[], QueryService],
         for svc in g.pop("services", []):
             svc.close()
 
+    def helper_service() -> QueryService:
+        """One service per request for the label helpers, so they share a single rollup."""
+        if "helper_service" not in g:
+            g.helper_service = service_factory()
+        return g.helper_service
+
     @app.template_global()
     def session_label(session_id: str, link: bool = True) -> Markup:
         """A Session by its label, the id on hover; linked to its Session page unless `link` is off."""
         if "session_labels" not in g:
-            g.session_labels = service_factory().session_labels()
+            g.session_labels = helper_service().session_labels()
         label, sid = escape(g.session_labels.get(session_id, session_id)), escape(session_id)
         if not link:
             return Markup(f'<span class="id" title="{sid}">{label}</span>')
@@ -55,7 +61,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def project_name(key: str) -> str:
         """A project by its display name, the key when it has none."""
         if "project_names" not in g:
-            g.project_names = service_factory().project_names()
+            g.project_names = helper_service().project_names()
         return g.project_names.get(key, key)
 
     @app.post("/refresh")
@@ -66,7 +72,7 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.get("/")
     def dashboard():
-        service = service_factory()
+        service = helper_service()
         mode = request.args.get("period", "last7")
         if mode not in PERIOD_MODES:
             abort(400, f"period must be one of {', '.join(PERIOD_MODES)}")
@@ -76,7 +82,10 @@ def create_app(service_factory: Callable[[], QueryService],
             last = service.last_ingest_epoch()
             if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
-                service = service_factory()
+                g.pop("helper_service", None)
+                g.pop("session_labels", None)
+                g.pop("project_names", None)
+                service = helper_service()
         today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
         return render_template(

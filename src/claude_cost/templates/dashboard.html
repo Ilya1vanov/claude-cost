@@ -65,8 +65,8 @@
       {% for label, key, a, b in (("Sessions", "sessions", uc.sessions, ub.sessions), ("Turns", "turns", uc.turns, ub.turns), ("Requests", "requests", uc.requests, ub.requests)) %}
       <div class="kpi">
         <div class="label">{{ label }} {{ ui.info(key) }}</div>
-        <div class="value">{{ a }}</div>
-        <div class="meta">vs {{ b }} in baseline{% if key == "sessions" %} (with spend){% endif %}</div>
+        <div class="value">{{ "n/a" if a is none else a }}</div>
+        <div class="meta">vs {{ "n/a" if b is none else b }} in baseline{% if key == "sessions" %} (with spend){% endif %}</div>
       </div>
       {% endfor %}
     </div>

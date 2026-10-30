@@ -55,10 +55,10 @@ def detect(ctx: FindingContext) -> Detection:
     for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals"):
         sid = sid_of.get(x["stem"], x["stem"])
         removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
-    elsewhere: dict[str, int] = defaultdict(int)  # kind:name -> invocations in any project
-    for proj, counts in used.items():
-        for k, n in counts.items():
-            elsewhere[k] += n
+    def elsewhere(kind: str, name: str) -> int:
+        """Invocations of the listing, matched like `_used`, in every project."""
+        return sum(n for counts in used.values() for k, n in counts.items()
+                   if k.startswith(kind + ":") and _used(name, kind, {k.split(":", 1)[1]}))
     avoidable: dict[str, float] = defaultdict(float)
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
@@ -80,24 +80,23 @@ def detect(ctx: FindingContext) -> Detection:
             c = _read_price(ctx, r, tokens)
             avoidable[r.message_id] += c
             cost += c
-        it = items.setdefault((project, kind, name), {"sessions": set(), "cost": 0.0,
-                                                      "elsewhere": elsewhere.get(f"{kind}:{name}", 0)})
+        it = items.setdefault((project, kind, name), {"sessions": set(), "cost": 0.0})
         it["sessions"].add(sid)
         it["cost"] += cost
     covered = [Covered(mid, a) for mid, a in avoidable.items()]
     names = project_display_names(ctx.conn)
-    by_listing: dict[tuple[str, str], dict] = {}
+    by_listing: dict[tuple[str, str], list] = defaultdict(list)  # (kind, name) -> [(project, item)]
     for (project, kind, name), i in items.items():
-        row = by_listing.setdefault((kind, name), {"projects": set(), "cost": 0.0,
-                                                   "elsewhere": i["elsewhere"]})
-        row["projects"].add(names.get(project, project))
-        row["cost"] += i["cost"]
+        by_listing[(kind, name)].append((names.get(project, project), i))
     rows = []
-    for (kind, name), i in sorted(by_listing.items(), key=lambda kv: (-kv[1]["cost"], kv[0])):
-        n = len(i["projects"])
-        rows.append((name, kind,
-                     CollapsibleCell(f"{n} project{'' if n == 1 else 's'}", tuple(sorted(i["projects"]))),
-                     str(i["elsewhere"]), f"${i['cost']:.2f}"))
+    for (kind, name), per_project in sorted(
+            by_listing.items(), key=lambda kv: (-sum(i["cost"] for _, i in kv[1]), kv[0])):
+        n = len(per_project)
+        cells = tuple(f"{p}: ${i['cost']:.2f}, {len(i['sessions'])} session"
+                      f"{'' if len(i['sessions']) == 1 else 's'}"
+                      for p, i in sorted(per_project, key=lambda x: (-x[1]["cost"], x[0])))
+        rows.append((name, kind, CollapsibleCell(f"{n} project{'' if n == 1 else 's'}", cells),
+                     str(elsewhere(kind, name)), f"${sum(i['cost'] for _, i in per_project):.2f}"))
     table = DetailTable(("Listing", "Kind", "Unused in", "Used elsewhere", "Avoidable"), tuple(rows))
     return Detection(covered, table=table if rows else None)
 

@@ -53,3 +53,17 @@ def test_cold_writes_row_shows_request_count_and_rebuilds_is_gone(root, configur
     html = _dashboard(root, configure)
     assert "Rebuilds" not in html
     assert "across 1 requests" in _row(html, "Cold writes")
+
+
+def test_a_missing_tooltip_key_fails_loudly(root, configure):
+    import pytest
+    cfg = cli.load_config(configure(root))
+    app = create_app(lambda: QueryService(store.connect(cfg.store_path)), lambda: NOW)
+    with pytest.raises(KeyError):
+        app.jinja_env.from_string('{% import "_ui.html" as ui %}{{ ui.info("nope") }}').render()
+
+
+def test_every_info_marker_on_the_dashboard_has_wording(root, configure):
+    html = _dashboard(root, configure)
+    markers = re.findall(r'<span class="info" title="([^"]*)">', html)
+    assert markers and all(m.strip() for m in markers)

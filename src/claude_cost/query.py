@@ -183,15 +183,16 @@ class SessionTimeline:
     link_kind: str | None = None
 
     @property
-    def sequence(self) -> tuple[TimelinePoint | CompactionMark, ...]:
-        """The requests with each compaction placed where it happened, in time order."""
-        out: list[TimelinePoint | CompactionMark] = []
+    def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
+        """(kind, item) pairs, kind "request" or "compaction": the requests with each
+        compaction placed where it happened, in time order."""
+        out: list[tuple[str, TimelinePoint | CompactionMark]] = []
         pending = list(self.compactions)
         for i, p in enumerate(self.points):
             while pending and pending[0].before_index <= i:
-                out.append(pending.pop(0))
-            out.append(p)
-        return tuple(out + pending)
+                out.append(("compaction", pending.pop(0)))
+            out.append(("request", p))
+        return tuple(out + [("compaction", c) for c in pending])
 
 
 PERIOD_MODES = ("last7", "week", "month")
@@ -220,7 +221,7 @@ class ComponentSpend:
 class Usage:
     """What a Period used: Sessions with spend, Turns the user typed, Requests billed."""
     sessions: int
-    turns: int
+    turns: int | None  # None when the period starts before Turn coverage (pruned transcripts)
     requests: int
 
 
@@ -367,6 +368,7 @@ class QueryService:
         self._key_pattern = key_pattern
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
+        self._infos: dict[str, spotlights.SessionInfo] | None = None
 
     def close(self) -> None:
         self._conn.close()
@@ -587,15 +589,10 @@ class QueryService:
             f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n "
             f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
             (lo, hi)).fetchone()
-        turns = self._conn.execute(
+        cov = self._conn.execute("SELECT value FROM meta WHERE key = 'turns_from'").fetchone()
+        turns = None if cov and lo < float(cov["value"]) else self._conn.execute(
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
         return Usage(row["s"], turns, row["n"])
-
-    def session_turns(self, session_id: str) -> int:
-        """Turns the user typed in a logical Session, across all its transcripts."""
-        return self._conn.execute(
-            "SELECT COUNT(*) FROM turns t LEFT JOIN session_links l ON l.stem = t.stem "
-            "WHERE COALESCE(l.logical_session_id, t.stem) = ?", (session_id,)).fetchone()[0]
 
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""
@@ -631,12 +628,21 @@ class QueryService:
             f"SUM({COST_SQL}) AS cost FROM requests r {SESSION_JOIN} "
             "JOIN request_surface a ON a.message_id = r.message_id AND a.agent_id IS NOT NULL "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k", (lo, hi))}
+        infos = self._session_infos()
+        top = {r.key for r in ranked}
+        children = [sid for sid, i in infos.items() if i.parent in top]
+        firsts = {r["k"]: r["t"] for r in self._conn.execute(
+            f"SELECT {SESSION_ID_SQL} AS k, MIN(r.ts_epoch) AS t FROM requests r {SESSION_JOIN} "
+            "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+            f"WHERE a.agent_id IS NULL AND {SESSION_ID_SQL} IN ({','.join('?' * len(children))}) "
+            "GROUP BY k", children)} if children else {}
         linked: dict[tuple[str, str], int] = {}
-        for s in self.session_summaries():
-            if s.parent_session_id and lo <= self._first_ts(s.session_id) < hi:  # started in the period
-                key = (s.parent_session_id, s.link_kind)
+        for sid in children:
+            first = firsts.get(sid)  # None when every request is Subagent-owned
+            if first is not None and lo <= first < hi:  # started in the period
+                key = (infos[sid].parent, infos[sid].kind)
                 linked[key] = linked.get(key, 0) + 1
-        labels = self.session_labels()
+        labels = {sid: i.label for sid, i in infos.items()}
         return tuple(RankedSpend(
             r.key, r.cost, r.requests, labels.get(r.key, r.key),
             *subs.get(r.key, (0, 0.0)),
@@ -794,7 +800,13 @@ class QueryService:
     # ---- Spotlights (ticket #13) -------------------------------------------------------
 
     def _session_infos(self) -> dict[str, spotlights.SessionInfo]:
-        """Every logical Session with the fields Spotlights search and its Side/Fork link."""
+        """Every logical Session with the fields Spotlights search and its Side/Fork link.
+        Computed once per service (a service lives for one request)."""
+        if self._infos is None:
+            self._infos = self._build_session_infos()
+        return self._infos
+
+    def _build_session_infos(self) -> dict[str, spotlights.SessionInfo]:
         summaries = self.session_summaries()
         logical = {r["stem"]: r["logical_session_id"]
                    for r in self._conn.execute("SELECT stem, logical_session_id FROM session_links")}

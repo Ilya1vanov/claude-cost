@@ -48,7 +48,7 @@ def test_used_here_unused_there(root, service_for):
     assert [s.session_id for s in f.sessions] == ["b1"]
     assert f.avoidable == pytest.approx(0.004)
     (row,) = f.table.rows
-    assert row[0] == "tdd" and row[2].items == ("proj-b",) and row[3] == "1"
+    assert row[0] == "tdd" and row[2].items == ("proj-b: $0.00, 1 session",) and row[3] == "1"
 
 
 def test_used_in_another_session_of_the_project_is_not_unused(root, service_for):
@@ -146,10 +146,28 @@ def test_listing_unused_in_two_projects_is_one_row(root, service_for):
     f = _by_id(service_for(root).findings())["unused-listing"]
     (row,) = f.table.rows
     assert row[:2] == ("tdd", "skill")
-    assert row[2].summary == "2 projects" and row[2].items == ("proj-a", "proj-b")
+    assert row[2].summary == "2 projects" and row[2].items == ("proj-a: $0.00, 1 session", "proj-b: $0.00, 1 session")
     assert row[3] == "1"
     assert f.avoidable == pytest.approx(0.008)  # unchanged: per (project, listing)
     assert row[4] == "$0.01"
+
+
+def test_used_elsewhere_counts_invocations_under_the_unprefixed_skill_name(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("plug:tdd", 10_000))]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing + [use, use.replace("t1", "t2")])
+    (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
+    assert row[0] == "plug:tdd" and row[3] == "2"
+
+
+def test_projects_cell_lists_each_projects_cost_and_session_count(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 1_000_000))]
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-a", "a2", listing)
+    _session(root, "proj-b", "b1", listing)
+    (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
+    assert row[2].items == ("proj-a: $0.80, 2 sessions", "proj-b: $0.40, 1 session")
 
 
 def test_detail_page_shows_table_not_run_on_text(root, configure):

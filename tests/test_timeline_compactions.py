@@ -16,8 +16,7 @@ def _session(root):
 def test_compactions_are_merged_into_the_request_sequence_by_time(root, service_for):
     _session(root)
     t = service_for(root).session_timeline("s1")
-    kinds = [("compaction", x.trigger) if hasattr(x, "trigger") else ("request", x.message_id)
-             for x in t.sequence]
+    kinds = [(kind, x.trigger if kind == "compaction" else x.message_id) for kind, x in t.sequence]
     assert kinds == [("request", "m1"), ("compaction", "manual"), ("request", "m2"),
                      ("compaction", "auto"), ("request", "m3")]
 
