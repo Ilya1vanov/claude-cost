@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import cache, ownership, pricing, sources
+from .localtime import price_day
 
 
 def _parse_ts(value: str) -> datetime:
@@ -58,6 +59,13 @@ def _attachment_listings(att: dict, ts: float) -> list[tuple]:
     return out
 
 
+def _attachment_removals(att: dict, ts: float) -> list[tuple]:
+    if att.get("type") != "mcp_instructions_delta":
+        return []
+    return [("mcp", server_key(n), ts) for n in att.get("removedNames") or []
+            if isinstance(n, str)]
+
+
 def _tool_uses(rec: dict, ts: float) -> list[tuple]:
     content = (rec.get("message") or {}).get("content")
     out = []
@@ -93,6 +101,7 @@ class Parsed:
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
     compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
     listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
+    removals: list[tuple] = field(default_factory=list)  # (kind, name, ts)
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
     # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
     title: str | None = None
@@ -182,8 +191,9 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             att = rec.get("attachment")
             if isinstance(att, dict):
                 try:
-                    parsed.listings.extend(_attachment_listings(
-                        att, _parse_ts(rec["timestamp"]).timestamp()))
+                    ts = _parse_ts(rec["timestamp"]).timestamp()
+                    parsed.listings.extend(_attachment_listings(att, ts))
+                    parsed.removals.extend(_attachment_removals(att, ts))
                 except (KeyError, TypeError, ValueError):
                     pass
             continue
@@ -307,7 +317,7 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
         attrs = conn.execute("SELECT speed, inference_geo FROM request_attrs WHERE message_id = ?",
                              (mid,)).fetchone()
         cost = pricing.price_request(
-            r["model"], r["ts"].date(), input=r["input"], output=r["output"],
+            r["model"], price_day(r["ts"].timestamp()), input=r["input"], output=r["output"],
             cache_read=r["cache_read"], write_5m=r["write_5m"], write_1h=r["write_1h"],
             speed=attrs["speed"] if attrs else None,
             inference_geo=attrs["inference_geo"] if attrs else None, table=table,
@@ -358,7 +368,7 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
         "LEFT JOIN request_attrs a ON a.message_id = r.message_id").fetchall()
     for r in rows:
         cost = pricing.price_request(
-            r["model"], datetime.fromtimestamp(r["ts_epoch"], timezone.utc).date(),
+            r["model"], price_day(r["ts_epoch"]),
             input=r["input_tokens"], output=r["output_tokens"], cache_read=r["cache_read_tokens"],
             write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
             speed=r["speed"], inference_geo=r["inference_geo"], table=table)
@@ -559,6 +569,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO listings VALUES (?,?,?,?,?,?,?)",
                                  [(stem, agent, project, k, n, ts, tok)
                                   for k, n, ts, tok in parsed.listings])
+                conn.executemany("INSERT OR IGNORE INTO listing_removals VALUES (?,?,?,?,?)",
+                                 [(stem, agent, k, n, ts) for k, n, ts in parsed.removals])
                 conn.executemany("INSERT OR IGNORE INTO tool_uses VALUES (?,?,?,?,?,?,?)",
                                  [(uid, stem, agent, project, k, n, ts)
                                   for uid, k, n, ts in parsed.uses])

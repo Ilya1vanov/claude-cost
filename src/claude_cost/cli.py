@@ -13,6 +13,7 @@ from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from . import ingest as ingest_mod
+from . import localtime
 from . import pricing
 from . import store
 from . import config as config_mod
@@ -31,15 +32,14 @@ def _open(config: Config) -> QueryService:
     return QueryService(store.connect(config.store_path), config.timezone,
                         price_table=pricing.build_table(config.prices),
                         thresholds=config.thresholds,
+                        compare_model=config.fable_compare_model,
                         key_pattern=config.spotlight_key_pattern)
 
 
 def parse_since(text: str, today: date) -> date:
     """`--since` value: an ISO date (2026-10-01) or a number of days back (7d)."""
     try:
-        if text.endswith("d"):
-            return today - timedelta(days=int(text[:-1]))
-        return date.fromisoformat(text)
+        return localtime.parse_since(text, today)
     except ValueError:
         raise ConfigError(f"--since must be a date like 2026-10-01 or days like 7d, got {text!r}") from None
 

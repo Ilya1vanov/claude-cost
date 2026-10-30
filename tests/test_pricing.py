@@ -30,9 +30,9 @@ def test_haiku_55_over_100k_prompt_uses_higher_tier(root, service_for):
 
 
 def test_haiku_55_prompt_counts_cache_tokens(root, service_for):
-    # 100_001 prompt tokens (cache read counts): higher tier = 2x all prices
+    # 100_001 prompt tokens (cache read counts): higher tier = 5x all prices ($0.50/$2.50 per M, claude-api skill pricing table)
     svc = one(root, service_for, model="claude-haiku-5-5", cache_read=100_001, output=M)
-    assert total(svc) == pytest.approx(100_001 * 0.01 * 2 / M + 0.50 * 2)
+    assert total(svc) == pytest.approx(100_001 * 0.01 * 5 / M + 0.50 * 5)
 
 
 def test_fast_mode_uses_fast_prices_with_cache_multipliers_on_top(root, service_for):

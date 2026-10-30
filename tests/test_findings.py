@@ -146,3 +146,61 @@ def test_findings_pages_list_and_drill_down(root, configure):
     detail = client.get("/findings/cold-resume").get_data(as_text=True)
     assert "resume" in detail and "s1" in detail and "avoidable" in detail.lower()
     assert client.get("/findings/nope").status_code == 404
+
+
+# ---- dashboard top-N findings card (story 44) ----
+
+def _fable_and_cold(root):
+    root.write_transcript("p", "s1", [
+        req("f1", "2026-10-30T10:00:00Z", model="claude-fable-5", output=1_000_000),  # $50
+        req("first", "2026-10-30T10:01:00Z", write_1h=20_000),
+        req("resume", "2026-10-30T13:00:00Z", write_1h=150_000),                      # $1.20 cold
+    ])
+
+
+def test_top_findings_ranked_by_attributed_spend_and_limited_to_top_n(root, service_for):
+    _fable_and_cold(root)
+    svc = service_for(root)
+    top = svc.top_findings("last7", NOW, top_n=5)
+    assert [f.id for f in top] == ["fable-usage", "cold-resume"]
+    assert [f.id for f in svc.top_findings("last7", NOW, top_n=1)] == ["fable-usage"]
+
+
+def test_top_findings_only_count_requests_in_the_period(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("old", "2026-09-01T10:00:00Z", model="claude-fable-5", output=1_000_000)])
+    assert service_for(root).top_findings("last7", NOW) == []
+
+
+def test_dashboard_shows_top_findings_card_using_config_top_n(root, configure):
+    _fable_and_cold(root)
+    env = configure(root)
+    from pathlib import Path
+    with (Path(env["CLAUDE_COST_CONFIG_DIR"]) / "config.toml").open("a") as f:
+        f.write("top_n = 1\n")
+    out = io.StringIO()
+    cfg = cli.load_config(env)
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    html = create_app(factory, lambda: NOW, top_n=cfg.top_n).test_client().get("/").get_data(as_text=True)
+    assert 'id="top-findings"' in html and "Fable usage" in html and "Cold resume" not in html
+
+
+def test_fable_comparison_model_is_configurable(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("f", "2026-10-30T10:00:00Z", model="claude-fable-5", input=1_000_000, output=100_000)])
+    f = _by_id(service_for(root, compare_model="claude-sonnet-5-5").findings())["fable-usage"]
+    assert f.avoidable == pytest.approx(15 - (2 + 1))     # Sonnet 5.5: $2 input + $10/M output
+
+
+def test_web_since_accepts_days_back_like_the_cli(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("old", "2026-10-01T10:00:00Z", model="claude-fable-5", output=1_000_000),
+        req("new", "2026-10-29T10:00:00Z", model="claude-fable-5", output=1_000_000)])
+    client = create_app(lambda: service_for(root), lambda: NOW).test_client()
+    page = client.get("/findings/fable-usage?since=7d").get_data(as_text=True)
+    assert "2026-10-23" in page   # NOW is 2026-10-30
+    assert client.get("/findings?since=garbage").status_code == 400

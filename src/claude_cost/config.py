@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .findings import all_thresholds
+from .findings import DEFAULT_COMPARE_MODEL, all_thresholds
 
 DEFAULT_PORT = 8765
 DEFAULT_TOP_N = 10
@@ -32,11 +32,12 @@ class Config:
     timezone: str | None = None  # IANA name; None = system local time
     port: int = DEFAULT_PORT
     top_n: int = DEFAULT_TOP_N
-    desktop_stores: list[Path] = field(default_factory=list)  # Desktop session store folders
+    desktop_stores: list[Path] = field(default_factory=list)  # Desktop session store folders (global + per Data root)
     prices: dict[str, dict[str, float]] = field(default_factory=dict)  # model -> price override
     spotlight_key_pattern: str | None = None  # regex; one Auto-spotlight per key it finds
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
     thresholds: dict[str, int] = field(default_factory=dict)  # finding thresholds in effect
+    fable_compare_model: str = DEFAULT_COMPARE_MODEL
 
 
 @dataclass(frozen=True)
@@ -70,9 +71,25 @@ def _parse_int(name: str) -> Callable[[str], int]:
     return parse
 
 
-def _coerce_roots(v: Any) -> list[str]:
-    if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
-        raise ConfigError(f"data_roots must be a non-empty list of paths, got {v!r}")
+def _coerce_model(v: Any) -> str:
+    if not isinstance(v, str) or not v.strip():
+        raise ConfigError(f"fable_compare_model must be a model name, got {v!r}")
+    return v.strip()
+
+
+def _root_ok(x: Any) -> bool:
+    if isinstance(x, str):
+        return bool(x)
+    return (isinstance(x, dict) and isinstance(x.get("path"), str) and bool(x["path"])
+            and set(x) <= {"path", "desktop_session_store"}
+            and isinstance(x.get("desktop_session_store", ""), str))
+
+
+def _coerce_roots(v: Any) -> list[Any]:
+    if not isinstance(v, list) or not v or not all(_root_ok(x) for x in v):
+        raise ConfigError(
+            "data_roots must be a non-empty list of paths or { path = ..., desktop_session_store = ... } "
+            f"tables, got {v!r}")
     return v
 
 
@@ -125,7 +142,9 @@ def _parse_prices(text: str) -> Any:
 
 
 SETTINGS: dict[str, Setting] = {s.name: s for s in [
-    Setting("data_roots", "Claude config folders to read (Data roots); CLI: comma-separated.",
+    Setting("data_roots", "Claude config folders to read (Data roots); CLI: comma-separated. An entry "
+            "can be { path = \"~/.claude\", desktop_session_store = \"...\" } to add that root's Desktop "
+            "session store.",
             None, '["~/.claude"]', '["~/.claude"]', _coerce_roots, _parse_roots),
     Setting("port", "Port for `claude-cost serve` (always bound to 127.0.0.1).",
             DEFAULT_PORT, str(DEFAULT_PORT), str(DEFAULT_PORT),
@@ -135,9 +154,14 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             _int_in("top_n", 1), _parse_int("top_n")),
     Setting("desktop_session_stores",
             "Desktop session store folders (scanned recursively for local_*.json) that link Side "
-            "sessions, Forks and earlier transcripts; CLI: comma-separated. Empty = no Desktop links.",
+            "sessions, Forks and earlier transcripts; CLI: comma-separated. Applies to every Data "
+            "root; a store for one root is set in data_roots. Empty = no Desktop links.",
             [], "[]", '["~/Library/Application Support/Claude/claude-code-sessions"]',
             _coerce_stores, _parse_roots),
+    Setting("fable_compare_model",
+            "Model whose prices the Fable usage Opportunity compares Fable requests against.",
+            DEFAULT_COMPARE_MODEL, DEFAULT_COMPARE_MODEL, f'"{DEFAULT_COMPARE_MODEL}"',
+            _coerce_model, str),
     Setting("timezone", "IANA time zone for days and weeks; unset = system local time.",
             None, "(system local time)", '"Europe/Berlin"', _coerce_tz, str),
     Setting("prices", "Price overrides in $ per million tokens, by model-name prefix "
@@ -204,7 +228,13 @@ def load_config(env: Mapping[str, str]) -> Config:
             values[name], sources[name] = s.coerce(raw[name]), "config"
         else:
             values[name], sources[name] = s.default, "default"
-    roots = [Path(p).expanduser() for p in values["data_roots"] or []] or [home / ".claude"]
+    entries = values["data_roots"] or []
+    roots = [Path(e["path"] if isinstance(e, dict) else e).expanduser() for e in entries] \
+        or [home / ".claude"]
+    root_stores = [Path(e["desktop_session_store"]).expanduser() for e in entries
+                   if isinstance(e, dict) and e.get("desktop_session_store")]
+    stores = [Path(p).expanduser() for p in values["desktop_session_stores"]]
+    stores += [p for p in root_stores if p not in stores]
     return Config(
         data_roots=roots,
         store_path=data_dir / "store.sqlite",
@@ -212,11 +242,12 @@ def load_config(env: Mapping[str, str]) -> Config:
         timezone=values["timezone"],
         port=values["port"],
         top_n=values["top_n"],
-        desktop_stores=[Path(p).expanduser() for p in values["desktop_session_stores"]],
+        desktop_stores=stores,
         prices=values["prices"] or {},
         spotlight_key_pattern=values["spotlight_key_pattern"],
         sources=sources,
         thresholds={n: values[n] for n in all_thresholds()},
+        fable_compare_model=values["fable_compare_model"],
     )
 
 

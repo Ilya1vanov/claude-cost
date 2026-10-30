@@ -6,7 +6,8 @@ import importlib
 import pkgutil
 
 from .core import (DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY, Covered, Detection, Finding,  # noqa: F401
-                   FindingContext, FindingDef, RequestRow, Threshold, build_finding, load_rows)
+                   CORE_THRESHOLDS, DEFAULT_COMPARE_MODEL, FindingContext, FindingDef, RequestRow, Threshold, build_finding,
+                   load_rows)
 
 
 def all_findings() -> list[FindingDef]:
@@ -25,4 +26,4 @@ def all_findings() -> list[FindingDef]:
 
 
 def all_thresholds() -> dict[str, Threshold]:
-    return {t.name: t for d in all_findings() for t in d.thresholds}
+    return {t.name: t for t in (*CORE_THRESHOLDS, *(t for d in all_findings() for t in d.thresholds))}

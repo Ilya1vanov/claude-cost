@@ -13,9 +13,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
-from .. import pricing
+from .. import compact, pricing
+from ..localtime import local_day
+from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
+DEFAULT_COMPARE_MODEL = "claude-opus-5-5"  # Fable usage compares against it (fable_compare_model)
 NOT_ADDITIVE_NOTE = ("Avoidable figures are lower bounds and are not additive: findings overlap, "
                      "so they are never summed.")
 
@@ -27,6 +30,20 @@ class Threshold:
     default: int
     doc: str
     minimum: int = 0
+
+
+# Thresholds that belong to no single finding (Compact analysis, timeline, web refresh); they
+# are config settings like the finding thresholds and reach the query service the same way.
+CORE_THRESHOLDS = (
+    Threshold("compact_min_sample", compact.MIN_SAMPLE,
+              "Compactions a model needs before it gets its own Compact threshold.", 1),
+    Threshold("compact_step", compact.STEP,
+              "Compact threshold candidates are multiples of this many tokens.", 1),
+    Threshold("timeline_idle_gap_seconds", 300,
+              "Timeline: a gap longer than this many seconds is marked as an idle gap.", 1),
+    Threshold("refresh_stale_seconds", 60,
+              "Web: a page load re-ingests when the last ingest is older than this many seconds.", 0),
+)
 
 
 @dataclass(frozen=True)
@@ -57,7 +74,7 @@ class RequestRow:
 
     @property
     def context(self) -> int:
-        return self.input + self.cache_read + self.write_5m + self.write_1h
+        return context_tokens(self.input, self.cache_read, self.write_5m, self.write_1h)
 
 
 @dataclass(frozen=True)
@@ -134,11 +151,13 @@ class FindingContext:
 
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
-                 conn: sqlite3.Connection | None = None, compact=None):
+                 conn: sqlite3.Connection | None = None, compact=None,
+                 compare_model: str = DEFAULT_COMPARE_MODEL):
         self.rows = rows
         self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.compact = compact  # compact.CompactAnalysis: learned Compact thresholds
         self.price_table = price_table
+        self.compare_model = compare_model  # model the Fable usage Opportunity prices against
         self._thresholds, self._defs = thresholds, defs
 
     def threshold(self, name: str) -> int:
@@ -164,14 +183,13 @@ class FindingContext:
 def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
               hi: float | None) -> list[RequestRow]:
     """All requests, oldest first, with session gaps. `lo`/`hi` only set `in_period`."""
-    sql = ("SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) AS sid, "
+    sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
-           "r.cost_input + r.cost_output + r.cost_cache_write_5m + r.cost_cache_write_1h "
-           "+ r.cost_cache_read AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
+           f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
            "sf.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
-           "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+           f"FROM requests r {SESSION_JOIN} "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
            "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "
@@ -185,7 +203,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
         gap = ts - prev[x["sid"]] if x["sid"] in prev else None
         prev[x["sid"]] = ts
         out.append(RequestRow(
-            x["message_id"], x["sid"], x["project"], ts, datetime.fromtimestamp(ts, tz).date(),
+            x["message_id"], x["sid"], x["project"], ts, local_day(ts, tz),
             x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
             x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
             x["inference_geo"] or None, gap,

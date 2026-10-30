@@ -168,3 +168,21 @@ def test_dimension_registry_lets_other_tickets_plug_in(svc):
         assert svc.explore(_spec("model", big=["yes"])).total_requests == 2
     finally:
         del explore.DIMENSIONS["big"]
+
+
+def test_drain_and_opportunity_dimensions_group_and_filter_by_finding(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("f1", "2026-10-30T10:00:00Z", model="claude-fable-5", output=1_000_000),   # $50, Opportunity
+        req("first", "2026-10-30T10:01:00Z", write_1h=20_000),
+        req("resume", "2026-10-30T13:00:00Z", write_1h=150_000),                       # Cold resume Drain
+        req("plain", "2026-10-30T13:01:00Z", cache_read=1_000),
+    ])
+    svc = service_for(root)
+    assert {"drain", "opportunity"} <= set(explore.DIMENSIONS)
+    drains = _rows(svc, "drain")
+    assert drains["Cold resume"].requests == 1 and drains["Cold resume"].cost == pytest.approx(1.20)
+    assert drains["(none)"].requests == 3
+    assert _rows(svc, "opportunity")["Fable usage"].cost == pytest.approx(50.0)
+    assert svc.explore(_spec("model", opportunity=["Fable usage"])).total_requests == 1
+    assert svc.explore(_spec("model", drain=["Cold resume"])).total_requests == 1
+    assert "Cold resume" in svc.explore_options()["drain"]

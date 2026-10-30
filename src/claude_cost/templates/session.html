@@ -32,7 +32,7 @@
   <table id="requests">
     <tr><th>Time</th><th>Context</th><th>Cost</th><th>Marks</th></tr>
     {% for p in t.points %}<tr><td>{{ when(p.ts) }}</td><td>{{ "{:,}".format(p.context_tokens) }}</td><td>${{ "%.4f"|format(p.cost) }}</td>
-      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}{% if p.threshold and p.context_tokens > p.threshold %} Oversized context (above {{ "{:,}".format(p.threshold) }}){% endif %}</td></tr>{% endfor %}
+      <td>{% if p.idle %}idle gap {{ (p.gap_seconds / 60)|round|int }} min{% endif %}{% if p.cache_event == "cold" %} Cold write{% endif %}{% if p.cold_resume %} (Cold resume){% endif %}{% if p.threshold and p.context_tokens > p.threshold %} Oversized context (above {{ "{:,}".format(p.threshold) }}){% endif %}</td></tr>{% endfor %}
   </table>
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
   <script src="{{ url_for('static', filename='session.js') }}"></script>

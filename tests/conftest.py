@@ -61,10 +61,13 @@ def service_for(tmp_path):
     """Ingest the given Data roots into a temp store; return a UTC QueryService."""
     def _service(*roots: DataRoot, prices: dict | None = None,
                  desktop: DesktopStore | None = None,
-                 key_pattern: str | None = None) -> QueryService:
+                 key_pattern: str | None = None, thresholds: dict | None = None,
+                 compare_model: str | None = None) -> QueryService:
         conn = store.connect(tmp_path / "store.sqlite")
         table = pricing.build_table(prices)
         stores = [desktop.path.parent.parent] if desktop else []  # a parent dir is scanned
         ingest_mod.ingest(conn, [r.path for r in roots], price_table=table, desktop_stores=stores)
-        return QueryService(conn, "UTC", price_table=table, key_pattern=key_pattern)
+        extra = {"compare_model": compare_model} if compare_model else {}
+        return QueryService(conn, "UTC", price_table=table, key_pattern=key_pattern,
+                            thresholds=thresholds, **extra)
     return _service

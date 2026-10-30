@@ -13,9 +13,10 @@ from . import compact as compact_mod
 from . import explore
 from . import findings as findings_mod
 from . import pricing, spotlights
+from .findings import cold_resume as cold_resume_mod
+from .localtime import day_end, day_start, local_day, today
+from .sql import CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
-COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
-            "+ cost_cache_write_1h + cost_cache_read")
 
 
 @dataclass(frozen=True)
@@ -120,8 +121,6 @@ class SpotlightDetail:
     components: dict[str, float]  # lifetime cost per Cost component
     pins: tuple[str, ...]
 
-IDLE_GAP_SECONDS = 300  # a gap longer than the 5m cache TTL is marked as an idle gap
-
 
 @dataclass(frozen=True)
 class TimelinePoint:
@@ -131,8 +130,9 @@ class TimelinePoint:
     context_tokens: int  # prompt size: input + cache read + cache writes
     cost: float
     gap_seconds: float | None  # idle time since the previous request (None for the first)
-    idle: bool  # gap_seconds > IDLE_GAP_SECONDS
+    idle: bool  # gap_seconds > the timeline_idle_gap_seconds threshold
     cache_event: str  # cold | warm | none (a Cold write is marked)
+    cold_resume: bool = False  # Cold resume per its configured thresholds
     threshold: int | None = None  # Compact threshold of this request's model (None: unknown)
 
 
@@ -331,15 +331,21 @@ class PriceRow:
 class QueryService:
     def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
                  price_table: dict | None = None, thresholds: dict[str, int] | None = None,
-                 key_pattern: str | None = None):
+                 key_pattern: str | None = None,
+                 compare_model: str = findings_mod.DEFAULT_COMPARE_MODEL):
         self._conn = conn
+        self._compare_model = compare_model
         self._thresholds = thresholds or {}
         self._key_pattern = key_pattern
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
+    def local_time(self, epoch: float) -> datetime:
+        """An epoch timestamp as an aware datetime in the configured time zone."""
+        return datetime.fromtimestamp(epoch, self._tz).astimezone(self._tz)
+
     def _local_day(self, epoch: float) -> date:
-        return datetime.fromtimestamp(epoch, self._tz).date()
+        return local_day(epoch, self._tz)
 
     @staticmethod
     def _filter(surface: str | None, data_root: str | Path | None) -> tuple[str, list]:
@@ -387,11 +393,11 @@ class QueryService:
         """
         where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
-            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, "
+            f"SELECT {SESSION_ID_SQL} AS sid, "
             f"SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first, "
             f"SUM(CASE WHEN a.agent_id IS NOT NULL THEN {COST_SQL} ELSE 0 END) AS sub_cost, "
             f"SUM(a.agent_id IS NOT NULL) AS sub_n "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             f"LEFT JOIN request_surface a ON a.message_id = r.message_id{where} "
             "GROUP BY sid ORDER BY first, sid", args).fetchall()
         members: dict[str, list[str]] = {}
@@ -417,11 +423,11 @@ class QueryService:
         """One row per Subagent that made requests, with its own cost, oldest first."""
         where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
-            f"SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent_id, "
+            f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent_id, "
             "s.agent_type, COALESCE(s.is_fork, 0) AS is_fork, s.tool_use_id, s.parent_agent_id, "
             f"s.description, SUM({COST_SQL}) AS cost, COUNT(*) AS n, MIN(r.ts_epoch) AS first "
-            "FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
-            "LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r JOIN request_surface a ON a.message_id = r.message_id "
+            f"{SESSION_JOIN} "
             "LEFT JOIN (SELECT f.file_stem AS stem, sf.agent_id, MAX(sf.agent_type) AS agent_type, "
             "MAX(sf.is_fork) AS is_fork, MAX(sf.tool_use_id) AS tool_use_id, "
             "MAX(sf.parent_agent_id) AS parent_agent_id, MAX(sf.description) AS description "
@@ -435,29 +441,41 @@ class QueryService:
 
     def compact_thresholds(self) -> compact_mod.CompactAnalysis:
         """Compact threshold per model (global fallback), with cost-vs-T curve and payback."""
-        return compact_mod.analyze(self._conn, self._tz, self._table)
+        return compact_mod.analyze(self._conn, self._table,
+                                   self._threshold("compact_min_sample"),
+                                   self._threshold("compact_step"))
+
+    def _threshold(self, name: str) -> int:
+        return self._thresholds.get(name, findings_mod.all_thresholds()[name].default)
+
+    def stale_after_seconds(self) -> int:
+        """How old the last ingest may be before a page load re-ingests (config)."""
+        return self._threshold("refresh_stale_seconds")
 
     def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
         or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
         rows = self._conn.execute(
-            f"SELECT r.message_id, r.ts_epoch, r.model, r.input_tokens + r.cache_read_tokens "
-            "+ r.cache_write_5m_tokens + r.cache_write_1h_tokens AS ctx, "
+            f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
             f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN request_cache c ON c.message_id = r.message_id "
-            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ? "
+            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
             "ORDER BY r.ts_epoch, r.message_id", (session_id, agent_id)).fetchall()
         if not rows:
             return None
+        idle_gap = self._threshold("timeline_idle_gap_seconds")
+        cold_idle = self._threshold("cold_resume_idle_minutes")
+        cold_ctx = self._threshold("cold_resume_min_context")
         points, prev = [], None
         for r in rows:
             gap = None if prev is None else r["ts_epoch"] - prev
             prev = r["ts_epoch"]
-            points.append(TimelinePoint(r["message_id"], r["ts_epoch"], r["model"], r["ctx"],
-                                        r["cost"], gap, gap is not None and gap > IDLE_GAP_SECONDS,
-                                        r["event"]))
+            points.append(TimelinePoint(
+                r["message_id"], r["ts_epoch"], r["model"], r["ctx"], r["cost"], gap,
+                gap is not None and gap > idle_gap, r["event"],
+                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx)))
         analysis = self.compact_thresholds()
 
         def threshold(model: str) -> int | None:
@@ -496,9 +514,9 @@ class QueryService:
 
     def _first_ts(self, session_id: str, agent_id: str | None = None) -> float:
         return self._conn.execute(
-            "SELECT MIN(r.ts_epoch) FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"SELECT MIN(r.ts_epoch) FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
-            "WHERE COALESCE(l.logical_session_id, r.session_id) = ? AND a.agent_id IS ?",
+            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ?",
             (session_id, agent_id)).fetchone()[0]
 
     def _subagent_starts(self, session_id: str) -> list[tuple[SubagentSummary, float]]:
@@ -515,7 +533,7 @@ class QueryService:
 
         `include_today` only affects `last7`; calendar periods always run through today.
         """
-        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        today = self._today(now)
         cur, base, full = resolve_periods(mode, today, include_today)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
         components = tuple(ComponentSpend(name, cur_sums[col], base_sums[col])
@@ -523,13 +541,12 @@ class QueryService:
         return PeriodComparison(
             mode, cur, base, cur.days < full and mode != "last7", cur.days, full,
             sum(cur_sums[c] for _, c in COMPONENTS), sum(base_sums[c] for _, c in COMPONENTS),
-            components, self._top("COALESCE(l.logical_session_id, r.session_id)", cur, top_n),
+            components, self._top(SESSION_ID_SQL, cur, top_n),
             self._top("r.project", cur, top_n))
 
     def _bounds(self, p: Period) -> tuple[float, float]:
         """Epoch range [start, end) covering the Period's local days."""
-        return (datetime.combine(p.start, time.min, self._tz).timestamp(),
-                datetime.combine(p.end + timedelta(1), time.min, self._tz).timestamp())
+        return day_start(p.start, self._tz), day_end(p.end, self._tz)
 
     def _sums(self, p: Period) -> dict[str, float]:
         lo, hi = self._bounds(p)
@@ -542,7 +559,7 @@ class QueryService:
         lo, hi = self._bounds(p)
         rows = self._conn.execute(
             f"SELECT {key_sql} AS k, SUM({COST_SQL}) AS cost, COUNT(*) AS n "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
@@ -570,7 +587,7 @@ class QueryService:
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
         """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
-        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        today = self._today(now)
         cur, base, _ = resolve_periods(mode, today, include_today)
         return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
 
@@ -594,17 +611,27 @@ class QueryService:
         return sorted(out, key=lambda e: e.event)
 
 
-    def findings(self, since: date | None = None) -> list[findings_mod.Finding]:
-        """Every Drain, then every Opportunity, over requests from local day `since` on
-        (all history when None). Findings overlap: never sum their avoidable figures."""
-        lo = datetime.combine(since, time.min, self._tz).timestamp() if since else None
-        rows = findings_mod.load_rows(self._conn, self._tz, lo, None)
+    def findings(self, since: date | None = None,
+                 until: date | None = None) -> list[findings_mod.Finding]:
+        """Every Drain, then every Opportunity, over requests from local day `since` through
+        `until` (all history when None). Findings overlap: never sum their avoidable figures."""
+        lo = day_start(since, self._tz) if since else None
+        hi = day_end(until, self._tz) if until else None
+        rows = findings_mod.load_rows(self._conn, self._tz, lo, hi)
         by_id = {r.message_id: r for r in rows}
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
-                                          compact_mod.analyze(self._conn, self._tz, self._table))
+                                          self.compact_thresholds(), self._compare_model)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
+
+    def top_findings(self, mode: str, now: datetime, include_today: bool = True,
+                     top_n: int = 10) -> list[findings_mod.Finding]:
+        """The findings covering the most spend inside the Period (same periods as
+        period_comparison), costliest first; findings that cover nothing are left out."""
+        cur, _, _ = resolve_periods(mode, self._today(now), include_today)
+        hits = [f for f in self.findings(cur.start, cur.end) if f.attributed > 0]
+        return sorted(hits, key=lambda f: (-f.attributed, f.id))[:top_n]
 
     def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:
         for f in self.findings(since):
@@ -652,6 +679,12 @@ class QueryService:
             daily = [d.cost for d in self.daily_spend(p.start, min(p.end, today))]
             dailies.append(daily)
             costs.append(sum(daily))
+        # A partial period is judged on the days that have elapsed, so every period is
+        # compared over the same number of days (the full lists stay for the chart).
+        elapsed = [len(d) for p, d in zip(periods, dailies) if p.end > today]
+        if elapsed:
+            n = min(elapsed)
+            costs = [sum(d[:n]) for d in dailies]
         base_cost = costs[starts.index(baseline)]
         entries = tuple(
             ComparisonEntry(p, c, d, p.end > today, c - base_cost,
@@ -660,7 +693,7 @@ class QueryService:
         return Comparison(mode, baseline, entries, max(p.days for p in periods))
 
     def _today(self, now: datetime) -> date:
-        return now.astimezone(self._tz).date() if self._tz else now.date()
+        return today(now, self._tz)
 
     def price_table(self) -> list[PriceRow]:
         """The price table in effect (defaults plus config overrides), $ per million tokens."""
@@ -745,10 +778,10 @@ class QueryService:
 
     def _request_rows(self) -> list:
         return self._conn.execute(
-            "SELECT COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id AS agent, "
+            f"SELECT {SESSION_ID_SQL} AS sid, a.agent_id AS agent, "
             "r.ts_epoch AS ts, r.cost_input, r.cost_output, r.cost_cache_write_5m, "
             "r.cost_cache_write_1h, r.cost_cache_read "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id").fetchall()
 
     def _summary(self, defn, members: frozenset[str], rows: list) -> SpotlightSummary:
@@ -894,12 +927,12 @@ class QueryService:
     # Explore (ticket #11): the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
-        return explore.run(self._conn, self._local_day, spec)
+        return explore.run(self._conn, self._local_day, spec, self.findings)
 
     def explore_requests(self, spec: explore.ExploreSpec) -> list[explore.ExploreRequest]:
         """The individual requests of the slice, oldest first."""
-        return explore.requests(self._conn, self._local_day, spec)
+        return explore.requests(self._conn, self._local_day, spec, self.findings)
 
     def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
         """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit)
+        return explore.options(self._conn, limit, self.findings)

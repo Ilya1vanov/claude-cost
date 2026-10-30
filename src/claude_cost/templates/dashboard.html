@@ -60,6 +60,15 @@
       <td>{{ r.summary.first_activity }}</td><td>{{ r.summary.last_activity }}</td></tr>
     {% else %}<tr><td colspan="5">No Spotlight spend in this period</td></tr>{% endfor %}
   </table>
+  <h3>Top findings</h3>
+  <p><a href="{{ url_for('findings') }}">All Drains and Opportunities</a>. Findings overlap, so their figures are never added up.</p>
+  <table id="top-findings">
+    <tr><th>Finding</th><th>Kind</th><th>Attributed</th><th>Avoidable (lower bound)</th><th>Requests</th></tr>
+    {% for f in top_findings %}<tr><td><a href="{{ url_for('finding_detail', finding_id=f.id) }}">{{ f.title }}</a></td>
+      <td>{{ f.kind }}</td><td>${{ "%.2f"|format(f.attributed) }}</td>
+      <td>{% if f.avoidable is none %}n/a{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</td><td>{{ f.requests|length }}</td></tr>
+    {% else %}<tr><td colspan="5">No findings in this period</td></tr>{% endfor %}
+  </table>
   <div style="max-width:900px"><canvas id="daily-spend" aria-label="Daily spend"></canvas></div>
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>

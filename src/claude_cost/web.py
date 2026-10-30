@@ -1,13 +1,15 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 from flask import Flask, Response, abort, redirect, render_template, request, url_for
 
 from . import explore
+from .cache import COLD
 from .explore import ExploreSpec
+from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 from .spotlights import SpotlightError
@@ -15,14 +17,13 @@ from .spotlights import SpotlightError
 DASHBOARD_DAYS = 30
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
 REQUEST_ROWS = 1000
-STALE_AFTER_SECONDS = 60
 
 
 def create_app(service_factory: Callable[[], QueryService],
                now: Callable[[], datetime],
                refresh: Callable[[], object] | None = None, top_n: int = 10) -> Flask:
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
-    last ingest is older than 60 s, and on POST /refresh (the Refresh button)."""
+    last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
 
     @app.post("/refresh")
@@ -41,7 +42,7 @@ def create_app(service_factory: Callable[[], QueryService],
         include_today = request.args.getlist("include_today")[-1:] != ["0"]
         if refresh:
             last = service.last_ingest_epoch()
-            if last is None or now().timestamp() - last > STALE_AFTER_SECONDS:
+            if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
         today = now().date()
@@ -56,6 +57,7 @@ def create_app(service_factory: Callable[[], QueryService],
             include_today=include_today,
             unpriced=service.unpriced_models(),
             spotlights=service.top_spotlights(mode, now(), include_today, top_n),
+            top_findings=service.top_findings(mode, now(), include_today, top_n),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
 
@@ -81,9 +83,10 @@ def create_app(service_factory: Callable[[], QueryService],
 
     def _since_arg():
         try:
-            return date.fromisoformat(request.args["since"]) if request.args.get("since") else None
+            text = request.args.get("since")
+            return parse_since(text, now().date()) if text else None
         except ValueError:
-            abort(400, "since must be a date like 2026-10-01")
+            abort(400, "since must be a date like 2026-10-01 or days like 7d")
 
     @app.get("/compare")
     def compare():
@@ -182,7 +185,7 @@ def create_app(service_factory: Callable[[], QueryService],
         service = service_factory()
         if refresh:
             last = service.last_ingest_epoch()
-            if last is None or now().timestamp() - last > STALE_AFTER_SECONDS:
+            if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
                 service = service_factory()
         return service
@@ -232,14 +235,15 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")
     def session_timeline(session_id: str, agent_id: str | None = None):
-        timeline = service_factory().session_timeline(session_id, agent_id)
+        service = service_factory()
+        timeline = service.session_timeline(session_id, agent_id)
         if timeline is None:
             abort(404)
-        chart = {"labels": [datetime.fromtimestamp(p.ts, timezone.utc).strftime("%H:%M:%S")
+        chart = {"labels": [service.local_time(p.ts).strftime("%H:%M:%S")
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
                  "cost": [round(p.cost, 4) for p in timeline.points],
-                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == "cold"],
+                 "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == COLD],
                  "idle": [i for i, p in enumerate(timeline.points) if p.idle],
                  "threshold": [p.threshold for p in timeline.points],
                  "over": [i for i, p in enumerate(timeline.points)
@@ -247,7 +251,6 @@ def create_app(service_factory: Callable[[], QueryService],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,
-                               when=lambda ts: datetime.fromtimestamp(ts, timezone.utc)
-                               .strftime("%Y-%m-%d %H:%M:%S UTC"))
+                               when=lambda ts: service.local_time(ts).strftime("%Y-%m-%d %H:%M:%S %Z"))
 
     return app

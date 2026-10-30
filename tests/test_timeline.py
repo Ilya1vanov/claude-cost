@@ -55,3 +55,32 @@ def test_side_session_is_marked_and_has_its_own_timeline(root, desktop, service_
     assert (s.session_id, s.before_index, s.requests) == ("cli-b", 1, 1)
     child = svc.session_timeline("cli-b")
     assert (child.parent_session_id, child.link_kind) == ("cli-a", "side")
+
+
+def test_idle_gap_and_cold_resume_marks_follow_configured_thresholds(root, service_for):
+    _session(root)
+    t = service_for(root).session_timeline("s1")
+    assert [p.idle for p in t.points] == [False, False, True, False]
+    assert not any(p.cold_resume for p in t.points)   # 1.5K context is below the 100K default
+    t = service_for(root, thresholds={"timeline_idle_gap_seconds": 8_000,
+                                      "cold_resume_min_context": 1_000}).session_timeline("s1")
+    assert not any(p.idle for p in t.points)
+    assert [p.cold_resume for p in t.points] == [False, False, True, False]
+    t = service_for(root, thresholds={"cold_resume_min_context": 1_000,
+                                      "cold_resume_idle_minutes": 180}).session_timeline("s1")
+    assert not any(p.cold_resume for p in t.points)   # the 2h gap is under 180 minutes
+
+
+def test_session_page_shows_times_in_the_configured_time_zone(root, tmp_path):
+    from claude_cost import ingest, store
+    from claude_cost.query import QueryService
+    from claude_cost.web import create_app
+    from conftest import NOW
+    _session(root)
+    conn = store.connect(tmp_path / "tz.sqlite")
+    ingest.ingest(conn, [root.path])
+    client = create_app(lambda: QueryService(conn, "Europe/Berlin"), lambda: NOW).test_client()
+    page = client.get("/session/s1").get_data(as_text=True)
+    assert "2026-10-30 02:00:00 CET" in page          # m1 was 01:00:00Z
+    assert "2026-10-30 01:00:00 UTC" not in page
+    assert '"02:00:00"' in page                        # chart label

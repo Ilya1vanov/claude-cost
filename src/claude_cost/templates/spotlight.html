@@ -46,7 +46,7 @@
   {% if d.subagents %}
   <h2>Subagents</h2>
   <table id="spotlight-subagents">
-    <tr><th>Session</th><th>Subagent</th><th>Type</th><th>Cost</th></tr>
+    <tr><th>Session</th><th>Subagent</th><th>Subagent type</th><th>Cost</th></tr>
     {% for a in d.subagents %}<tr><td>{{ a.session_id }}</td><td>{{ a.agent_id }}{% if a.description %} ({{ a.description }}){% endif %}</td><td>{{ a.agent_type or "" }}</td><td>${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
   </table>
   {% endif %}

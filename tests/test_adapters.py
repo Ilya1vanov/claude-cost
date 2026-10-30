@@ -221,3 +221,24 @@ def test_session_timeline_page_loads(root, configure):
     assert "/session/s1/agent/a1" in page.get_data(as_text=True)
     assert client.get("/session/s1/agent/a1").status_code == 200
     assert client.get("/session/nope").status_code == 404
+
+
+def test_cli_links_desktop_sessions_from_a_store_set_on_the_data_root(root, desktop, env):
+    from pathlib import Path
+    root.write_transcript("p", "old", [req("m1", "2026-10-30T01:00:00Z", output=1_000_000)])
+    root.write_transcript("p", "new", [req("m2", "2026-10-30T02:00:00Z", output=1_000_000)])
+    desktop.write_session("a", "new", priorCliSessionIds=["old"])
+    (Path(env["CLAUDE_COST_CONFIG_DIR"]) / "config.toml").write_text(
+        f'timezone = "UTC"\ndata_roots = [{{ path = "{root.path}", '
+        f'desktop_session_store = "{desktop.path}" }}]\n')
+    cfg = cli.load_config(env)
+    assert cfg.data_roots == [root.path] and cfg.desktop_stores == [desktop.path]
+    assert cli.main(["today"], env=env, now=NOW, out=io.StringIO()) == 0
+    summaries = QueryService(store.connect(cfg.store_path), "UTC").session_summaries()
+    assert [(s.session_id, s.requests) for s in summaries] == [("old", 2)]
+    # the global setting keeps working next to per-root ones
+    other = Path(env["HOME"]) / "other-store"
+    (Path(env["CLAUDE_COST_CONFIG_DIR"]) / "config.toml").write_text(
+        f'data_roots = [{{ path = "{root.path}", desktop_session_store = "{desktop.path}" }}, "/x"]\n'
+        f'desktop_session_stores = ["{other}"]\n')
+    assert cli.load_config(env).desktop_stores == [other, desktop.path]

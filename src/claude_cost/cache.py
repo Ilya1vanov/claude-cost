@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from .sql import SESSION_ID_SQL, SESSION_JOIN
+
 TTL_5M = 5 * 60
 TTL_1H = 60 * 60
 COLD, WARM, NONE = "cold", "warm", "none"
@@ -40,9 +42,9 @@ def classify_all(conn: sqlite3.Connection) -> None:
     sessions: dict[str, list[tuple[str, float, int, int]]] = {}
     for r in conn.execute(
             "SELECT r.message_id, r.ts_epoch, r.cache_write_5m_tokens AS w5, "
-            "r.cache_write_1h_tokens AS w1, COALESCE(l.logical_session_id, r.session_id) "
+            f"r.cache_write_1h_tokens AS w1, {SESSION_ID_SQL} "
             "|| COALESCE('/' || a.agent_id, '') AS sid "  # a Subagent has its own cache
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id"):
         sessions.setdefault(r["sid"], []).append(
             (r["message_id"], r["ts_epoch"], r["w5"], r["w1"]))

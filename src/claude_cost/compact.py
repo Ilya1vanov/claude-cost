@@ -16,10 +16,12 @@ from __future__ import annotations
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Mapping
 
 from . import pricing
+from .localtime import price_day
+from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
@@ -87,13 +89,14 @@ def replay(reqs: list[_Req], threshold: int, post: int) -> float:
     return total
 
 
-def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str) -> ModelThreshold:
+def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
+         step: int = STEP) -> ModelThreshold:
     post = p75(posts)
     actual = sum(r.context * r.read_price for r in reqs)
     top = max((r.context for r in reqs), default=0)
-    lo = (post // STEP + 1) * STEP  # a threshold must be above what a compaction leaves
-    hi = max(lo, math.ceil(top / STEP) * STEP + STEP)
-    curve = tuple(CurvePoint(t, replay(reqs, t, post)) for t in range(lo, hi + 1, STEP))
+    lo = (post // step + 1) * step  # a threshold must be above what a compaction leaves
+    hi = max(lo, math.ceil(top / step) * step + step)
+    curve = tuple(CurvePoint(t, replay(reqs, t, post)) for t in range(lo, hi + 1, step))
     best = min(curve, key=lambda c: (c.cost, -c.threshold))  # tie: do not compact earlier
     sample = [r for r in reqs]
     if sample:
@@ -108,19 +111,18 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str) -> 
         actual, curve)
 
 
-def analyze(conn: sqlite3.Connection, tz=None, table=None) -> CompactAnalysis:
+def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
+            step: int = STEP) -> CompactAnalysis:
     rows = conn.execute(
-        "SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) AS sid, a.agent_id, "
-        "r.ts_epoch, r.model, r.input_tokens + r.cache_read_tokens + r.cache_write_5m_tokens "
-        "+ r.cache_write_1h_tokens AS ctx FROM requests r "
-        "LEFT JOIN session_links l ON l.stem = r.session_id "
+        f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, a.agent_id, "
+        f"r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx FROM requests r "
+        f"{SESSION_JOIN} "
         "LEFT JOIN request_surface a ON a.message_id = r.message_id "
         "ORDER BY r.ts_epoch, r.message_id").fetchall()
     reqs: list[_Req] = []
     last_model: dict[str, list[tuple[float, str]]] = {}
     for x in rows:
-        day = datetime.fromtimestamp(x["ts_epoch"], tz or timezone.utc).date()
-        p = pricing.find_price(x["model"], day, table)
+        p = pricing.find_price(x["model"], price_day(x["ts_epoch"]), table)
         if p is None:
             continue
         out_per_token = (p.output + p.input * pricing.WRITE_1H_MULT) / 1_000_000
@@ -141,13 +143,13 @@ def analyze(conn: sqlite3.Connection, tz=None, table=None) -> CompactAnalysis:
     if not all_posts:
         return CompactAnalysis((), None, stream_of)
 
-    global_ = _fit(None, reqs, all_posts, "global")
+    global_ = _fit(None, reqs, all_posts, "global", step)
     models = []
     for model, ps in sorted(posts.items()):
-        if len(ps) >= MIN_SAMPLE:
-            models.append(_fit(model, [r for r in reqs if r.model == model], ps, "model"))
+        if len(ps) >= min_sample:
+            models.append(_fit(model, [r for r in reqs if r.model == model], ps, "model", step))
         else:
-            own = _fit(model, [r for r in reqs if r.model == model], ps, "model")
+            own = _fit(model, [r for r in reqs if r.model == model], ps, "model", step)
             models.append(ModelThreshold(
                 model, global_.threshold, "global", len(ps), own.post_tokens_p75,
                 own.compaction_cost, own.payback_requests, own.actual_cost, global_.curve))

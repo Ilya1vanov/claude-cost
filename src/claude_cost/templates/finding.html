@@ -21,13 +21,7 @@
   </table>
   {% if f.subagents %}<h2>Subagents covered</h2>
   <table id="subagents">
-    <tr><th>Subagent</th><th>Session</th><th>Type</th><th>Requests</th><th>Attributed</th></tr>
-    {% for a in f.subagents %}<tr><td>{{ a.agent_id }}</td><td>{{ a.session_id }}</td><td>{{ a.agent_type or "" }}</td><td>{{ a.requests }}</td><td>${{ "%.2f"|format(a.attributed) }}</td></tr>
-    {% endfor %}
-  </table>{% endif %}
-  {% if f.subagents %}<h2>Subagents covered</h2>
-  <table id="subagents">
-    <tr><th>Subagent</th><th>Session</th><th>Type</th><th>Requests</th><th>Attributed</th></tr>
+    <tr><th>Subagent</th><th>Session</th><th>Subagent type</th><th>Requests</th><th>Attributed</th></tr>
     {% for a in f.subagents %}<tr><td>{{ a.agent_id }}</td><td>{{ a.session_id }}</td><td>{{ a.agent_type or "" }}</td><td>{{ a.requests }}</td><td>${{ "%.2f"|format(a.attributed) }}</td></tr>
     {% endfor %}
   </table>{% endif %}
