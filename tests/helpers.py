@@ -25,6 +25,7 @@ class Req:
     lines: int = 1  # streaming split: one JSONL line per content block
     session_id: str | None = None  # record sessionId; default = transcript session
     forked_from: str | None = None  # marks copied fork history: forkedFrom.sessionId
+    entrypoint: str | None = None  # record entrypoint: cli | claude-desktop | sdk-cli
     speed: str | None = None  # usage.speed ("fast"); None = key absent
     inference_geo: str | None = None  # usage.inference_geo ("us", "global"); None = absent
 
@@ -55,6 +56,8 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             "message": {"id": r.message_id, "model": r.model, "role": "assistant",
                         "content": [{"type": "text", "text": "x"}], "usage": usage},
         }
+        if r.entrypoint:
+            rec["entrypoint"] = r.entrypoint
         if r.forked_from:
             rec["forkedFrom"] = {"sessionId": r.forked_from, "messageUuid": f"{r.message_id}-u{i}"}
         out.append(rec)
@@ -87,10 +90,31 @@ class DataRoot:
         return f
 
     def write_subagent_transcript(self, project: str, session_id: str, agent_id: str,
-                                  reqs: list[Req]) -> Path:
+                                  reqs: list[Req], meta: dict | None = None) -> Path:
+        """`meta` is written to the sibling agent-<id>.meta.json (agentType, toolUseId, ...)."""
         d = self.path / "projects" / project / session_id / "subagents"
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"agent-{agent_id}.jsonl"
+        if meta is not None:
+            (d / f"agent-{agent_id}.meta.json").write_text(json.dumps(meta))
         f.write_text("\n".join(json.dumps(rec) for r in reqs
                                for rec in assistant_lines(r, session_id)) + "\n")
+        return f
+
+
+class DesktopStore:
+    """A synthetic Desktop session store directory (claude-code-sessions/<acct>/<org>/)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        path.mkdir(parents=True, exist_ok=True)
+
+    def write_session(self, desktop_id: str, cli_session_id: str | None = None, **fields) -> Path:
+        """Writes local_<desktop_id>.json; fields: priorCliSessionIds, spawnedFrom,
+        forkedFromSessionId (both refer to other `local_<id>` Desktop ids)."""
+        rec = {"sessionId": f"local_{desktop_id}", **fields}
+        if cli_session_id:
+            rec["cliSessionId"] = cli_session_id
+        f = self.path / f"local_{desktop_id}.json"
+        f.write_text(json.dumps(rec))
         return f

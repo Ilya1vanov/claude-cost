@@ -28,7 +28,7 @@ def test_first_run_creates_commented_defaults(env, root):
     assert code == 0
     text = cfg_file(env).read_text()
     assert tomllib.loads(text) == {}  # every default is commented out
-    for key in ("data_roots", "port", "top_n", "timezone"):
+    for key in ("data_roots", "port", "top_n", "timezone", "desktop_session_stores"):
         assert f"# {key} = " in text
 
 
@@ -46,7 +46,7 @@ def test_config_prints_value_default_and_source(env):
     code, out, _ = run(["config"], env)
     assert code == 0
     lines = {l.split(" = ")[0]: l for l in out.splitlines()}
-    assert {"data_roots", "port", "top_n", "timezone", "prices"} <= set(lines)  # plus finding thresholds
+    assert {"data_roots", "port", "top_n", "timezone", "prices", "desktop_session_stores"} <= set(lines)  # plus finding thresholds
     assert "port = 9000  (default: 8765, source: config)" in lines["port"]
     assert "top_n = 10  (default: 10, source: default)" in lines["top_n"]
     assert "source: default" in lines["data_roots"] and "~/.claude" in lines["data_roots"]

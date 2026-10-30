@@ -78,6 +78,44 @@ CREATE TABLE IF NOT EXISTS request_attrs (
   inference_geo TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pricing_state (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT);
+-- Surface and Subagent attribution (ticket #7). copy_surface: the Surface of each copy;
+-- request_surface: the owner copy's Surface, and the Subagent that made the request (if any;
+-- then requests.session_id is its parent Session).
+CREATE TABLE IF NOT EXISTS copy_surface (
+  path TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  PRIMARY KEY (path, message_id)
+);
+CREATE TABLE IF NOT EXISTS request_surface (
+  message_id TEXT PRIMARY KEY,
+  surface TEXT NOT NULL,
+  agent_id TEXT
+);
+-- one row per Subagent transcript (its ingest_files.file_stem is the parent Session's stem)
+CREATE TABLE IF NOT EXISTS subagent_files (
+  path TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  agent_type TEXT,
+  is_fork INTEGER NOT NULL,
+  tool_use_id TEXT,
+  parent_agent_id TEXT,
+  description TEXT
+);
+-- Desktop session store records: CLI session ids (current first, then priorCliSessionIds)
+-- and the parent Desktop session of a Side session ('side') or Fork ('fork')
+CREATE TABLE IF NOT EXISTS desktop_sessions (
+  desktop_id TEXT PRIMARY KEY,
+  cli_ids TEXT NOT NULL,
+  parent_id TEXT,
+  kind TEXT
+);
+-- Side session / Fork links resolved to transcript stems
+CREATE TABLE IF NOT EXISTS session_relations (
+  child_stem TEXT PRIMARY KEY,
+  parent_stem TEXT NOT NULL,
+  kind TEXT NOT NULL
+);
 """
 
 

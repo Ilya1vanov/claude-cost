@@ -1,4 +1,7 @@
-"""Ingest: reads main transcripts of each Data root into the store.
+"""Ingest: reads main and Subagent transcripts of each Data root into the store.
+
+A Subagent transcript is ingested like a main one but belongs to its parent Session
+(its `file_stem` is the parent's stem); `subagent_files` marks it and holds its metadata.
 
 Incremental: each transcript is read only from the byte offset where the last run
 stopped (complete lines only). Every copy of a Request is kept in `request_copies`, and the
@@ -24,6 +27,18 @@ def _parse_ts(value: str) -> datetime:
 
 
 RETENTION_DAYS = 60
+
+_SURFACES = {"cli": "CLI", "claude-desktop": "Desktop", "sdk-cli": "SDK"}
+
+
+def surface_of(entrypoint: object) -> str:
+    """Map a record's `entrypoint` to a Surface; anything unrecognised is "Other"."""
+    if isinstance(entrypoint, str):
+        if entrypoint in _SURFACES:
+            return _SURFACES[entrypoint]
+        if entrypoint.startswith("sdk"):
+            return "SDK"
+    return "Other"
 
 
 @dataclass
@@ -90,6 +105,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             "cache_read": usage.get("cache_read_input_tokens") or 0,
             "write_5m": w5m,
             "write_1h": w1h,
+            "surface": surface_of(rec.get("entrypoint")),
             "speed": usage.get("speed") or "standard",
             "inference_geo": usage.get("inference_geo") or "",
         }
@@ -117,6 +133,8 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
              1 if r["is_copy"] else 0))
         conn.execute("INSERT OR IGNORE INTO request_attrs VALUES (?,?,?)",
                      (mid, r["speed"], r["inference_geo"]))
+        conn.execute("INSERT OR IGNORE INTO copy_surface VALUES (?,?,?)",
+                     (str(path), mid, r["surface"]))
 
 
 def _epoch_dt(epoch: float) -> datetime:
@@ -127,8 +145,11 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
     """(Re)decide the owner of each message id from all kept copies and upsert the Request."""
     for mid in mids:
         rows = conn.execute(
-            "SELECT c.*, f.data_root, f.project, f.file_stem, f.first_ts_epoch, f.relocated "
+            "SELECT c.*, f.data_root, f.project, f.file_stem, f.first_ts_epoch, f.relocated, "
+            "s.agent_id, cs.surface "
             "FROM request_copies c JOIN ingest_files f ON f.path = c.path "
+            "LEFT JOIN subagent_files s ON s.path = c.path "
+            "LEFT JOIN copy_surface cs ON cs.path = c.path AND cs.message_id = c.message_id "
             "WHERE c.message_id = ?", (mid,)).fetchall()
         if not rows:
             continue
@@ -137,6 +158,8 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
             "file_first_ts": _epoch_dt(row["first_ts_epoch"]), "root": row["data_root"],
             "project": row["project"], "is_copy": bool(row["is_copy"]),
             "relocated": bool(row["relocated"]),
+            "is_subagent": row["agent_id"] is not None, "agent_id": row["agent_id"],
+            "surface": row["surface"] or "Other",
             "req": {"session_id": row["session_id"], "ts": _epoch_dt(row["ts_epoch"]),
                     "model": row["model"], "input": row["input_tokens"],
                     "output": row["output_tokens"], "cache_read": row["cache_read_tokens"],
@@ -154,6 +177,8 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
             inference_geo=attrs["inference_geo"] if attrs else None, table=table,
         )
         c = cost or pricing.CostComponents()
+        conn.execute("INSERT OR REPLACE INTO request_surface VALUES (?,?,?)",
+                     (mid, owner["surface"], owner["agent_id"]))
         conn.execute(
             "INSERT OR REPLACE INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (mid, owner["root"], owner["project"], owner["file_stem"],
@@ -211,6 +236,49 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
         conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
 
 
+def _store_desktop(conn: sqlite3.Connection, stores: list[Path]) -> None:
+    """Replace the kept Desktop session records with those found in `stores`."""
+    conn.execute("DELETE FROM desktop_sessions")
+    for store in stores:
+        for rec in sources.desktop_sessions(store):
+            ids = [rec["cliSessionId"]] if isinstance(rec.get("cliSessionId"), str) else []
+            prior = rec.get("priorCliSessionIds")
+            if isinstance(prior, list):
+                ids += [i for i in prior if isinstance(i, str)]
+            spawned = rec.get("spawnedFrom")
+            if isinstance(spawned, dict):
+                parent, kind = spawned.get("sessionId"), "side"
+            else:
+                parent, kind = rec.get("forkedFromSessionId"), "fork"
+            conn.execute("INSERT OR REPLACE INTO desktop_sessions VALUES (?,?,?,?)",
+                         (rec["sessionId"], json.dumps(ids),
+                          parent if isinstance(parent, str) else None,
+                          kind if isinstance(parent, str) else None))
+
+
+def _desktop_links(conn: sqlite3.Connection, known: set[str]):
+    """From the kept Desktop records: (stem pairs of one Desktop session, {child: (parent, kind)}).
+
+    `priorCliSessionIds` are earlier transcripts of the same Desktop session. A Side session
+    (`spawnedFrom`) or Fork (`forkedFromSessionId`) names a parent Desktop session, resolved
+    to the first of its CLI session ids that has a transcript. Unresolvable ends stay unlinked.
+    """
+    ids = {row["desktop_id"]: json.loads(row["cli_ids"])
+           for row in conn.execute("SELECT desktop_id, cli_ids FROM desktop_sessions")}
+    group = {(v[0], other) for v in ids.values() for other in v[1:]}
+
+    def resolve(desktop_id: object) -> str | None:
+        return next((i for i in ids.get(desktop_id, []) if i in known), None)  # type: ignore[call-overload]
+
+    relations: dict[str, tuple[str, str]] = {}
+    for row in conn.execute("SELECT desktop_id, parent_id, kind FROM desktop_sessions "
+                            "WHERE parent_id IS NOT NULL ORDER BY desktop_id"):
+        child, parent = resolve(row["desktop_id"]), resolve(row["parent_id"])
+        if child and parent and child != parent:
+            relations[child] = (parent, row["kind"])
+    return group, relations
+
+
 def _regroup_sessions(conn: sqlite3.Connection) -> None:
     """Rebuild `session_links` from every transcript ever read (vanished ones included)."""
     first_ts: dict[str, datetime] = {}
@@ -221,9 +289,13 @@ def _regroup_sessions(conn: sqlite3.Connection) -> None:
     links = {(row["stem"], row["other"]) for row in conn.execute(
         "SELECT f.file_stem AS stem, l.other FROM transcript_links l "
         "JOIN ingest_files f ON f.path = l.path")}
+    group_pairs, relations = _desktop_links(conn, set(first_ts))
     conn.execute("DELETE FROM session_links")
     conn.executemany("INSERT INTO session_links VALUES (?,?)",
-                     _group_sessions(first_ts, links).items())
+                     _group_sessions(first_ts, links | group_pairs).items())
+    conn.execute("DELETE FROM session_relations")
+    conn.executemany("INSERT INTO session_relations VALUES (?,?,?)",
+                     [(c, p, k) for c, (p, k) in relations.items()])
 
 
 def is_first_run(conn: sqlite3.Connection) -> bool:
@@ -260,9 +332,28 @@ def retention_warnings(roots: list[Path]) -> list[str]:
     return warnings
 
 
+def _transcripts(root: Path) -> list[tuple[Path, str, str, dict | None]]:
+    """(path, project, session stem, subagent metadata or None) for main and Subagent transcripts."""
+    out: list[tuple[Path, str, str, dict | None]] = [
+        (p, p.parent.name, p.stem, None) for p in sources.main_transcripts(root)]
+    out += [(s.path, s.project, s.session_stem, {"agent_id": s.agent_id, **s.meta})
+            for s in sources.subagent_transcripts(root)]
+    return out
+
+
+def _str(meta: dict, key: str) -> str | None:
+    return meta[key] if isinstance(meta.get(key), str) else None
+
+
 def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False,
-           now: datetime | None = None, price_table: dict | None = None) -> int:
-    """Ingest all Data roots; returns the number of Requests in the store afterwards."""
+           now: datetime | None = None, price_table: dict | None = None,
+           desktop_stores: list[Path] | None = None) -> int:
+    """Ingest all Data roots; returns the number of Requests in the store afterwards.
+
+    `desktop_stores` are Desktop session store folders (scanned recursively) that link Side
+    sessions, Forks and earlier transcripts of the same Desktop session. A list replaces
+    the kept Desktop records (empty = no Desktop links); None leaves them as they are.
+    """
     price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
@@ -271,7 +362,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         if rebuild:
             # Forget what we read from files that still exist; copies from vanished
             # transcripts are history and stay. Requests are recomputed below.
-            existing = {str(p) for root in roots for p in sources.main_transcripts(root)}
+            existing = {str(t[0]) for root in roots for t in _transcripts(root)}
             for (path,) in conn.execute("SELECT path FROM ingest_files").fetchall():
                 if path in existing:
                     for table in ("request_copies", "transcript_links", "ingest_files"):
@@ -279,7 +370,14 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             touched.update(r[0] for r in conn.execute(
                 "SELECT message_id FROM requests").fetchall())
         for root in roots:
-            for path in sources.main_transcripts(root):
+            for path, project, stem, sub in _transcripts(root):
+                if sub is not None:  # Subagent metadata may be written after the transcript
+                    conn.execute(
+                        "INSERT OR REPLACE INTO subagent_files VALUES (?,?,?,?,?,?,?)",
+                        (str(path), sub["agent_id"], _str(sub, "agentType"),
+                         1 if sub.get("isFork") is True or sub.get("agentType") == "fork" else 0,
+                         _str(sub, "toolUseId"), _str(sub, "parentAgentId"),
+                         _str(sub, "description")))
                 row = conn.execute("SELECT offset FROM ingest_files WHERE path = ?",
                                    (str(path),)).fetchone()
                 offset = row["offset"] if row else 0
@@ -291,7 +389,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 if row and new_offset == offset:
                     continue
                 changed = True
-                parsed = _parse_lines(lines, path.stem)
+                parsed = _parse_lines(lines, stem)
                 first = min((r["ts"].timestamp() for r in parsed.reqs.values()), default=None)
                 conn.execute(
                     "INSERT INTO ingest_files VALUES (?,?,?,?,?,?,?) "
@@ -300,7 +398,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                     "first_ts_epoch = CASE WHEN first_ts_epoch IS NULL THEN excluded.first_ts_epoch "
                     "WHEN excluded.first_ts_epoch IS NULL THEN first_ts_epoch "
                     "ELSE MIN(first_ts_epoch, excluded.first_ts_epoch) END",
-                    (str(path), str(root), path.parent.name, path.stem, new_offset, first,
+                    (str(path), str(root), project, stem, new_offset, first,
                      1 if parsed.relocated else 0))
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
@@ -312,8 +410,10 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         # A file with no requests yet has no first_ts; it has no copies either, so the
         # join in _recompute never sees it.
         _recompute(conn, sorted(touched), price_table)
+        if desktop_stores is not None:
+            _store_desktop(conn, desktop_stores)
         _regroup_sessions(conn)
-        if changed or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
+        if changed or desktop_stores is not None or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))

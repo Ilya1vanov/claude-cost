@@ -36,12 +36,14 @@ def classify_session(requests: list[tuple[str, float, int, int]]) -> dict[str, s
 
 
 def classify_all(conn: sqlite3.Connection) -> None:
-    """Recompute `request_cache` for every request, grouped by logical Session."""
+    """Recompute `request_cache` for every request, grouped by logical Session (a Subagent separately)."""
     sessions: dict[str, list[tuple[str, float, int, int]]] = {}
     for r in conn.execute(
             "SELECT r.message_id, r.ts_epoch, r.cache_write_5m_tokens AS w5, "
-            "r.cache_write_1h_tokens AS w1, COALESCE(l.logical_session_id, r.session_id) AS sid "
-            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id"):
+            "r.cache_write_1h_tokens AS w1, COALESCE(l.logical_session_id, r.session_id) "
+            "|| COALESCE('/' || a.agent_id, '') AS sid "  # a Subagent has its own cache
+            "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+            "LEFT JOIN request_surface a ON a.message_id = r.message_id"):
         sessions.setdefault(r["sid"], []).append(
             (r["message_id"], r["ts_epoch"], r["w5"], r["w1"]))
     rows = [(mid, ev) for reqs in sessions.values()
