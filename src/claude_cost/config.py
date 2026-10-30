@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .findings import all_thresholds
+
 DEFAULT_PORT = 8765
 DEFAULT_TOP_N = 10
 
@@ -32,6 +34,7 @@ class Config:
     top_n: int = DEFAULT_TOP_N
     prices: dict[str, dict[str, float]] = field(default_factory=dict)  # model -> price override
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
+    thresholds: dict[str, int] = field(default_factory=dict)  # finding thresholds in effect
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,11 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             _coerce_prices, _parse_prices),
 ]}
 
+# Finding thresholds: declared by each finding module (findings/*.py), exposed here as settings.
+for _t in all_thresholds().values():
+    SETTINGS[_t.name] = Setting(_t.name, _t.doc, _t.default, str(_t.default), str(_t.default),
+                                _int_in(_t.name, _t.minimum), _parse_int(_t.name))
+
 
 def config_path_for(env: Mapping[str, str]) -> Path:
     home = Path(env.get("HOME", str(Path.home())))
@@ -179,6 +187,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         top_n=values["top_n"],
         prices=values["prices"] or {},
         sources=sources,
+        thresholds={n: values[n] for n in all_thresholds()},
     )
 
 

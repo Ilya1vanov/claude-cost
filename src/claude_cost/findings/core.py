@@ -1,0 +1,193 @@
+"""Findings framework: Drains and Opportunities.
+
+A finding is a `FindingDef`: an id, a kind, a formula text, optional thresholds and a
+`detect(ctx)` function that returns the requests it covers (and each one's avoidable $).
+The framework turns that into a `Finding` with Attributed spend, Avoidable spend (clamped
+at $0, a lower bound) and the Sessions and Requests it covers. See conventions.md.
+"""
+from __future__ import annotations
+
+import sqlite3
+import statistics
+from dataclasses import dataclass, field
+from datetime import date, datetime, tzinfo
+from typing import Callable, Mapping
+
+from .. import pricing
+
+DRAIN, OPPORTUNITY = "drain", "opportunity"
+NOT_ADDITIVE_NOTE = ("Avoidable figures are lower bounds and are not additive: findings overlap, "
+                     "so they are never summed.")
+
+
+@dataclass(frozen=True)
+class Threshold:
+    """A configurable number. Becomes a config.toml setting of the same name automatically."""
+    name: str  # e.g. "cold_resume_idle_minutes"
+    default: int
+    doc: str
+    minimum: int = 0
+
+
+@dataclass(frozen=True)
+class RequestRow:
+    """One Request with everything detectors need. `gap` = seconds since the previous
+    request of the same logical Session (None for its first request)."""
+    message_id: str
+    session_id: str  # logical Session
+    project: str
+    ts: float
+    day: date  # local day
+    model: str
+    input: int
+    output: int
+    cache_read: int
+    write_5m: int
+    write_1h: int
+    cost: float
+    write_cost: float
+    cache_event: str  # cold | warm | none
+    speed: str | None
+    inference_geo: str | None
+    gap: float | None
+    in_period: bool
+
+    @property
+    def context(self) -> int:
+        return self.input + self.cache_read + self.write_5m + self.write_1h
+
+
+@dataclass(frozen=True)
+class Covered:
+    """A request a finding covers; `avoidable` is its raw avoidable $ (may be negative)."""
+    message_id: str
+    avoidable: float | None = None
+
+
+@dataclass(frozen=True)
+class Detection:
+    covered: list[Covered]
+    detail: str = ""  # measured inputs to the formula, e.g. "median first context 12,000"
+
+
+@dataclass(frozen=True)
+class FindingDef:
+    id: str  # unique, URL-safe: "cold-resume"
+    kind: str  # DRAIN | OPPORTUNITY
+    title: str
+    description: str
+    formula: str | None  # None = Attributed spend only (no avoidable figure)
+    detect: Callable[["FindingContext"], Detection]
+    thresholds: tuple[Threshold, ...] = ()
+
+
+@dataclass(frozen=True)
+class SessionCoverage:
+    session_id: str
+    attributed: float
+    avoidable: float | None  # clamped at 0
+    requests: int
+
+
+@dataclass(frozen=True)
+class CoveredRequest:
+    message_id: str
+    session_id: str
+    project: str
+    ts: float
+    model: str
+    cost: float
+    avoidable: float | None  # raw, may be negative
+
+
+@dataclass(frozen=True)
+class Finding:
+    id: str
+    kind: str
+    title: str
+    description: str
+    formula: str | None
+    detail: str
+    attributed: float
+    avoidable: float | None  # lower bound, never below 0; None = not estimated
+    sessions: tuple[SessionCoverage, ...]
+    requests: tuple[CoveredRequest, ...]
+
+
+class FindingContext:
+    """What a detector sees: every request (`rows`), thresholds, prices and the time zone."""
+
+    def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
+                 defs: Mapping[str, Threshold], price_table: Mapping | None):
+        self.rows = rows
+        self.price_table = price_table
+        self._thresholds, self._defs = thresholds, defs
+
+    def threshold(self, name: str) -> int:
+        return self._thresholds.get(name, self._defs[name].default)
+
+    @property
+    def period_rows(self) -> list[RequestRow]:
+        return [r for r in self.rows if r.in_period]
+
+    def price(self, model: str, r: RequestRow) -> pricing.CostComponents | None:
+        """What `r`'s tokens would cost on `model` (same date, speed and region)."""
+        return pricing.price_request(
+            model, r.day, input=r.input, output=r.output, cache_read=r.cache_read,
+            write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
+            inference_geo=r.inference_geo, table=self.price_table)
+
+    def median_first_context(self) -> float:
+        """Median context of the first request of every Session (all history)."""
+        firsts = [r.context for r in self.rows if r.gap is None]
+        return statistics.median(firsts) if firsts else 0.0
+
+
+def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
+              hi: float | None) -> list[RequestRow]:
+    """All requests, oldest first, with session gaps. `lo`/`hi` only set `in_period`."""
+    sql = ("SELECT r.message_id, COALESCE(l.logical_session_id, r.session_id) AS sid, "
+           "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
+           "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
+           "r.cost_input + r.cost_output + r.cost_cache_write_5m + r.cost_cache_write_1h "
+           "+ r.cost_cache_read AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
+           "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo "
+           "FROM requests r LEFT JOIN session_links l ON l.stem = r.session_id "
+           "LEFT JOIN request_cache c ON c.message_id = r.message_id "
+           "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
+           "ORDER BY r.ts_epoch, r.message_id")
+    prev: dict[str, float] = {}
+    out = []
+    for x in conn.execute(sql):
+        ts = x["ts_epoch"]
+        gap = ts - prev[x["sid"]] if x["sid"] in prev else None
+        prev[x["sid"]] = ts
+        out.append(RequestRow(
+            x["message_id"], x["sid"], x["project"], ts, datetime.fromtimestamp(ts, tz).date(),
+            x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
+            x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
+            x["inference_geo"] or None, gap,
+            (lo is None or ts >= lo) and (hi is None or ts < hi)))
+    return out
+
+
+def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow]) -> Finding:
+    """Attributed = measured cost of covered requests; avoidable = max(0, sum), a lower bound."""
+    covered = [(rows[c.message_id], c) for c in det.covered]
+    by_session: dict[str, list] = {}
+    for r, c in covered:
+        by_session.setdefault(r.session_id, []).append((r, c))
+    has_avoidable = d.formula is not None
+    sessions = tuple(sorted(
+        (SessionCoverage(sid, sum(r.cost for r, _ in rc),
+                         max(0.0, sum(c.avoidable or 0.0 for _, c in rc)) if has_avoidable else None,
+                         len(rc)) for sid, rc in by_session.items()),
+        key=lambda s: (-s.attributed, s.session_id)))
+    requests = tuple(CoveredRequest(r.message_id, r.session_id, r.project, r.ts, r.model, r.cost,
+                                    c.avoidable if has_avoidable else None)
+                     for r, c in sorted(covered, key=lambda rc: (rc[0].ts, rc[0].message_id)))
+    return Finding(
+        d.id, d.kind, d.title, d.description, d.formula, det.detail,
+        sum(r.cost for r, _ in covered),
+        max(0.0, sum(c.avoidable or 0.0 for _, c in covered)) if has_avoidable else None,
+        sessions, requests)

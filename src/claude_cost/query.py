@@ -7,6 +7,7 @@ import calendar
 from datetime import date, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo
 
+from . import findings as findings_mod
 from . import pricing
 
 COST_SQL = ("cost_input + cost_output + cost_cache_write_5m "
@@ -176,8 +177,9 @@ class PriceRow:
 
 class QueryService:
     def __init__(self, conn: sqlite3.Connection, timezone: str | None = None,
-                 price_table: dict | None = None):
+                 price_table: dict | None = None, thresholds: dict[str, int] | None = None):
         self._conn = conn
+        self._thresholds = thresholds or {}
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
 
@@ -300,6 +302,23 @@ class QueryService:
             out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
         return sorted(out, key=lambda e: e.event)
 
+
+    def findings(self, since: date | None = None) -> list[findings_mod.Finding]:
+        """Every Drain, then every Opportunity, over requests from local day `since` on
+        (all history when None). Findings overlap: never sum their avoidable figures."""
+        lo = datetime.combine(since, time.min, self._tz).timestamp() if since else None
+        rows = findings_mod.load_rows(self._conn, self._tz, lo, None)
+        by_id = {r.message_id: r for r in rows}
+        defs = findings_mod.all_findings()
+        ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
+                                          self._table)
+        return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
+
+    def finding(self, finding_id: str, since: date | None = None) -> findings_mod.Finding:
+        for f in self.findings(since):
+            if f.id == finding_id:
+                return f
+        raise KeyError(finding_id)
 
     def available_periods(self, mode: str, now: datetime) -> list[date]:
         """Start dates of every calendar period from the first request to now, newest first."""

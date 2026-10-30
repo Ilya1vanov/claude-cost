@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,7 @@ from . import pricing
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
+from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
@@ -28,7 +29,42 @@ def _now(config: Config) -> datetime:
 
 def _open(config: Config) -> QueryService:
     return QueryService(store.connect(config.store_path), config.timezone,
-                        price_table=pricing.build_table(config.prices))
+                        price_table=pricing.build_table(config.prices),
+                        thresholds=config.thresholds)
+
+
+def parse_since(text: str, today: date) -> date:
+    """`--since` value: an ISO date (2026-10-01) or a number of days back (7d)."""
+    try:
+        if text.endswith("d"):
+            return today - timedelta(days=int(text[:-1]))
+        return date.fromisoformat(text)
+    except ValueError:
+        raise ConfigError(f"--since must be a date like 2026-10-01 or days like 7d, got {text!r}") from None
+
+
+def format_findings(findings) -> str:
+    """Drains then Opportunities; avoidable is per finding, never totalled."""
+    lines = []
+    for kind, heading in ((DRAIN, "Drains"), (OPPORTUNITY, "Opportunities")):
+        lines.append(f"{heading}:")
+        group = [f for f in findings if f.kind == kind]
+        for f in group:
+            avoid = "n/a" if f.avoidable is None else f"${f.avoidable:.2f}"
+            lines.append(f"  {f.title}: attributed ${f.attributed:.2f}, avoidable {avoid} "
+                         f"({len(f.requests)} requests, {len(f.sessions)} sessions)")
+            if f.formula:
+                lines.append(f"    {f.formula}" + (f" [{f.detail}]" if f.detail else ""))
+        if not group:
+            lines.append("  none")
+    lines.append(NOT_ADDITIVE_NOTE)
+    return "\n".join(lines)
+
+
+def cmd_drains(config: Config, now: datetime, out, err, since: str | None) -> int:
+    svc = _service(config, now, err)
+    print(format_findings(svc.findings(parse_since(since, now.date()) if since else None)), file=out)
+    return 0
 
 
 def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> int:
@@ -152,6 +188,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("today", help="print today's spend")
     sub.add_parser("week", help="print this calendar week's spend compared with the previous week")
+    p_drains = sub.add_parser("drains", help="list findings: Drains and Opportunities")
+    p_drains.add_argument("--since", help="only requests from this date (2026-10-01) or N days back (7d)")
     sub.add_parser("prices", help="list the price table in effect and unpriced models")
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
@@ -183,6 +221,12 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         return cmd_week(config, now_fn(), out, err)
     if args.command == "prices":
         return cmd_prices(config, now_fn(), out, err)
+    if args.command == "drains":
+        try:
+            return cmd_drains(config, now_fn(), out, err, args.since)
+        except ConfigError as e:
+            print(f"claude-cost: {e}", file=err)
+            return 2
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)

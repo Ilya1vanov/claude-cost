@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>claude-cost: {{ f.title }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+  <h1>{{ f.title }} <small>({{ f.kind }})</small></h1>
+  <p><a href="{{ url_for('findings', since=since.isoformat() if since) }}">All findings</a></p>
+  <p>{{ f.description }}</p>
+  <p>Attributed spend: <strong>${{ "%.2f"|format(f.attributed) }}</strong>
+    | Avoidable spend (lower bound): <strong>{% if f.avoidable is none %}not estimated{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</strong></p>
+  {% if f.formula %}<p>Formula: {{ f.formula }}{% if f.detail %} <small>({{ f.detail }})</small>{% endif %}</p>{% endif %}
+  <p><em>{{ note }}</em></p>
+  <h2>Sessions covered</h2>
+  <table id="sessions">
+    <tr><th>Session</th><th>Requests</th><th>Attributed</th>{% if f.formula %}<th>Avoidable</th>{% endif %}</tr>
+    {% for s in f.sessions %}<tr><td>{{ s.session_id }}</td><td>{{ s.requests }}</td><td>${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td>${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
+    {% else %}<tr><td colspan="4">None</td></tr>{% endfor %}
+  </table>
+  <h2>Requests covered</h2>
+  <table id="requests">
+    <tr><th>Request</th><th>Session</th><th>Model</th><th>Cost</th>{% if f.formula %}<th>Avoidable (before $0 floor)</th>{% endif %}</tr>
+    {% for r in f.requests %}<tr><td>{{ r.message_id }}</td><td>{{ r.session_id }}</td><td>{{ r.model }}</td><td>${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td>{{ "%.2f"|format(r.avoidable) }}</td>{% endif %}</tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
