@@ -62,6 +62,11 @@ class Dimension:
                 out.setdefault(mid, []).append(value)
         return out
 
+    def load_with(self, conn: sqlite3.Connection,
+                  findings: Callable[[], list] | None) -> dict[str, list[str]]:
+        """`load`, for dimensions that also need the findings (`findings()` -> list[Finding])."""
+        return self.load(conn)
+
     def parts(self, item: Item, data: dict[str, list[str]]) -> list[Part]:
         return [(v, None) for v in data.get(item.message_id) or [self.missing]]
 
@@ -130,6 +135,22 @@ class CacheEventDimension(SplitDimension):
         return out
 
 
+class FindingDimension(Dimension):
+    """Requests a Drain or Opportunity covers; the value is the finding's title."""
+    overlapping = True
+
+    def __init__(self, key: str, label: str, kind: str):
+        self.key, self.label, self.kind = key, label, kind
+
+    def load_with(self, conn, findings):
+        out: dict[str, list[str]] = {}
+        for f in findings() if findings else []:
+            if f.kind == self.kind:
+                for r in f.requests:
+                    out.setdefault(r.message_id, []).append(f.title)
+        return out
+
+
 def _scalar(key: str, label: str, sql: str, **attrs) -> Dimension:
     return type(f"{key}_dimension", (Dimension,), {"key": key, "label": label, "sql": sql, **attrs})()
 
@@ -167,6 +188,8 @@ for _d in (
     _scalar("speed", "Speed", "SELECT message_id, speed FROM request_attrs"),
     ComponentDimension(),
     CacheEventDimension(),
+    FindingDimension("drain", "Drain", "drain"),
+    FindingDimension("opportunity", "Opportunity", "opportunity"),
     _scalar("tool", "Tool", "SELECT message_id, tool FROM request_tools", overlapping=True),
     _scalar("skill", "Skill", "SELECT message_id, skill FROM request_skills", overlapping=True),
 ):
@@ -248,10 +271,10 @@ def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list
                                   "ORDER BY ts_epoch, message_id")]
 
 
-def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = ()):
+def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), findings=None):
     """Items left by the filters, and the loaded data of every dimension used."""
     used = {spec.group, *spec.filters, *extra}
-    data = {k: DIMENSIONS[k].load(conn) for k in used}
+    data = {k: DIMENSIONS[k].load_with(conn, findings) for k in used}
     items = []
     for item in _items(conn, local_day):
         for key, selected in spec.filters.items():
@@ -263,9 +286,9 @@ def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = ()):
     return items, data
 
 
-def run(conn, local_day, spec: ExploreSpec) -> ExploreResult:
+def run(conn, local_day, spec: ExploreSpec, findings=None) -> ExploreResult:
     dim = DIMENSIONS[spec.group]
-    items, data = _slice(conn, local_day, spec)
+    items, data = _slice(conn, local_day, spec, findings=findings)
     groups: dict[str, list] = {}
     for item in items:
         for value, keys in dim.parts(item, data[spec.group]):
@@ -278,21 +301,24 @@ def run(conn, local_day, spec: ExploreSpec) -> ExploreResult:
     return ExploreResult(spec.group, dim.label, tuple(rows), total, len(items), dim.overlapping)
 
 
-def requests(conn, local_day, spec: ExploreSpec) -> list[ExploreRequest]:
-    items, data = _slice(conn, local_day, spec, extra=("session", "project", "model"))
+def requests(conn, local_day, spec: ExploreSpec, findings=None) -> list[ExploreRequest]:
+    items, data = _slice(conn, local_day, spec, extra=("session", "project", "model"),
+                         findings=findings)
     one = lambda key, item: (data[key].get(item.message_id) or [NONE])[0]  # noqa: E731
     return [ExploreRequest(i.message_id, i.ts_epoch, i.day, one("session", i), one("project", i),
                            one("model", i), i.cost) for i in items]
 
 
-def options(conn, limit: int = 100) -> dict[str, list[str]]:
+def options(conn, limit: int = 100, findings=None) -> dict[str, list[str]]:
     """Most frequent values of each dimension (for form suggestions); dates are free text."""
     out = {}
+    cache: list = []
+    findings_once = (lambda: cache or cache.extend(findings()) or cache) if findings else None
     for key, dim in DIMENSIONS.items():
         if isinstance(dim, (DateDimension, SplitDimension)):
             continue
         counts: dict[str, int] = {}
-        for values in dim.load(conn).values():
+        for values in dim.load_with(conn, findings_once).values():
             for v in values:
                 counts[v] = counts.get(v, 0) + 1
         out[key] = [v for v, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]

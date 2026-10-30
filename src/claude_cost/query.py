@@ -904,12 +904,12 @@ class QueryService:
     # Explore (ticket #11): the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
-        return explore.run(self._conn, self._local_day, spec)
+        return explore.run(self._conn, self._local_day, spec, self.findings)
 
     def explore_requests(self, spec: explore.ExploreSpec) -> list[explore.ExploreRequest]:
         """The individual requests of the slice, oldest first."""
-        return explore.requests(self._conn, self._local_day, spec)
+        return explore.requests(self._conn, self._local_day, spec, self.findings)
 
     def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
         """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit)
+        return explore.options(self._conn, limit, self.findings)
