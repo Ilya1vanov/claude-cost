@@ -38,6 +38,11 @@ def detect(ctx: FindingContext) -> Detection:
     for x in ctx.conn.execute("SELECT project, kind, name, ts_epoch FROM tool_uses"):
         if x["ts_epoch"] >= start:
             used[x["project"]][x["kind"] + ":" + x["name"]] += 1
+    attributed: dict[str, set[str]] = defaultdict(set)  # project -> skills used by slash command
+    for x in ctx.conn.execute("SELECT r.project, r.ts_epoch, s.skill FROM request_skills s "
+                              "JOIN requests r ON r.message_id = s.message_id"):
+        if x["ts_epoch"] >= start:  # slash commands and attributionSkill count as uses too
+            attributed[x["project"]].add(x["skill"])
     # earliest Listing per (project, session, agent, kind, name); resume copies repeat them
     listed: dict[tuple, tuple[float, int]] = {}
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
@@ -60,6 +65,8 @@ def detect(ctx: FindingContext) -> Detection:
         if not reqs:
             continue  # session not active in the period
         u = {k.split(":", 1)[1] for k in used[project] if k.startswith(kind + ":")}
+        if kind == "skill":
+            u |= attributed[project]
         if _used(name, kind, u):
             continue
         # requests after the one that wrote the Listing read it from the cache
