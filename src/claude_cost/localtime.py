@@ -30,3 +30,12 @@ def price_day(epoch: float) -> date:
     effective dates and the stored costs are UTC-based, so ingest and the Compact analysis
     must agree on it regardless of the configured time zone."""
     return datetime.fromtimestamp(epoch, timezone.utc).date()
+
+
+def parse_since(text: str, today_: date) -> date:
+    """A `since` value: an ISO date (2026-10-01) or a number of days back (7d).
+    Raises ValueError when it is neither."""
+    text = text.strip()
+    if text.endswith("d"):
+        return today_ - timedelta(days=int(text[:-1]))
+    return date.fromisoformat(text)

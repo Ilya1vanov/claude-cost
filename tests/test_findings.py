@@ -194,3 +194,13 @@ def test_fable_comparison_model_is_configurable(root, service_for):
         req("f", "2026-10-30T10:00:00Z", model="claude-fable-5", input=1_000_000, output=100_000)])
     f = _by_id(service_for(root, compare_model="claude-sonnet-5-5").findings())["fable-usage"]
     assert f.avoidable == pytest.approx(15 - (2 + 1))     # Sonnet 5.5: $2 input + $10/M output
+
+
+def test_web_since_accepts_days_back_like_the_cli(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("old", "2026-10-01T10:00:00Z", model="claude-fable-5", output=1_000_000),
+        req("new", "2026-10-29T10:00:00Z", model="claude-fable-5", output=1_000_000)])
+    client = create_app(lambda: service_for(root), lambda: NOW).test_client()
+    page = client.get("/findings/fable-usage?since=7d").get_data(as_text=True)
+    assert "2026-10-23" in page   # NOW is 2026-10-30
+    assert client.get("/findings?since=garbage").status_code == 400

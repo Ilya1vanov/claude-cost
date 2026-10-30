@@ -8,6 +8,7 @@ from flask import Flask, Response, abort, redirect, render_template, request, ur
 
 from . import explore
 from .explore import ExploreSpec
+from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 from .spotlights import SpotlightError
@@ -81,9 +82,10 @@ def create_app(service_factory: Callable[[], QueryService],
 
     def _since_arg():
         try:
-            return date.fromisoformat(request.args["since"]) if request.args.get("since") else None
+            text = request.args.get("since")
+            return parse_since(text, now().date()) if text else None
         except ValueError:
-            abort(400, "since must be a date like 2026-10-01")
+            abort(400, "since must be a date like 2026-10-01 or days like 7d")
 
     @app.get("/compare")
     def compare():
