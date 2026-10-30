@@ -17,6 +17,16 @@
       <div class="meta">{% if f.formula %}Formula: {{ f.formula }}{% else %}&nbsp;{% endif %}</div></div>
   </div>
   {% if f.detail %}<p class="note">{{ f.detail }}</p>{% endif %}
+  {% if f.table %}
+  <section class="card">
+    <h2>Details</h2>
+    <div class="table-wrap"><table id="detail">
+      <tr>{% for c in f.table.columns %}<th{% if loop.index > 3 %} class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr>
+      {% for row in f.table.rows %}<tr>{% for cell in row %}<td{% if loop.index > 3 %} class="num"{% endif %}>{% if cell is string %}{{ cell }}{% else %}<details><summary>{{ cell.summary }}</summary>{% for i in cell.items %}<div>{{ i }}</div>{% endfor %}</details>{% endif %}</td>{% endfor %}</tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% endif %}
   <p class="callout">{{ note }}</p>
 
   <section class="card">

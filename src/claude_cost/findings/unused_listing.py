@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from .. import pricing
 from ..projects import project_display_names
-from .core import DRAIN, Covered, Detection, FindingContext, FindingDef
+from .core import DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef
 
 
 def _used(listing_name: str, kind: str, used: set[str]) -> bool:
@@ -86,10 +86,20 @@ def detect(ctx: FindingContext) -> Detection:
         it["cost"] += cost
     covered = [Covered(mid, a) for mid, a in avoidable.items()]
     names = project_display_names(ctx.conn)
-    parts = [f"{kind} {name} in {names.get(project, project)}: {len(i['sessions'])} sessions listed, "
-             f"0 invocations here ({i['elsewhere']} in other projects), ${i['cost']:.2f}"
-             for (project, kind, name), i in sorted(items.items(), key=lambda kv: -kv[1]["cost"])]
-    return Detection(covered, "; ".join(parts))
+    by_listing: dict[tuple[str, str], dict] = {}
+    for (project, kind, name), i in items.items():
+        row = by_listing.setdefault((kind, name), {"projects": set(), "cost": 0.0,
+                                                   "elsewhere": i["elsewhere"]})
+        row["projects"].add(names.get(project, project))
+        row["cost"] += i["cost"]
+    rows = []
+    for (kind, name), i in sorted(by_listing.items(), key=lambda kv: (-kv[1]["cost"], kv[0])):
+        n = len(i["projects"])
+        rows.append((name, kind,
+                     CollapsibleCell(f"{n} project{'' if n == 1 else 's'}", tuple(sorted(i["projects"]))),
+                     str(i["elsewhere"]), f"${i['cost']:.2f}"))
+    table = DetailTable(("Listing", "Kind", "Unused in", "Used elsewhere", "Avoidable"), tuple(rows))
+    return Detection(covered, table=table if rows else None)
 
 
 FINDING = FindingDef(
