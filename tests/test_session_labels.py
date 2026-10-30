@@ -52,7 +52,8 @@ def _table(page, table_id):
     return page.split(f'id="{table_id}"')[1].split("</table>")[0]
 
 
-@pytest.mark.parametrize("path", ["/spotlights/S", "/findings/fable-usage"])
+@pytest.mark.parametrize("path", ["/spotlights/S", "/findings/fable-usage", "/explore?group=session",
+                                  "/explore/requests"])
 def test_pages_show_each_session_as_linked_label_with_id_on_hover(setup, path):
     _, client = setup
     page = client.get(path).get_data(as_text=True)

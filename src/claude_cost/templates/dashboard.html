@@ -41,7 +41,7 @@
       <div class="meta">{% if k.delta_hit_ratio is not none %}{{ ui.delta(-k.delta_hit_ratio, "%+.1f"|format(k.delta_hit_ratio * 100) ~ " pts") }} vs baseline{% else %}&nbsp;{% endif %}</div>
     </div>
     <div class="kpi">
-      <div class="label">Cold writes</div>
+      <div class="label">Cold writes {{ ui.info("cold writes") }}</div>
       <div class="value">${{ "%.2f"|format(k.current.cold_cost) }}</div>
       <div class="meta">{{ ui.signed_usd(k.current.cold_cost - k.baseline.cold_cost) }} vs baseline</div>
     </div>
@@ -114,7 +114,7 @@
       <h2>Top projects</h2>
       <div class="table-wrap"><table>
         <tr><th></th><th>Project</th><th class="num">Cost</th><th class="num">Requests</th></tr>
-        {% for p in c.top_projects %}<tr><td class="rank">{{ loop.index }}</td><td>{{ pnames.get(p.key, p.key) }}</td>
+        {% for p in c.top_projects %}<tr><td class="rank">{{ loop.index }}</td><td>{{ project_name(p.key) }}</td>
           <td class="num">${{ "%.2f"|format(p.cost) }}</td><td class="num">{{ p.requests }}</td></tr>
         {% else %}<tr><td colspan="4" class="empty">No spend in this period</td></tr>{% endfor %}
       </table></div>

@@ -103,6 +103,16 @@ def test_drains_command_lists_unused_listing(root, configure):
     assert "Unused listing" in out.getvalue()
 
 
+def test_drains_command_names_the_unused_listings(root, configure):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))]
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing)
+    out = io.StringIO()
+    cli.main(["drains"], env=configure(root), now=NOW, out=out)
+    line = next(l for l in out.getvalue().splitlines() if "big" in l)
+    assert "skill" in line and "2 projects" in line and "$" in line
+
+
 def test_a_removed_listing_stops_counting_from_the_removal(root, service_for):
     servers = {"srv": "x" * 36_000}   # 10,000 tokens
     root.write_transcript("p", "s1", [
