@@ -34,6 +34,10 @@ _Avoid_: branch, clone
 A child run launched from inside a session, whose spend rolls up into that session.
 _Avoid_: agent, task, sidechain
 
+**Subagent type**:
+The kind of a subagent, such as Explore or Plan, as named in its transcript metadata; requests made by the session itself have none.
+_Avoid_: agent type, agent
+
 ## Money
 
 **Cost**:
