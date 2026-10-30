@@ -102,6 +102,67 @@ class PeriodComparison:
         return self.delta_cost / self.baseline_cost * 100 if self.baseline_cost else None
 
 
+@dataclass(frozen=True)
+class CacheStats:
+    """Cache behaviour over one Period. Costs are $; hit ratio is by tokens (None if no tokens)."""
+    hit_ratio: float | None  # cache read / (cache read + cache write + uncached input)
+    cold_cost: float
+    warm_cost: float
+    write_5m_cost: float
+    write_1h_cost: float
+    rebuilds: int  # requests whose write was Cold
+
+
+@dataclass(frozen=True)
+class CacheCard:
+    mode: str
+    current: CacheStats
+    baseline: CacheStats
+
+    @property
+    def delta_hit_ratio(self) -> float | None:
+        a, b = self.current.hit_ratio, self.baseline.hit_ratio
+        return None if a is None or b is None else a - b
+
+
+@dataclass(frozen=True)
+class CacheEventSpend:
+    event: str  # "cold write" | "warm write" | "cache read"
+    cost: float
+    tokens: int
+    requests: int
+
+
+COMPARISON_MODES = ("week", "month")
+
+
+@dataclass(frozen=True)
+class ComparisonEntry:
+    period: Period  # the full calendar period
+    cost: float
+    daily: list[float]  # cost per day of period; stops at today for a period still running
+    partial: bool
+    delta_cost: float  # vs the Baseline (0 for the Baseline itself)
+    delta_pct: float | None  # None when the Baseline cost is zero
+
+
+@dataclass(frozen=True)
+class Comparison:
+    mode: str
+    baseline: date  # start of the Baseline period
+    entries: tuple[ComparisonEntry, ...]  # earliest first
+    day_count: int  # length of the longest selected period (the chart's x axis)
+
+
+def calendar_period(mode: str, start: date) -> Period:
+    """The full calendar week (Monday start) or month beginning at `start`."""
+    if mode == "week" and start.weekday() == 0:
+        return Period(start, start + timedelta(6))
+    if mode == "month" and start.day == 1:
+        return Period(start, start.replace(day=calendar.monthrange(start.year, start.month)[1]))
+    raise ValueError(f"{start} is not the start of a {mode}")
+
+
 def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple[Period, Period, int]:
     """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days."""
     if mode == "last7":
@@ -272,6 +333,103 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k ORDER BY cost DESC, k LIMIT ?",
             (lo, hi, n)).fetchall()
         return tuple(RankedSpend(r["k"], r["cost"], r["n"]) for r in rows)
+
+    def cache_events(self) -> dict[str, str]:
+        """Cache write event per request: message id -> 'cold' | 'warm' | 'none' (no write)."""
+        return {r["message_id"]: r["event"]
+                for r in self._conn.execute("SELECT message_id, event FROM request_cache")}
+
+    def _cache_stats(self, p: Period) -> CacheStats:
+        lo, hi = self._bounds(p)
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(r.cache_read_tokens), 0) AS rd, "
+            "COALESCE(SUM(r.cache_write_5m_tokens + r.cache_write_1h_tokens), 0) AS wr, "
+            "COALESCE(SUM(r.input_tokens), 0) AS inp, "
+            "COALESCE(SUM(CASE WHEN c.event = 'cold' THEN r.cost_cache_write_5m + r.cost_cache_write_1h END), 0) AS cold, "
+            "COALESCE(SUM(CASE WHEN c.event = 'warm' THEN r.cost_cache_write_5m + r.cost_cache_write_1h END), 0) AS warm, "
+            "COALESCE(SUM(r.cost_cache_write_5m), 0) AS w5, COALESCE(SUM(r.cost_cache_write_1h), 0) AS w1, "
+            "COALESCE(SUM(c.event = 'cold'), 0) AS rebuilds "
+            "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
+        total = row["rd"] + row["wr"] + row["inp"]
+        return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
+                          row["w5"], row["w1"], row["rebuilds"])
+
+    def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
+        """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
+        today = now.astimezone(self._tz).date() if self._tz else now.date()
+        cur, base, _ = resolve_periods(mode, today, include_today)
+        return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
+
+    def spend_by_cache_event(self, start: date, end: date) -> list[CacheEventSpend]:
+        """Cache event dimension: cost, tokens and requests per event over local days start..end."""
+        lo, hi = self._bounds(Period(start, end))
+        rows = self._conn.execute(
+            "SELECT c.event AS ev, COUNT(*) AS n, "
+            "SUM(r.cost_cache_write_5m + r.cost_cache_write_1h) AS cost, "
+            "SUM(r.cache_write_5m_tokens + r.cache_write_1h_tokens) AS tok "
+            "FROM requests r JOIN request_cache c ON c.message_id = r.message_id "
+            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? AND c.event IN ('cold', 'warm') "
+            "GROUP BY c.event", (lo, hi)).fetchall()
+        out = [CacheEventSpend(f"{r['ev']} write", r["cost"], r["tok"], r["n"]) for r in rows]
+        rd = self._conn.execute(
+            "SELECT SUM(cost_cache_read) AS cost, SUM(cache_read_tokens) AS tok, COUNT(*) AS n "
+            "FROM requests WHERE ts_epoch >= ? AND ts_epoch < ? AND cache_read_tokens > 0",
+            (lo, hi)).fetchone()
+        if rd["n"]:
+            out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
+        return sorted(out, key=lambda e: e.event)
+
+
+    def available_periods(self, mode: str, now: datetime) -> list[date]:
+        """Start dates of every calendar period from the first request to now, newest first."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}")
+        row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
+        if row["first"] is None:
+            return []
+        today = self._today(now)
+        first = self._local_day(row["first"])
+        if mode == "week":
+            cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
+        else:
+            cur = first.replace(day=1)
+            step = lambda d: (d.replace(day=28) + timedelta(4)).replace(day=1)
+        out = []
+        while cur <= today:
+            out.append(cur)
+            cur = step(cur)
+        return out[::-1]
+
+    def comparison(self, mode: str, starts: list[date], now: datetime,
+                   baseline: date | None = None) -> Comparison:
+        """Two or more calendar periods of one mode, against a Baseline (default: the earliest)."""
+        if mode not in COMPARISON_MODES:
+            raise ValueError(f"mode must be one of {COMPARISON_MODES}, not {mode!r}")
+        starts = sorted(set(starts))
+        if len(starts) < 2:
+            raise ValueError("select at least two different periods")
+        today = self._today(now)
+        periods = [calendar_period(mode, s) for s in starts]
+        if periods[-1].start > today:
+            raise ValueError(f"{periods[-1].start} has not started yet")
+        baseline = baseline or starts[0]
+        if baseline not in starts:
+            raise ValueError("the baseline must be one of the selected periods")
+        costs, dailies = [], []
+        for p in periods:
+            daily = [d.cost for d in self.daily_spend(p.start, min(p.end, today))]
+            dailies.append(daily)
+            costs.append(sum(daily))
+        base_cost = costs[starts.index(baseline)]
+        entries = tuple(
+            ComparisonEntry(p, c, d, p.end > today, c - base_cost,
+                            (c - base_cost) / base_cost * 100 if base_cost else None)
+            for p, c, d in zip(periods, costs, dailies))
+        return Comparison(mode, baseline, entries, max(p.days for p in periods))
+
+    def _today(self, now: datetime) -> date:
+        return now.astimezone(self._tz).date() if self._tz else now.date()
 
     def price_table(self) -> list[PriceRow]:
         """The price table in effect (defaults plus config overrides), $ per million tokens."""

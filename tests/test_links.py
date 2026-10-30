@@ -162,3 +162,13 @@ def test_links_survive_incremental_reingest_and_late_subagent(tmp_path, root, de
     [s] = svc.session_summaries()
     assert (s.requests, s.subagent_requests) == (2, 1)
     assert [a.agent_type for a in svc.subagent_summaries()] == ["Explore"]
+
+
+def test_subagent_has_its_own_cache_for_cold_write_classification(root, service_for):
+    """A subagent request must not make the parent's next write look warm or cold."""
+    root.write_transcript("p", "s1", [
+        req("m1", "2026-10-30T01:00:00Z", write_5m=1000),
+        req("m3", "2026-10-30T01:02:00Z", write_5m=1000)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-30T09:00:00Z", write_5m=1000)])
+    svc = service_for(root)
+    assert svc.cache_events() == {"m1": "warm", "m3": "warm", "m2": "warm"}

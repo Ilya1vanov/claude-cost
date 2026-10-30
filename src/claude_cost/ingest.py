@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ownership, pricing, sources
+from . import cache, ownership, pricing, sources
 
 
 def _parse_ts(value: str) -> datetime:
@@ -357,6 +357,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
+    changed = rebuild
     with conn:
         if rebuild:
             # Forget what we read from files that still exist; copies from vanished
@@ -387,6 +388,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 lines, new_offset = _read_new(path, offset)
                 if row and new_offset == offset:
                     continue
+                changed = True
                 parsed = _parse_lines(lines, stem)
                 first = min((r["ts"].timestamp() for r in parsed.reqs.values()), default=None)
                 conn.execute(
@@ -411,6 +413,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         if desktop_stores is not None:
             _store_desktop(conn, desktop_stores)
         _regroup_sessions(conn)
+        if changed or desktop_stores is not None or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone():
+            cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
     reprice(conn, price_table)

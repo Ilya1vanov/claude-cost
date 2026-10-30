@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS session_links (
   stem TEXT PRIMARY KEY,
   logical_session_id TEXT NOT NULL
 );
+-- cache event of each request's write: cold | warm | none (ticket #10, see cache.py)
+CREATE TABLE IF NOT EXISTS request_cache (
+  message_id TEXT PRIMARY KEY,
+  event TEXT NOT NULL
+);
 -- pricing inputs not in `requests`, so a price change can re-price stored rows (ticket #5)
 CREATE TABLE IF NOT EXISTS request_attrs (
   message_id TEXT PRIMARY KEY,
