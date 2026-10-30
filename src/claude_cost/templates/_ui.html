@@ -1,0 +1,18 @@
+{# Shared bits of markup. Import with: {% import "_ui.html" as ui %} #}
+
+{# A long id shortened for reading; the full id stays in the tooltip. #}
+{% macro sid(id, n=8) %}<span class="id" title="{{ id }}">{{ id[:n] }}{% if id|length > n %}…{% endif %}</span>{% endmacro %}
+
+{# Spend change, colored: up is red, down is green. `text` is the signed figure, kept in one run. #}
+{% macro delta(d, text) %}<span class="{{ 'up' if d > 0 else 'down' if d < 0 else 'flat' }}">{{ text }}</span>{% endmacro %}
+
+{% macro signed_usd(d) %}{{ delta(d|round(2),("+" if d >= 0 else "-") ~ "$" ~ "%.2f"|format(d|abs)) }}{% endmacro %}
+
+{# A Cost component name with its chart color. #}
+{% macro component(name) %}<span class="swatch sw-{{ name|replace(' (', '-')|replace(')', '')|replace(' ', '-') }}"></span>{{ name }}{% endmacro %}
+
+{% macro chart_scripts(page_script) %}
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
+  <script src="{{ url_for('static', filename=page_script) }}"></script>
+{% endmacro %}

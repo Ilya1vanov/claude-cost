@@ -1,36 +1,35 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: Compact threshold</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>Compact threshold</h1>
-  <p><a href="{{ url_for('dashboard') }}">Dashboard</a></p>
-  <p>The context size above which compacting costs less than carrying on, learned per model from
+{% extends "base.html" %}
+{% block title %}Compact threshold · claude-cost{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Compact threshold</h1></div>
+  <p class="lead">The context size above which compacting costs less than carrying on, learned per model from
     your own history. A compaction costs summary output plus writing the tokens it leaves, at the
     75th percentile of your observed compactions; a model with fewer than 20 compactions uses the
     global threshold. Carrying a context is priced at the cache-read price.</p>
   {% if a.global_ is none %}
-  <p>No compactions observed yet, so no Compact threshold can be learned.</p>
+  <p class="card empty">No compactions observed yet, so no Compact threshold can be learned.</p>
   {% else %}
-  <table id="thresholds">
-    <tr><th>Model</th><th>Compact threshold</th><th>Source</th><th>Compactions</th><th>p75 compaction cost</th><th>Payback</th><th>Observed cost</th></tr>
-    {% for m in a.models + (a.global_,) %}<tr>
-      <td>{{ m.model or "all models (global)" }}</td><td>{{ "{:,}".format(m.threshold) }}</td><td>{{ m.source }}</td>
-      <td>{{ m.sample_size }}</td><td>${{ "%.2f"|format(m.compaction_cost) }}</td>
-      <td>{% if m.payback_requests is none %}n/a{% else %}{{ m.payback_requests|round|int }} requests{% endif %}</td>
-      <td>${{ "%.2f"|format(m.actual_cost) }}</td></tr>{% endfor %}
-  </table>
+  <section class="card">
+    <div class="table-wrap"><table id="thresholds">
+      <tr><th>Model</th><th class="num">Compact threshold</th><th>Source</th><th class="num">Compactions</th><th class="num">p75 compaction cost</th><th class="num">Payback</th><th class="num">Observed cost</th></tr>
+      {% for m in a.models + (a.global_,) %}<tr>
+        <td>{{ m.model or "all models (global)" }}</td><td class="num">{{ "{:,}".format(m.threshold) }}</td><td><span class="badge">{{ m.source }}</span></td>
+        <td class="num">{{ m.sample_size }}</td><td class="num">${{ "%.2f"|format(m.compaction_cost) }}</td>
+        <td class="num">{% if m.payback_requests is none %}n/a{% else %}{{ m.payback_requests|round|int }} requests{% endif %}</td>
+        <td class="num">${{ "%.2f"|format(m.actual_cost) }}</td></tr>{% endfor %}
+    </table></div>
+  </section>
+  <div class="grid grid-2">
   {% for m in a.models + (a.global_,) if m.model is none or m.source == "model" %}
-  <h2>Cost vs threshold: {{ m.model or "all models (global)" }}</h2>
-  <table class="curve">
-    <tr><th>Threshold</th><th>Total cost</th></tr>
-    {% for c in m.curve %}<tr{% if c.threshold == m.threshold %} class="best"{% endif %}><td>{{ "{:,}".format(c.threshold) }}</td>
-      <td>${{ "%.2f"|format(c.cost) }}{% if c.threshold == m.threshold %} (minimum){% endif %}</td></tr>{% endfor %}
-  </table>
+  <section class="card">
+    <h2>Cost vs threshold: {{ m.model or "all models (global)" }}</h2>
+    <div class="table-wrap"><table class="curve">
+      <tr><th class="num">Threshold</th><th class="num">Total cost</th></tr>
+      {% for c in m.curve %}<tr{% if c.threshold == m.threshold %} class="best"{% endif %}><td class="num">{{ "{:,}".format(c.threshold) }}</td>
+        <td class="num">${{ "%.2f"|format(c.cost) }}{% if c.threshold == m.threshold %} (minimum){% endif %}</td></tr>{% endfor %}
+    </table></div>
+  </section>
   {% endfor %}
+  </div>
   {% endif %}
-</body>
-</html>
+{% endblock %}

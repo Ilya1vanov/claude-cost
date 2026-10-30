@@ -1,44 +1,46 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: compare</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>Compare periods</h1>
-  <p><a href="{{ url_for('dashboard') }}">Dashboard</a></p>
-  <form method="get" action="{{ url_for('compare') }}">
-    <nav>{% for m in modes %}
-      <label><input type="radio" name="mode" value="{{ m }}" {{ "checked" if m == mode }} onchange="this.form.querySelectorAll('[name=p],[name=baseline]').forEach(function (e) { e.disabled = true; }); this.form.submit()">
-        {{ {"week": "Calendar weeks", "month": "Calendar months"}[m] }}</label>
-    {% endfor %}</nav>
-    <p>Pick two or more {{ mode }}s of one kind; the Baseline defaults to the earliest.</p>
-    <table>
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Compare periods · claude-cost{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Compare periods</h1></div>
+  <form method="get" action="{{ url_for('compare') }}" class="card">
+    <div class="form-row">
+      <nav class="seg" aria-label="Period kind">{% for m in modes %}
+        <label><input type="radio" name="mode" value="{{ m }}" {{ "checked" if m == mode }} onchange="this.form.querySelectorAll('[name=p],[name=baseline]').forEach(function (e) { e.disabled = true; }); this.form.submit()">
+          {{ {"week": "Calendar weeks", "month": "Calendar months"}[m] }}</label>
+      {% endfor %}</nav>
+      <span class="note">Pick two or more {{ mode }}s of one kind; the Baseline defaults to the earliest.</span>
+    </div>
+    <div class="table-wrap"><table>
       <tr><th>Compare</th><th>Baseline</th><th>Period</th></tr>
       {% for s in available %}
       <tr><td><input type="checkbox" name="p" value="{{ s }}" {{ "checked" if s in selected }}></td>
         <td><input type="radio" name="baseline" value="{{ s }}" {{ "checked" if s == baseline }}></td>
         <td>{{ s }}</td></tr>
-      {% else %}<tr><td colspan="3">No data yet</td></tr>{% endfor %}
-    </table>
-    <button type="submit">Compare</button>
+      {% else %}<tr><td colspan="3" class="empty">No data yet</td></tr>{% endfor %}
+    </table></div>
+    <p><button type="submit">Compare</button></p>
   </form>
   {% if result %}
-  <h2>Totals</h2>
-  <table id="compare-table">
-    <tr><th>Period</th><th>Total</th><th>&Delta;$</th><th>&Delta;%</th></tr>
-    {% for e in result.entries %}
-    <tr><td>{{ e.period.start }} to {{ e.period.end }}{% if e.partial %} <em>(partial)</em>{% endif %}{% if e.period.start == result.baseline %} <strong>(Baseline)</strong>{% endif %}</td>
-      <td>${{ "%.2f"|format(e.cost) }}</td>
-      <td>{% if e.period.start == result.baseline %}-{% else %}{{ "+" if e.delta_cost >= 0 else "-" }}${{ "%.2f"|format(e.delta_cost|abs) }}{% endif %}</td>
-      <td>{% if e.period.start == result.baseline %}-{% elif e.delta_pct is none %}n/a{% else %}{{ "%+.1f"|format(e.delta_pct) }}%{% endif %}</td></tr>
-    {% endfor %}
-  </table>
-  <div style="max-width:900px"><canvas id="compare-chart" aria-label="Periods by day of period"></canvas></div>
+  <section class="card">
+    <h2>Totals</h2>
+    <div class="table-wrap"><table id="compare-table">
+      <tr><th>Period</th><th class="num">Total</th><th class="num">&Delta;$</th><th class="num">&Delta;%</th></tr>
+      {% for e in result.entries %}{% set is_base = e.period.start == result.baseline %}
+      <tr{% if is_base %} class="baseline"{% endif %}><td>{{ e.period.start }} to {{ e.period.end }}{% if e.partial %} <em>(partial)</em>{% endif %}{% if is_base %} <span class="badge">Baseline</span>{% endif %}</td>
+        <td class="num">${{ "%.2f"|format(e.cost) }}</td>
+        <td class="num">{% if is_base %}-{% else %}{{ ui.signed_usd(e.delta_cost) }}{% endif %}</td>
+        <td class="num">{% if is_base %}-{% elif e.delta_pct is none %}n/a{% else %}{{ ui.delta(e.delta_pct, "%+.1f"|format(e.delta_pct) ~ "%") }}{% endif %}</td></tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  <section class="card">
+    <h2>By day of period</h2>
+    <div class="chart"><canvas id="compare-chart" aria-label="Periods by day of period"></canvas></div>
+  </section>
+  {% elif selected %}<p class="alert">Select at least two periods.</p>{% endif %}
+{% endblock %}
+{% block scripts %}{% if result %}
   <script id="compare-data" type="application/json">{{ chart_data|tojson }}</script>
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
-  <script src="{{ url_for('static', filename='compare.js') }}"></script>
-  {% elif selected %}<p>Select at least two periods.</p>{% endif %}
-</body>
-</html>
+  {{ ui.chart_scripts('compare.js') }}
+{% endif %}{% endblock %}

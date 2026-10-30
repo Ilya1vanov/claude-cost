@@ -1,33 +1,34 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: compare Spotlights</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>Compare Spotlights</h1>
-  <p><a href="{{ url_for('spotlight_list') }}">All Spotlights</a></p>
-  <form method="get" action="{{ url_for('spotlight_compare') }}">
-    {% for s in available %}<label><input type="checkbox" name="s" value="{{ s.name }}" {{ "checked" if s.name in selected }}> {{ s.name }}</label><br>
-    {% else %}<p>No Spotlights yet</p>{% endfor %}
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Compare Spotlights · claude-cost{% endblock %}
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('spotlight_list') }}">All Spotlights</a><span class="sep">/</span>Compare</div>
+  <div class="page-head"><h1>Compare Spotlights</h1></div>
+  <form method="get" action="{{ url_for('spotlight_compare') }}" class="card">
+    <div class="checks">{% for s in available %}<label><input type="checkbox" name="s" value="{{ s.name }}" {{ "checked" if s.name in selected }}> {{ s.name }}</label>
+    {% else %}<span class="muted">No Spotlights yet</span>{% endfor %}</div>
     <button type="submit">Compare</button>
   </form>
   {% if details %}
-  <p>Sessions can be in several Spotlights, so these totals overlap: they are shown side by side and never added.</p>
-  <table id="spotlight-compare-table">
-    <tr><th>Spotlight</th><th>Lifetime</th><th>Sessions</th><th>Requests</th><th>First activity</th><th>Last activity</th>
-      {% for n in details[0].components %}<th>{{ n }}</th>{% endfor %}</tr>
-    {% for d in details %}<tr><td><a href="{{ url_for('spotlight_page', name=d.summary.name) }}">{{ d.summary.name }}</a></td>
-      <td>${{ "%.2f"|format(d.summary.total) }}</td><td>{{ d.summary.sessions }}</td><td>{{ d.summary.requests }}</td>
-      <td>{{ d.summary.first_activity or "" }}</td><td>{{ d.summary.last_activity or "" }}</td>
-      {% for c in d.components.values() %}<td>${{ "%.2f"|format(c) }}</td>{% endfor %}</tr>
-    {% endfor %}
-  </table>
-  <div style="max-width:900px"><canvas id="spotlight-compare-chart" aria-label="Spotlights by day since first activity"></canvas></div>
+  <p class="callout">Sessions can be in several Spotlights, so these totals overlap: they are shown side by side and never added.</p>
+  <section class="card">
+    <div class="table-wrap"><table id="spotlight-compare-table">
+      <tr><th>Spotlight</th><th class="num">Lifetime</th><th class="num">Sessions</th><th class="num">Requests</th><th>First activity</th><th>Last activity</th>
+        {% for n in details[0].components %}<th class="num">{{ ui.component(n) }}</th>{% endfor %}</tr>
+      {% for d in details %}<tr><td><a href="{{ url_for('spotlight_page', name=d.summary.name) }}">{{ d.summary.name }}</a></td>
+        <td class="num">${{ "%.2f"|format(d.summary.total) }}</td><td class="num">{{ d.summary.sessions }}</td><td class="num">{{ d.summary.requests }}</td>
+        <td>{{ d.summary.first_activity or "" }}</td><td>{{ d.summary.last_activity or "" }}</td>
+        {% for c in d.components.values() %}<td class="num">${{ "%.2f"|format(c) }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  <section class="card">
+    <h2>By day since first activity</h2>
+    <div class="chart"><canvas id="spotlight-compare-chart" aria-label="Spotlights by day since first activity"></canvas></div>
+  </section>
+  {% elif selected %}<p class="alert">Select at least two Spotlights.</p>{% endif %}
+{% endblock %}
+{% block scripts %}{% if details %}
   <script id="compare-data" type="application/json">{{ chart_data|tojson }}</script>
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
-  <script src="{{ url_for('static', filename='spotlight_compare.js') }}"></script>
-  {% elif selected %}<p>Select at least two Spotlights.</p>{% endif %}
-</body>
-</html>
+  {{ ui.chart_scripts('spotlight_compare.js') }}
+{% endif %}{% endblock %}

@@ -1,35 +1,50 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>claude-cost: {{ f.title }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body>
-  <h1>{{ f.title }} <small>({{ f.kind }})</small></h1>
-  <p><a href="{{ url_for('findings', since=since.isoformat() if since) }}">All findings</a></p>
-  <p>{{ f.description }}</p>
-  <p>Attributed spend: <strong>${{ "%.2f"|format(f.attributed) }}</strong>
-    | Avoidable spend (lower bound): <strong>{% if f.avoidable is none %}not estimated{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</strong></p>
-  {% if f.formula %}<p>Formula: {{ f.formula }}{% if f.detail %} <small>({{ f.detail }})</small>{% endif %}</p>{% endif %}
-  <p><em>{{ note }}</em></p>
-  <h2>Sessions covered</h2>
-  <table id="sessions">
-    <tr><th>Session</th><th>Requests</th><th>Attributed</th>{% if f.formula %}<th>Avoidable</th>{% endif %}</tr>
-    {% for s in f.sessions %}<tr><td>{{ s.session_id }}</td><td>{{ s.requests }}</td><td>${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td>${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
-    {% else %}<tr><td colspan="4">None</td></tr>{% endfor %}
-  </table>
-  {% if f.subagents %}<h2>Subagents covered</h2>
-  <table id="subagents">
-    <tr><th>Subagent</th><th>Session</th><th>Subagent type</th><th>Requests</th><th>Attributed</th></tr>
-    {% for a in f.subagents %}<tr><td>{{ a.agent_id }}</td><td>{{ a.session_id }}</td><td>{{ a.agent_type or "" }}</td><td>{{ a.requests }}</td><td>${{ "%.2f"|format(a.attributed) }}</td></tr>
-    {% endfor %}
-  </table>{% endif %}
-  <h2>Requests covered</h2>
-  <table id="requests">
-    <tr><th>Request</th><th>Session</th><th>Model</th><th>Cost</th>{% if f.formula %}<th>Avoidable (before $0 floor)</th>{% endif %}</tr>
-    {% for r in f.requests %}<tr><td>{{ r.message_id }}</td><td>{{ r.session_id }}</td><td>{{ r.model }}</td><td>${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td>{{ "%.2f"|format(r.avoidable) }}</td>{% endif %}</tr>
-    {% endfor %}
-  </table>
-</body>
-</html>
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ f.title }} · claude-cost{% endblock %}
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('findings', since=since.isoformat() if since) }}">All findings</a><span class="sep">/</span>{{ f.title }}</div>
+  <div class="page-head">
+    <div>
+      <h1>{{ f.title }} <span class="badge {{ f.kind }}">{{ f.kind }}</span></h1>
+      <p class="sub">{{ f.description }}</p>
+    </div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="label">Attributed spend</div><div class="value">${{ "%.2f"|format(f.attributed) }}</div>
+      <div class="meta">{{ f.requests|length }} requests in {{ f.sessions|length }} sessions</div></div>
+    <div class="kpi"><div class="label">Avoidable spend (lower bound)</div>
+      <div class="value">{% if f.avoidable is none %}not estimated{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</div>
+      <div class="meta">{% if f.formula %}Formula: {{ f.formula }}{% else %}&nbsp;{% endif %}</div></div>
+  </div>
+  {% if f.detail %}<p class="note">{{ f.detail }}</p>{% endif %}
+  <p class="callout">{{ note }}</p>
+
+  <section class="card">
+    <h2>Sessions covered</h2>
+    <div class="table-wrap"><table id="sessions">
+      <tr><th>Session</th><th class="num">Requests</th><th class="num">Attributed</th>{% if f.formula %}<th class="num">Avoidable</th>{% endif %}</tr>
+      {% for s in f.sessions %}<tr><td>{{ ui.sid(s.session_id) }}</td><td class="num">{{ s.requests }}</td>
+        <td class="num">${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td class="num">${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
+      {% else %}<tr><td colspan="4" class="empty">None</td></tr>{% endfor %}
+    </table></div>
+  </section>
+  {% if f.subagents %}
+  <section class="card">
+    <h2>Subagents covered</h2>
+    <div class="table-wrap"><table id="subagents">
+      <tr><th>Subagent</th><th>Session</th><th>Subagent type</th><th class="num">Requests</th><th class="num">Attributed</th></tr>
+      {% for a in f.subagents %}<tr><td>{{ ui.sid(a.agent_id) }}</td><td>{{ ui.sid(a.session_id) }}</td><td>{{ a.agent_type or "" }}</td>
+        <td class="num">{{ a.requests }}</td><td class="num">${{ "%.2f"|format(a.attributed) }}</td></tr>
+      {% endfor %}
+    </table></div>
+  </section>{% endif %}
+  <section class="card">
+    <h2>Requests covered</h2>
+    <div class="table-wrap"><table id="requests">
+      <tr><th>Request</th><th>Session</th><th>Model</th><th class="num">Cost</th>{% if f.formula %}<th class="num">Avoidable (before $0 floor)</th>{% endif %}</tr>
+      {% for r in f.requests %}<tr><td>{{ ui.sid(r.message_id, 14) }}</td><td>{{ ui.sid(r.session_id) }}</td><td>{{ r.model }}</td>
+        <td class="num">${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td class="num">{{ "%.2f"|format(r.avoidable) }}</td>{% endif %}</tr>
+      {% endfor %}
+    </table></div>
+  </section>
+{% endblock %}
