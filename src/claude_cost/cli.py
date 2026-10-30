@@ -93,7 +93,8 @@ def format_compact(analysis) -> str:
             lines.append("  cost vs threshold: " + ", ".join(
                 f"{c.threshold // 1000}K=${c.cost:.2f}" for c in m.curve) +
                 f" (observed ${m.actual_cost:.2f})")
-    lines.append("Claude Code settings (autocompact fires 33,000 tokens before the window):")
+    lines.append(f"Claude Code settings (autocompact fires {analysis.AUTOCOMPACT_OFFSET:,} "
+                 "tokens before the window):")
     lines.append(analysis.model_settings_json())
     return "\n".join(lines)
 

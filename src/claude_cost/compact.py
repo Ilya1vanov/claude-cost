@@ -18,7 +18,9 @@ import math
 import sqlite3
 from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Mapping
+from enum import Enum
+from functools import cached_property
+from typing import ClassVar, Mapping
 
 from . import pricing
 from .localtime import price_day
@@ -43,6 +45,11 @@ class CurvePoint:
     cost: float  # total replayed cost if compacting at this threshold
 
 
+class WindowClamp(Enum):
+    RAISED = "raised"
+    LOWERED = "lowered"
+
+
 @dataclass(frozen=True)
 class ModelThreshold:
     model: str | None  # None = the global threshold
@@ -55,26 +62,31 @@ class ModelThreshold:
     actual_cost: float  # observed carrying cost of the replayed requests
     curve: tuple[CurvePoint, ...]  # of the model, or of the global fit when source == "global"
 
+    @cached_property
+    def _window(self) -> tuple[int, WindowClamp | None]:
+        wanted = self.threshold + AUTOCOMPACT_OFFSET
+        if wanted < MIN_AUTOCOMPACT_WINDOW:
+            return MIN_AUTOCOMPACT_WINDOW, WindowClamp.RAISED
+        if wanted > MAX_AUTOCOMPACT_WINDOW:
+            return MAX_AUTOCOMPACT_WINDOW, WindowClamp.LOWERED
+        return wanted, None
+
     @property
     def autocompact_window(self) -> int:
         """modelSettings.<model>.autoCompactWindow that makes autocompact fire at `threshold`."""
-        return min(max(self.threshold + AUTOCOMPACT_OFFSET, MIN_AUTOCOMPACT_WINDOW),
-                   MAX_AUTOCOMPACT_WINDOW)
+        return self._window[0]
 
     @property
-    def window_clamp(self) -> str | None:
-        """"raised" / "lowered" when `autocompact_window` had to be clamped, else None."""
-        wanted = self.threshold + AUTOCOMPACT_OFFSET
-        if wanted < MIN_AUTOCOMPACT_WINDOW:
-            return "raised"
-        return "lowered" if wanted > MAX_AUTOCOMPACT_WINDOW else None
+    def window_clamp(self) -> WindowClamp | None:
+        """How `autocompact_window` had to be clamped to Claude Code's range, else None."""
+        return self._window[1]
 
     @property
     def window_note(self) -> str | None:
-        if self.window_clamp == "raised":
+        if self.window_clamp is WindowClamp.RAISED:
             return (f"raised to {MIN_AUTOCOMPACT_WINDOW:,}: autocompact fires at "
                     f"{MIN_AUTOCOMPACT_WINDOW - AUTOCOMPACT_OFFSET:,}")
-        if self.window_clamp == "lowered":
+        if self.window_clamp is WindowClamp.LOWERED:
             return f"lowered to {MAX_AUTOCOMPACT_WINDOW:,}: autocompact can't reach the Compact threshold"
         return None
 
@@ -97,6 +109,14 @@ class CompactAnalysis:
     stream_of: Mapping[str, tuple[str, str | None]]  # message_id -> (logical session, agent id)
     own_prices: Mapping[str, tuple[float, float]] = field(default_factory=dict)
     # model -> (average $ per post token of a compaction, average cache-read $ per token)
+
+    # The autocompact rule, exposed for the CLI and the page to quote.
+    CLAUDE_CODE_VERSION: ClassVar[str] = CLAUDE_CODE_VERSION
+    AUTOCOMPACT_OUTPUT_RESERVE: ClassVar[int] = AUTOCOMPACT_OUTPUT_RESERVE
+    AUTOCOMPACT_BUFFER: ClassVar[int] = AUTOCOMPACT_BUFFER
+    AUTOCOMPACT_OFFSET: ClassVar[int] = AUTOCOMPACT_OFFSET
+    MIN_AUTOCOMPACT_WINDOW: ClassVar[int] = MIN_AUTOCOMPACT_WINDOW
+    MAX_AUTOCOMPACT_WINDOW: ClassVar[int] = MAX_AUTOCOMPACT_WINDOW
 
     def model_settings_json(self) -> str:
         """Copy-paste Claude Code `modelSettings`: every model's recommended window by model id."""

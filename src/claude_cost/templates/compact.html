@@ -22,9 +22,9 @@
   </section>
   <section class="card">
     <h2>Claude Code settings</h2>
-    <p>Claude Code autocompacts 33,000 tokens before <code>autoCompactWindow</code> (a 20,000 output reserve plus a
-      13,000 buffer, read from Claude Code {{ claude_code_version }}), so the recommended window is the Compact threshold plus 33,000,
-      kept within the 100,000 to 1,000,000 Claude Code accepts. Paste into your Claude Code settings:</p>
+    <p>Claude Code autocompacts {{ "{:,}".format(a.AUTOCOMPACT_OFFSET) }} tokens before <code>autoCompactWindow</code> (a {{ "{:,}".format(a.AUTOCOMPACT_OUTPUT_RESERVE) }} output reserve plus a
+      {{ "{:,}".format(a.AUTOCOMPACT_BUFFER) }} buffer, read from Claude Code {{ a.CLAUDE_CODE_VERSION }}), so the recommended window is the Compact threshold plus {{ "{:,}".format(a.AUTOCOMPACT_OFFSET) }},
+      kept within the {{ "{:,}".format(a.MIN_AUTOCOMPACT_WINDOW) }} to {{ "{:,}".format(a.MAX_AUTOCOMPACT_WINDOW) }} Claude Code accepts. Paste into your Claude Code settings:</p>
     <pre id="model-settings">{{ a.model_settings_json() }}</pre>
   </section>
   <div class="grid grid-2">

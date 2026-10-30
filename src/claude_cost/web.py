@@ -6,7 +6,7 @@ from typing import Callable
 
 from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
 
-from . import compact as compact_mod, explore
+from . import explore
 from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
@@ -74,8 +74,7 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.get("/compact")
     def compact():
-        return render_template("compact.html", a=service_factory().compact_thresholds(),
-                               claude_code_version=compact_mod.CLAUDE_CODE_VERSION)
+        return render_template("compact.html", a=service_factory().compact_thresholds())
 
     @app.get("/findings")
     def findings():
