@@ -182,6 +182,17 @@ class SessionTimeline:
     parent_session_id: str | None = None  # of a Side session / Fork
     link_kind: str | None = None
 
+    @property
+    def sequence(self) -> tuple[TimelinePoint | CompactionMark, ...]:
+        """The requests with each compaction placed where it happened, in time order."""
+        out: list[TimelinePoint | CompactionMark] = []
+        pending = list(self.compactions)
+        for i, p in enumerate(self.points):
+            while pending and pending[0].before_index <= i:
+                out.append(pending.pop(0))
+            out.append(p)
+        return tuple(out + pending)
+
 
 PERIOD_MODES = ("last7", "week", "month")
 
@@ -926,6 +937,11 @@ class QueryService:
         with self._conn:
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ? AND session_id IN (?, ?)",
                                (name, session_id, row["logical_session_id"] if row else session_id))
+
+    def session_labels(self) -> dict[str, str]:
+        """Label of every logical Session id: custom title, else the first 60 characters of the
+        first prompt, else the id. The single label source every page (and Top sessions) uses."""
+        return {sid: info.label for sid, info in self._session_infos().items()}
 
     def session_choices(self) -> list[tuple[str, str, float]]:
         """(Session id, label, cost) of every top-level Session, costliest first: the pin picker."""
