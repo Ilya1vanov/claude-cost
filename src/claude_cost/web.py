@@ -6,6 +6,7 @@ from typing import Callable
 
 from flask import Flask, abort, redirect, render_template, request, url_for
 
+from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 
 DASHBOARD_DAYS = 30
@@ -51,6 +52,28 @@ def create_app(service_factory: Callable[[], QueryService],
             unpriced=service.unpriced_models(),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
+
+    @app.get("/findings")
+    def findings():
+        service = service_factory()
+        since = _since_arg()
+        return render_template("findings.html", findings=service.findings(since), since=since,
+                               note=NOT_ADDITIVE_NOTE, drain=DRAIN, opportunity=OPPORTUNITY)
+
+    @app.get("/findings/<finding_id>")
+    def finding_detail(finding_id: str):
+        since = _since_arg()
+        try:
+            f = service_factory().finding(finding_id, since)
+        except KeyError:
+            abort(404)
+        return render_template("finding.html", f=f, since=since, note=NOT_ADDITIVE_NOTE)
+
+    def _since_arg():
+        try:
+            return date.fromisoformat(request.args["since"]) if request.args.get("since") else None
+        except ValueError:
+            abort(400, "since must be a date like 2026-10-01")
 
     @app.get("/compare")
     def compare():
