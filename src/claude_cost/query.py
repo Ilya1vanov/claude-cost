@@ -733,8 +733,8 @@ class QueryService:
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
                                           self.compact_thresholds(), self._compare_model,
-                                          cache.median_first_context(self._conn),
-                                          self.graph)
+                                          median_first_context=cache.median_first_context(self._conn),
+                                          graph=self.graph)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,

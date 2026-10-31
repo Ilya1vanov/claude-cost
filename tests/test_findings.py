@@ -320,7 +320,6 @@ def test_findings_on_a_store_from_before_the_change_work_after_the_cli_ingests(r
     with conn:
         conn.execute("DROP TABLE request_stream")
         conn.execute("DROP INDEX tool_uses_ts")
-        conn.execute("DROP INDEX session_links_sid")
         conn.execute("DELETE FROM meta WHERE key = 'median_first_context'")
     conn.close()
     out = io.StringIO()
@@ -328,5 +327,69 @@ def test_findings_on_a_store_from_before_the_change_work_after_the_cli_ingests(r
     assert "Cold resume: attributed $1.20, avoidable $1.04" in out.getvalue()
     check = store.connect(tmp_path / "data" / "store.sqlite", schema=False)
     assert check.execute("SELECT COUNT(*) FROM request_stream").fetchone()[0] == 2
-    assert {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='index'")} >= {
-        "tool_uses_ts", "session_links_sid"}
+    assert "tool_uses_ts" in {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+
+
+def test_cold_resume_reports_nothing_when_the_median_baseline_is_missing(root, tmp_path):
+    from claude_cost import cache
+    _cold_session(root)
+    svc = _service(tmp_path, root)
+    with svc._conn:
+        svc._conn.execute("DELETE FROM meta WHERE key = ?", (cache.MEDIAN_FIRST_META,))
+    assert cache.median_first_context(svc._conn) is None
+    f = _by_id(svc.findings())["cold-resume"]
+    assert f.requests == () and f.attributed == 0
+    assert "unavailable" in f.detail
+
+
+def test_a_request_without_stream_facts_gets_them_at_the_next_ingest(root, tmp_path, classify_calls):
+    _cold_session(root)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:  # the Request keeps its cache event but lost its Stream facts
+        conn.execute("DELETE FROM request_stream WHERE message_id = 'resume'")
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 2
+    row = conn.execute("SELECT gap, first_context FROM request_stream WHERE message_id = 'resume'").fetchone()
+    assert (row["gap"], row["first_context"]) == (10_800, 20_000)
+
+
+def _classified_rows(conn):
+    return ([tuple(r) for r in conn.execute("SELECT * FROM request_cache ORDER BY message_id")],
+            [tuple(r) for r in conn.execute("SELECT * FROM request_stream ORDER BY message_id")],
+            conn.execute("SELECT value FROM meta WHERE key = 'median_first_context'").fetchone()[0])
+
+
+def test_incremental_classification_equals_a_full_recompute(root, tmp_path):
+    from claude_cost import cache
+    _cold_session(root)
+    root.write_transcript("q", "s2", [req("q1", "2026-10-30T09:00:00Z", write_1h=50_000),
+                                      req("q2", "2026-10-30T09:02:00Z", cache_read=50_000, write_1h=1_000)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("a1-1", "2026-10-30T10:00:30Z", input=70_000)])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    # a later Request in an existing Stream, an earlier one in another, and a new Session
+    root.write_transcript("p", "s1b", [req("late", "2026-10-30T20:00:00Z", write_1h=10_000, session_id="s1")])
+    root.write_transcript("q", "s2b", [req("q0", "2026-10-30T08:00:00Z", write_1h=999_000, session_id="s2")])
+    root.write_transcript("r", "s3", [req("r1", "2026-10-30T11:00:00Z", write_1h=7_000)])
+    ingest.ingest(conn, [root.path])
+    incremental = _classified_rows(conn)
+    with conn:
+        conn.execute("DELETE FROM request_cache")
+        conn.execute("DELETE FROM request_stream")
+        cache.classify_all(conn)
+    assert incremental == _classified_rows(conn)
+    assert len(incremental[1]) == 8
+
+
+def test_ingest_classifies_only_the_streams_that_gained_requests(root, tmp_path):
+    _cold_session(root)
+    root.write_transcript("q", "s2", [req("q1", "2026-10-30T09:00:00Z", write_1h=50_000)])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:  # a marker only a rewrite of the other Stream would erase
+        conn.execute("UPDATE request_stream SET gap = 12345 WHERE message_id = 'q1'")
+    root.write_transcript("p", "s1b", [req("n1", "2026-10-30T13:05:00Z", cache_read=150_000, session_id="s1")])
+    ingest.ingest(conn, [root.path])
+    gaps = dict(conn.execute("SELECT message_id, gap FROM request_stream").fetchall())
+    assert gaps["q1"] == 12345 and gaps["n1"] == 300

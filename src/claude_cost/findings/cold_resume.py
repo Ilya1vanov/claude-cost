@@ -16,6 +16,8 @@ def detect(ctx: FindingContext) -> Detection:
     idle = ctx.threshold("cold_resume_idle_minutes")
     min_ctx = ctx.threshold("cold_resume_min_context")
     fresh = ctx.median_first_context
+    if fresh is None:
+        return Detection([], "median first-request context unavailable until the next ingest")
     covered = []
     for r in ctx.rows:
         if not is_cold_resume(r.cache_event, r.gap, r.context, idle, min_ctx):

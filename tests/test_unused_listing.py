@@ -300,5 +300,6 @@ def test_detector_loads_the_session_graph_when_given_a_conn_without_one(root, se
     _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
     svc = service_for(root)
     ctx = findings_mod.FindingContext(findings_mod.load_rows(svc._conn, None, None, None),
-                                      {}, findings_mod.all_thresholds(), svc._table, svc._conn)
+                                      {}, findings_mod.all_thresholds(), svc._table, svc._conn,
+                                      median_first_context=0.0)
     assert unused_listing.detect(ctx).covered

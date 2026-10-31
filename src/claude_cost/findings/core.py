@@ -170,10 +170,11 @@ class FindingContext:
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
-                 compare_model: str = DEFAULT_COMPARE_MODEL, median_first_context: float = 0.0,
-                 graph=None):
+                 compare_model: str = DEFAULT_COMPARE_MODEL, *,
+                 median_first_context: float | None, graph=None):
         self.rows = rows
-        self.median_first_context = median_first_context  # lifetime, not per Period
+        # lifetime, not per Period; None when the store has not stored it (Cold resume then reports nothing)
+        self.median_first_context = median_first_context
         if graph is None and conn is not None:
             graph = session_graph.load(conn)
         self.graph = graph  # session_graph.SessionGraph: how Transcripts group into Sessions

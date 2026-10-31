@@ -501,9 +501,15 @@ def _regroup_sessions(conn: sqlite3.Connection) -> None:
         "SELECT f.file_stem AS stem, l.other FROM transcript_links l "
         "JOIN ingest_files f ON f.path = l.path")}
     group_pairs, relations = _desktop_links(conn, set(first_ts))
+    old = {r["stem"]: r["logical_session_id"] for r in conn.execute("SELECT * FROM session_links")}
+    new = _group_sessions(first_ts, links | group_pairs)
     conn.execute("DELETE FROM session_links")
-    conn.executemany("INSERT INTO session_links VALUES (?,?)",
-                     _group_sessions(first_ts, links | group_pairs).items())
+    conn.executemany("INSERT INTO session_links VALUES (?,?)", new.items())
+    moved = {s for s in old.keys() | new.keys() if old.get(s) != new.get(s)}
+    if moved:  # every transcript of a Session that gained or lost one is classified again
+        sessions = {m.get(s, s) for s in moved for m in (old, new)}
+        cache.invalidate_transcripts(conn, moved | sessions | {
+            s for m in (old, new) for s, sid in m.items() if sid in sessions})
     conn.execute("DELETE FROM session_relations")
     conn.executemany("INSERT INTO session_relations VALUES (?,?,?)",
                      [(c, p, k) for c, (p, k) in relations.items()])
@@ -665,6 +671,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         # A file with no requests yet has no first_ts; it has no copies either, so the
         # join in _recompute never sees it.
         _recompute(conn, sorted(touched), price_table)
+        cache.invalidate(conn, touched)  # their Streams are classified again below
         desktop_changed = False
         if desktop_stores is not None:
             sig = _desktop_signature(desktop_stores)
@@ -675,11 +682,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 desktop_changed = True
         if changed or desktop_changed or not conn.execute("SELECT 1 FROM session_links LIMIT 1").fetchone():
             _regroup_sessions(conn)
-        if (changed or desktop_changed
-                or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone()
-                or not conn.execute("SELECT 1 FROM request_stream LIMIT 1").fetchone()
-                or not conn.execute("SELECT 1 FROM meta WHERE key = ?",
-                                    (cache.MEDIAN_FIRST_META,)).fetchone()):
+        if changed or desktop_changed or cache.needs_classification(conn):
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))

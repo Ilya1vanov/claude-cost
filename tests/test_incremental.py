@@ -214,10 +214,9 @@ def test_ingest_with_no_changes_does_not_rebuild_links_or_cache(root, desktop, t
     sentinel()
     run()
     assert event() == "sentinel"  # nothing changed: classification was not rerun
-    desktop.write_session("d2", "s1", priorCliSessionIds=["s0"])  # a Desktop store file changed
+    desktop.write_session("d2", "s1", priorCliSessionIds=["s0"])  # a Desktop file that moves no transcript
     run()
-    assert event() == "warm"
-    sentinel()
+    assert event() == "sentinel"
     root.append_to_transcript("p", "s1", [req("m2", "2026-10-30T02:00:00Z", write_1h=1_000)])
     run()
     assert event() != "sentinel"  # a transcript changed
@@ -236,3 +235,17 @@ def test_cli_ingest_stores_the_compact_analysis_for_the_configured_settings(root
     assert compact.stored(conn, compact.key(table, compact.MIN_SAMPLE, compact.STEP)) is None
     cli._ingest(dataclasses.replace(cfg, thresholds={}), NOW)  # missing settings fall back to defaults
     assert compact.stored(conn, compact.key(table, compact.MIN_SAMPLE, compact.STEP)) is not None
+
+
+def test_regrouping_sessions_reclassifies_the_streams_it_merges(root, desktop, tmp_path):
+    root.write_transcript("p", "s0", [req("a", "2026-10-30T01:00:00Z", write_1h=1_000)])
+    root.write_transcript("p", "s1", [req("b", "2026-10-30T09:00:00Z", write_1h=1_000)])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path], desktop_stores=[desktop.path])
+    assert dict(conn.execute("SELECT message_id, event FROM request_cache").fetchall()) == {
+        "a": "warm", "b": "warm"}
+    desktop.write_session("d1", "s1", priorCliSessionIds=["s0"])  # s0 and s1 are one Session now
+    ingest.ingest(conn, [root.path], desktop_stores=[desktop.path])
+    assert dict(conn.execute("SELECT message_id, event FROM request_cache").fetchall()) == {
+        "a": "warm", "b": "cold"}
+    assert conn.execute("SELECT gap FROM request_stream WHERE message_id = 'b'").fetchone()[0] == 8 * 3600
