@@ -10,7 +10,7 @@ def detect(ctx: FindingContext) -> Detection:
     if analysis is None or analysis.global_ is None:
         return Detection([], "no compactions observed, so no Compact threshold")
     covered, charged = [], set()
-    for r in ctx.period_rows:
+    for r in ctx.rows:
         t = analysis.for_model(r.model)
         price = compact.read_price(r.model, r.day, ctx.price_table)
         if t is None or price is None or r.context <= t.threshold:

@@ -6,7 +6,7 @@ from .core import OPPORTUNITY, Covered, Detection, FindingContext, FindingDef
 
 def detect(ctx: FindingContext) -> Detection:
     covered = []
-    for r in ctx.period_rows:
+    for r in ctx.rows:
         if not r.model.startswith("claude-fable"):
             continue
         alt = ctx.price(ctx.compare_model, r)

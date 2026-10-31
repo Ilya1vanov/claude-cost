@@ -54,3 +54,12 @@ def test_fork_subagent_uses_fork_flag(root, service_for):
     assert [r.message_id for r in f.requests] == ["f-a"]
     assert [s.agent_id for s in f.subagents] == ["fork1"]
     assert all(r.avoidable is None for r in f.requests)
+
+
+def test_wide_subagent_whose_first_request_precedes_the_period(root, service_for):
+    from datetime import date
+    root.write_transcript("p", "s1", [req("main", "2026-10-30T10:00:00Z", input=1_000)])
+    _sub(root, "wide1", [req("w-a", "2026-10-29T10:01:00Z", input=60_000),
+                         req("w-b", "2026-10-30T10:02:00Z", input=1_000)])
+    f = _by_id(service_for(root).findings(date(2026, 10, 30), date(2026, 10, 30)))["wide-subagent"]
+    assert [r.message_id for r in f.requests] == ["w-b"]
