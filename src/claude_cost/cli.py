@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -21,6 +22,7 @@ from . import config as config_mod
 from .config import Config, ConfigError, load_config
 from .findings import DRAIN, all_thresholds, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
+from .spotlights import SpotlightError
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
 
@@ -181,6 +183,87 @@ def cmd_prices(config: Config, now: datetime, out, err) -> int:
     return 0
 
 
+def _date(d: date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _summary_json(s) -> dict:
+    return {"name": s.name, "kind": s.kind, "total": round(s.total, 4), "requests": s.requests,
+            "sessions": s.sessions, "includes": s.includes,
+            "first_activity": _date(s.first_activity), "last_activity": _date(s.last_activity)}
+
+
+def _print_spotlight_list(summaries, as_json: bool, out) -> None:
+    if as_json:
+        print(json.dumps([_summary_json(s) for s in summaries], indent=2), file=out)
+        return
+    for s in summaries:
+        includes = f"  includes {s.includes}" if s.includes else ""
+        print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
+
+
+def _print_spotlight_detail(detail, as_json: bool, out) -> None:
+    if as_json:
+        included = [{"name": i.name, "kind": i.kind, "cost": round(i.cost, 4), "sessions": i.sessions}
+                    for i in detail.included]
+        members = [{"id": m.session_id, "label": m.label, "cost": round(m.cost, 4),
+                    "requests": m.requests, "joined_as": m.joined_as, "picked": m.picked,
+                    "key_matched": m.key_matched, "via": m.via} for m in detail.sessions]
+        print(json.dumps({**_summary_json(detail.summary), "picked": list(detail.picked),
+                          "included": included, "members": members}, indent=2), file=out)
+        return
+    summary = detail.summary
+    print(f"{summary.name}  {summary.kind}  {_money(summary.total)}  "
+          f"{summary.sessions} sessions, {summary.requests} requests", file=out)
+    for inc in detail.included:
+        print(f"  includes {inc.name}  {_money(inc.cost)}  {inc.sessions} sessions", file=out)
+    for m in detail.sessions:
+        print(f"  {m.session_id}  {_money(m.cost)}  {m.label}  [{m.joined_as}]", file=out)
+
+
+def _print_session_search(found, as_json: bool, out) -> None:
+    if as_json:
+        print(json.dumps([{"id": c.session_id, "label": c.label, "cost": round(c.cost, 4), "kind": c.kind}
+                          for c in found], indent=2), file=out)
+        return
+    for c in found:
+        kind = f"  [{c.kind}]" if c.kind else ""
+        print(f"{c.session_id}  {_money(c.cost)}  {c.label}{kind}", file=out)
+
+
+def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
+    """`spotlight` group: each subcommand calls the QueryService operation the web uses, which
+    validates names and Sessions and raises SpotlightError."""
+    svc = _service(config, now, err)  # ingest first, so new Sessions can be picked
+    action = args.spotlight_action
+    if action == "list":
+        _print_spotlight_list(svc.spotlights(), args.json, out)
+    elif action == "show":
+        try:
+            detail = svc.spotlight(args.name)
+        except KeyError:
+            raise SpotlightError(f"no Spotlight named {args.name!r}") from None
+        _print_spotlight_detail(detail, args.json, out)
+    elif action == "search":
+        _print_session_search(svc.search_sessions(args.text, ""), args.json, out)
+    elif action == "create":
+        svc.create_spotlight(args.name, args.session, args.include)
+    elif action == "delete":
+        svc.delete_spotlight(args.name)
+    elif action == "add":
+        svc.add_sessions(args.name, args.session, create=False)
+    elif action == "remove":
+        for session_id in args.session:
+            svc.remove_session(args.name, session_id)
+    elif action == "include":
+        for other in args.other:
+            svc.include_spotlight(args.name, other)
+    elif action == "exclude":
+        for other in args.other:
+            svc.exclude_spotlight(args.name, other)
+    return 0
+
+
 def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
               run_server: Callable | None, open_browser: Callable[[str], object]) -> int:
     from .web import create_app
@@ -205,18 +288,20 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
 
 def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[list[str]], object]) -> int:
     """`config` shows every setting; get/set/path/edit work on the file. Works even if the file is broken."""
-    config_mod.ensure_config_file(path)
+    config_mod.ensure_config_file(path, env)
     action = args.config_action
     if action == "path":
         print(path, file=out)
     elif action == "get":
-        print(config_mod.get_value(path, args.key), file=out)
+        setting = config_mod.get_setting(path, args.key, env)
+        detected = "  (source: default (detected))" if setting.source == "default (detected)" else ""
+        print(f"{setting.value}{detected}", file=out)
     elif action == "set":
         print(f"{args.key} = {config_mod.set_value(path, args.key, args.value)}", file=out)
     elif action == "edit":
         run_editor([*shlex.split(env.get("EDITOR") or "vi"), str(path)])
     else:
-        for v in config_mod.describe_settings(path):
+        for v in config_mod.describe_settings(path, env):
             print(f"{v.name} = {v.value}  (default: {v.default}, source: {v.source})", file=out)
     return 0
 
@@ -244,6 +329,29 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
     p_serve.add_argument("--browser", choices=["default", "none"],
                          help="none: don't open a browser (also BROWSER=none)")
+    spot = sub.add_parser("spotlight", help="list, show, create and edit Spotlights")
+    spot_sub = spot.add_subparsers(dest="spotlight_action", required=True)
+    sp = spot_sub.add_parser("list", help="every Spotlight with its total")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("show", help="one Spotlight: included Spotlights and sessions")
+    sp.add_argument("name")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("search", help="find sessions by key or text, ranked as the web picker does")
+    sp.add_argument("text")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("create", help="create a Spotlight")
+    sp.add_argument("name")
+    sp.add_argument("--session", action="append", default=[], help="Picked session id (repeatable)")
+    sp.add_argument("--include", action="append", default=[], help="Spotlight to include (repeatable)")
+    spot_sub.add_parser("delete", help="delete a Spotlight").add_argument("name")
+    for action, helptext in (("add", "pick sessions"), ("remove", "unpick sessions")):
+        sp = spot_sub.add_parser(action, help=helptext)
+        sp.add_argument("name")
+        sp.add_argument("session", nargs="+")
+    for action, helptext in (("include", "include Spotlights"), ("exclude", "stop including Spotlights")):
+        sp = spot_sub.add_parser(action, help=helptext)
+        sp.add_argument("name")
+        sp.add_argument("other", nargs="+")
     cfg = sub.add_parser("config", help="show or change settings in config.toml")
     cfg_sub = cfg.add_subparsers(dest="config_action")
     cfg_sub.add_parser("path", help="print the config file location")
@@ -258,7 +366,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     try:
         if args.command == "config":
             return cmd_config(args, config_mod.config_path_for(env), env, out, run_editor)
-        config_mod.ensure_config_file(config_mod.config_path_for(env))
+        config_mod.ensure_config_file(config_mod.config_path_for(env), env)
         config = load_config(env)
     except ConfigError as e:
         print(f"claude-cost: {e}", file=err)
@@ -278,6 +386,12 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         except ConfigError as e:
             print(f"claude-cost: {e}", file=err)
             return 2
+    if args.command == "spotlight":
+        try:
+            return cmd_spotlight(args, config, now_fn(), out, err)
+        except SpotlightError as e:
+            print(f"claude-cost: {e}", file=err)
+            return 1
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
     if (args.browser or env.get("BROWSER")) == "none":

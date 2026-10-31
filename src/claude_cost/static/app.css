@@ -186,6 +186,7 @@ th:last-child, td:last-child { padding-right: 0; }
 td small { display: block; margin-top: 2px; }
 td.empty { color: var(--muted); text-align: center; padding: 20px; }
 td.nowrap { white-space: nowrap; }
+td.name-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.session-cell, th.session-cell { width: 160px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.title { min-width: 260px; max-width: 420px; }
 .rank { color: var(--muted); width: 1%; font-variant-numeric: tabular-nums; }
@@ -292,12 +293,13 @@ details summary { cursor: pointer; color: var(--accent); margin-bottom: 8px; }
 /* Session picker */
 .picker { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; max-width: 720px; }
 .picker .chips { display: contents; }
-.picker .chip { margin: 0; padding: 2px 6px 2px 10px; }
+.picker .chip { margin: 0; padding: 2px 6px 2px 10px; max-width: 280px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: inline-block; }
 .picker .chip small { color: var(--muted); }
 .picker .chip.fixed { padding-right: 10px; background: var(--surface-2); color: var(--text); }
 .chip-x { border: none; background: transparent; color: inherit; padding: 0 6px; border-radius: 999px; cursor: pointer; line-height: 1.4; }
 .chip-x:hover { background: var(--surface); filter: none; }
-.picker-form { flex: 1 1 260px; margin: 0; }
+.picker-form { flex: 1 1 100%; margin: 0; }
+.picker-submit { margin-left: 4px; }
 .picker-input { width: 100%; }
 .picker-list {
   position: absolute; top: 100%; left: 0; right: 0; z-index: 10; margin: 4px 0 0; padding: 4px; list-style: none;
@@ -307,3 +309,9 @@ details summary { cursor: pointer; color: var(--accent); margin-bottom: 8px; }
 .picker-item { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .picker-item:hover { background: var(--surface-2); }
 .picker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Spotlight session tree: indent by nesting level (capped at 4) */
+td.tree-depth-1 { padding-left: 28px; }
+td.tree-depth-2 { padding-left: 48px; }
+td.tree-depth-3 { padding-left: 68px; }
+td.tree-depth-4 { padding-left: 88px; }

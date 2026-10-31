@@ -145,6 +145,76 @@ def test_serve_uses_configured_port(env, root):
     assert code == 0 and seen == [("127.0.0.1", 9321)]
 
 
+# --- Desktop session store detected by default (macOS) ---
+
+@pytest.fixture
+def mac(monkeypatch):
+    from claude_cost import config
+    monkeypatch.setattr(config, "_is_macos", lambda: True)
+
+
+def _desktop_folder(env) -> Path:
+    return Path(env["HOME"]) / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+
+
+def test_desktop_default_resolves_to_the_detected_folder_and_links_side_sessions(mac, root, env):
+    from helpers import DesktopStore, req
+    from claude_cost import ingest, store
+    from claude_cost.query import QueryService
+    folder = _desktop_folder(env)
+    desktop = DesktopStore(folder / "acct" / "org")
+    root.write_transcript("p", "old", [req("m1", "2026-10-30T01:00:00Z", output=1_000_000)])
+    root.write_transcript("p", "new", [req("m2", "2026-10-30T02:00:00Z", output=1_000_000)])
+    desktop.write_session("a", "new", priorCliSessionIds=["old"])
+    cfg_file(env).parent.mkdir(parents=True, exist_ok=True)
+    cfg_file(env).write_text(f'timezone = "UTC"\ndata_roots = ["{root.path}"]\n')
+    cfg = load_config(env)
+    assert cfg.desktop_stores == [folder]
+    assert cfg.sources["desktop_session_stores"] == "default (detected)"
+    assert run(["today"], env)[0] == 0
+    summaries = QueryService(store.connect(cfg.store_path), "UTC").session_summaries()
+    assert [(s.session_id, s.requests) for s in summaries] == [("old", 2)]
+
+
+def test_desktop_default_is_empty_when_the_folder_is_missing(mac, env):
+    cfg = load_config(env)
+    assert cfg.desktop_stores == []
+    assert cfg.sources["desktop_session_stores"] == "default"
+
+
+def test_desktop_default_is_not_detected_off_macos(env, monkeypatch):
+    from claude_cost import config
+    monkeypatch.setattr(config, "_is_macos", lambda: False)
+    _desktop_folder(env).mkdir(parents=True)
+    assert load_config(env).desktop_stores == []
+
+
+def test_explicit_empty_list_turns_desktop_links_off(mac, env):
+    _desktop_folder(env).mkdir(parents=True)
+    run(["config", "path"], env)
+    cfg_file(env).write_text("desktop_session_stores = []\n")
+    cfg = load_config(env)
+    assert cfg.desktop_stores == []
+    assert cfg.sources["desktop_session_stores"] == "config"
+
+
+def test_config_get_and_list_show_the_detected_value_and_source(mac, env):
+    folder = _desktop_folder(env)
+    folder.mkdir(parents=True)
+    code, out, _ = run(["config", "get", "desktop_session_stores"], env)
+    assert code == 0 and str(folder) in out and "default (detected)" in out
+    assert "detected" not in run(["config", "get", "port"], env)[1]
+    line = next(l for l in run(["config"], env)[1].splitlines() if l.startswith("desktop_session_stores"))
+    assert str(folder) in line and "source: default (detected)" in line
+
+
+def test_fresh_config_comments_the_detected_path(mac, env):
+    folder = _desktop_folder(env)
+    folder.mkdir(parents=True)
+    run(["config", "path"], env)
+    text = cfg_file(env).read_text()
+    assert f'# desktop_session_stores = ["{folder}"]' in text
+    assert tomllib.loads(text) == {}
 def test_serve_opens_browser_by_default(env, root):
     run(["config", "set", "data_roots", str(root.path)], env)
     opened = []

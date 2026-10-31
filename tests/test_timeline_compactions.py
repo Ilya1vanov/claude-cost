@@ -89,3 +89,31 @@ def test_late_compact_has_its_own_colour_not_the_cold_write_red():
     late = [l for l in css.splitlines() if "late-compact" in l and not l.strip().startswith("--")]
     assert late and not any("var(--up" in l for l in late), late
     assert 'theme.token("--late-compact")' in (root / "session.js").read_text()
+
+
+def _spanning_page(root, tmp_path):
+    root.write_transcript("p", "s1", [
+        req("m1", "2026-10-30T23:50:00Z", output=100),
+        req("m2", "2026-10-31T00:10:00Z", output=100),
+    ])
+    return _page(root, tmp_path)
+
+
+def test_chart_labels_are_full_local_timestamps(root, tmp_path):
+    import json
+    page = _spanning_page(root, tmp_path)
+    data = json.loads(re.search(r'id="chart-data" type="application/json">(.*?)</script>',
+                                page, re.S).group(1))
+    assert data["labels"] == ["2026-10-30 23:50:00", "2026-10-31 00:10:00"]
+
+
+def test_header_states_first_and_last_request_date_and_time(root, tmp_path):
+    page = _spanning_page(root, tmp_path)
+    head = page.split('class="page-head"')[1].split("</div>")[0]
+    assert "2026-10-30 23:50:00" in head and "2026-10-31 00:10:00" in head
+
+
+def test_timeline_script_formats_ticks_and_tooltip_with_dates():
+    from pathlib import Path
+    js = (Path(__file__).parent.parent / "src" / "claude_cost" / "static" / "session.js").read_text()
+    assert "callback" in js and "title" in js  # tick callback and tooltip title callback

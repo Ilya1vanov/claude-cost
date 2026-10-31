@@ -15,6 +15,13 @@
       ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); ctx.restore();
     });
   } };
+  // Labels are local "YYYY-MM-DD HH:MM:SS". A tick shows the date when it is the first tick or
+  // its day differs from the previous tick's; otherwise time only. The tooltip shows both.
+  function tickLabel(value, index, ticks) {
+    var label = this.getLabelForValue(value);
+    var prev = index > 0 ? this.getLabelForValue(ticks[index - 1].value) : null;
+    return prev === null || prev.slice(0, 10) !== label.slice(0, 10) ? label : label.slice(11);
+  }
   new Chart(document.getElementById("timeline"), {
     plugins: [compactionLines],
     data: {
@@ -32,8 +39,9 @@
         { type: "bar", label: "Cost ($)", data: d.cost, yAxisID: "y1", backgroundColor: theme.token("--bar-soft") },
       ],
     },
-    options: { plugins: { legend: { display: false }, subtitle: { display: d.late.length > 0, color: lateMark,
+    options: { plugins: { tooltip: { callbacks: { title: function (items) { return items[0].label; } } },
+        legend: { display: false }, subtitle: { display: d.late.length > 0, color: lateMark,
         text: "Late compact from " + d.late.map(function (l) { return l.pre.toLocaleString(); }).join(", ") + " tokens" } },
-      scales: { y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } } },
+      scales: { x: { ticks: { callback: tickLabel } }, y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } } },
   });
 })();

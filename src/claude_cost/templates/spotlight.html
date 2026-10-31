@@ -11,7 +11,7 @@
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
         Includes Subagents and Side sessions.</p>
-      {% call ui.picker(s.name, "submit", url_for('spotlight_add', name=s.name)) %}{% for x in d.sessions if x.picked or x.key_matched %}<span class="chip{{ ' fixed' if x.key_matched }}">{{ session_label(x.session_id) }}{% if x.key_matched %} <small>Key match</small>{% else %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="chip-x" aria-label="Remove {{ session_label(x.session_id) }}">×</button></form>{% endif %}</span>{% endfor %}{% endcall %}
+      <form method="post" action="{{ url_for('spotlight_add', name=s.name) }}">{{ ui.picker(s.name, "collect", submit=true) }}</form>
     </div>
   </div>
 
@@ -27,13 +27,29 @@
     </section>
   </div>
 
+  {% if d.included or includable %}
+  <section class="card" id="included-spotlights">
+    <h2>Included Spotlights</h2>
+    {% if d.included %}<div class="table-wrap"><table>
+      <tr><th>Spotlight</th><th class="num">Cost</th><th class="num">Sessions</th><th></th></tr>
+      {% for i in d.included %}<tr><td><a href="{{ url_for('spotlight_page', name=i.name) }}">{{ i.name }}</a></td>
+        <td class="num">${{ "%.2f"|format(i.cost) }}</td><td class="num">{{ i.sessions }}</td>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_exclude', name=s.name) }}" class="inline"><input type="hidden" name="spotlight" value="{{ i.name }}"><button type="submit" class="ghost small">Remove</button></form></td></tr>
+      {% endfor %}
+    </table></div>{% endif %}
+    {% if includable %}<form method="post" action="{{ url_for('spotlight_include', name=s.name) }}" class="inline">
+      <select name="spotlight" aria-label="Include a Spotlight">{% for n in includable %}<option>{{ n }}</option>{% endfor %}</select>
+      <button type="submit" class="small">Include</button></form>{% endif %}
+  </section>
+  {% endif %}
+
   {% set show_also = d.sessions|selectattr("also_in")|list|length > 0 %}
   <section class="card">
     <h2>Sessions</h2>
     <div class="table-wrap"><table id="spotlight-sessions">
       <tr><th>Session</th><th class="num">Cost</th><th class="num">of which Subagents</th><th>Joined as</th>{% if show_also %}<th>Also in</th>{% endif %}<th></th></tr>
-      {% for x in d.sessions %}<tr><td>{{ session_label(x.session_id) }}</td>
-        <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
+      {% for x in d.sessions %}<tr data-depth="{{ x.depth }}"><td class="tree-node tree-depth-{{ [x.depth, 4]|min }}">{% if x.depth %}<span class="muted">&#8627;</span> {% endif %}{{ session_label(x.session_id) }}</td>
+        <td class="num">${{ "%.2f"|format(x.cost) }}{% if x.subtree_cost > x.cost %}<div class="muted" title="This Session plus all its Side sessions and Forks below">${{ "%.2f"|format(x.subtree_cost) }} with Side sessions</div>{% endif %}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
         <td><span class="badge">{{ x.joined_as }}</span></td>
         {% if show_also %}<td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>{% endif %}
         <td class="num">{% if x.removable %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
@@ -51,16 +67,6 @@
       {% else %}<tr><td colspan="4" class="empty">No spend</td></tr>{% endfor %}
     </table></div>
   </section>
-
-  {% if d.subagents %}
-  <section class="card">
-    <h2>Subagents</h2>
-    <div class="table-wrap"><table id="spotlight-subagents">
-      <tr><th>Subagent</th><th>Subagent type</th><th class="session-cell">Session</th><th class="num">Cost</th></tr>
-      {% for a in d.subagents %}<tr><td class="main" title="{{ a.agent_id }}">{{ a.description or ui.sid(a.agent_id) }}</td><td>{{ a.agent_type or "" }}</td><td class="session-cell">{{ session_label(a.session_id) }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
-    </table></div>
-  </section>
-  {% endif %}
 
   {% if d.related %}
   <section class="card">
