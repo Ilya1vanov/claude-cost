@@ -85,3 +85,36 @@ def test_session_page_compactions_include_every_transcript(root, desktop, servic
     desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
     t = service_for(root, desktop=desktop).session_timeline("a-old")
     assert [c.trigger for c in t.compactions] == ["auto", "manual"]
+
+
+def _family(root, desktop):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M),
+                                      req("m5", "2026-10-29T06:00:00Z", output=M)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-29T02:00:00Z", output=M)],
+                                   meta={"agentType": "fork", "isFork": True})
+    root.write_transcript("p", "side1", [req("m3", "2026-10-29T03:00:00Z", output=M)])
+    root.write_transcript("p", "fork1", [req("m4", "2026-10-29T04:00:00Z", output=M)])
+    root.write_transcript("p", "cp1", [req("m1", "2026-10-29T01:00:00Z", output=M, forked_from="s1"),
+                                       req("m6", "2026-10-29T05:00:00Z", output=M)])
+    desktop.write_session("a", "s1")
+    desktop.write_session("b", "side1", spawnedFrom={"sessionId": "local_a", "sideSession": True})
+    desktop.write_session("c", "fork1", forkedFromSessionId="local_a")
+
+
+def test_parent_page_labels_each_kind_and_never_marks_fork_subagents(root, desktop, service_for):
+    _family(root, desktop)
+    marks = service_for(root, desktop=desktop).session_timeline("s1").side_sessions
+    assert sorted((m.session_id, m.kind) for m in marks) == [
+        ("cp1", "fork"), ("fork1", "fork"), ("side1", "side")]
+    by_id = {m.session_id: m for m in marks}
+    assert [by_id[k].before_index for k in ("side1", "fork1", "cp1")] == [1, 1, 1]
+    assert by_id["cp1"].ts > by_id["fork1"].ts
+
+
+def test_top_sessions_counts_equal_marks_for_both_kinds(root, desktop, service_for):
+    _family(root, desktop)
+    svc = service_for(root, desktop=desktop)
+    marks = svc.session_timeline("s1").side_sessions
+    s1 = {s.key: s for s in svc.period_comparison("last7", NOW).top_sessions}["s1"]
+    assert (s1.side_sessions, s1.forks) == (
+        sum(m.kind == "side" for m in marks), sum(m.kind == "fork" for m in marks)) == (1, 2)

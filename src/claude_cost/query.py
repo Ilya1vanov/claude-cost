@@ -645,7 +645,7 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k", (lo, hi))}
         infos = self._session_infos()
         top = {r.key for r in ranked}
-        children = [sid for sid, i in infos.items() if i.parent in top]
+        children = [c for t in top for c in self.graph.children(t)]
         firsts = {r["k"]: r["t"] for r in self._conn.execute(
             f"SELECT {SESSION_ID_SQL} AS k, MIN(r.ts_epoch) AS t FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
@@ -655,7 +655,7 @@ class QueryService:
         for sid in children:
             first = firsts.get(sid)  # None when every request is Subagent-owned
             if first is not None and lo <= first < hi:  # started in the period
-                key = (infos[sid].parent, infos[sid].kind)
+                key = self.graph.link(sid)
                 linked[key] = linked.get(key, 0) + 1
         labels = {sid: i.label for sid, i in infos.items()}
         return tuple(RankedSpend(
