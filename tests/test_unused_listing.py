@@ -188,3 +188,37 @@ def test_detail_page_shows_table_not_run_on_text(root, configure):
     assert 'id="detail"' in page and "2 projects" in page and "<details>" in page
     assert ";" not in page.split('id="detail"')[1].split("</table>")[0]
     assert "sessions listed" not in client.get("/findings").get_data(as_text=True)
+
+
+def test_used_elsewhere_counts_slash_command_uses(root, service_for):
+    import json
+    from helpers import assistant_lines
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("plug:tdd", 10_000))]
+    rec = assistant_lines(req("slash", "2026-10-30T10:07:00Z", output=10), "b1")[0]
+    rec["attributionSkill"] = "tdd"
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing + [use, json.dumps(rec)])
+    (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
+    assert row[3] == "2"
+
+
+def test_listing_never_read_after_it_was_written_is_not_counted(root, service_for):
+    root.write_transcript("p", "s1", [req("s1-1", "2026-10-30T10:00:00Z", write_1h=1000)],
+                          extra_lines=[skill_listing_line("2026-10-30T09:59:00Z",
+                                                          _skill("big", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert f.table is None and f.detail == ""
+
+
+def test_table_shows_top_25_then_one_row_for_the_rest(root, service_for):
+    # skill sN costs N x $0.01: 2 later requests x N x 25K tokens x $0.20/M
+    skills = {}
+    for n in range(1, 28):
+        skills |= _skill(f"s{n}", n * 25_000)
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", skills)])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert f.detail == "27 unused listings in 1 project"
+    assert len(f.table.rows) == 26
+    assert f.table.rows[0][0] == "s27" and f.table.rows[24][0] == "s3"
+    assert f.table.rows[25] == ("2 more listings", "", "", "", "$0.03")
