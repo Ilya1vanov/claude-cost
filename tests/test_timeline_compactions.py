@@ -2,11 +2,14 @@
 import re
 
 from helpers import compact_line, req
+from test_compact import _ramp_sessions
 
 
 def _session(root):
+    _ramp_sessions(root, 20, project="ramp", prefix="r")  # gives the model a Compact threshold of 130K
     root.write_transcript("p", "s1", [
-        req("m1", "2026-10-30T01:00:00Z", input=10, cache_read=0, write_5m=1000, output=100),
+        # m1's context is above the Compact threshold, so the compaction after it is late
+        req("m1", "2026-10-30T01:00:00Z", input=10, cache_read=150_000, write_5m=1000, output=100),
         req("m2", "2026-10-30T01:10:00Z", input=10, cache_read=1000, write_5m=500, output=100),
         req("m3", "2026-10-30T01:20:00Z", input=10, cache_read=1510, output=100),
     ], extra_lines=[compact_line("c1", "2026-10-30T01:05:00Z", 500_000, 8_000, "manual"),

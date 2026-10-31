@@ -185,8 +185,9 @@ def test_cli_compact_and_pages(root, configure):
     assert "33,000" in page and "2.1.314" in page
     page_snippet = json.loads(html.unescape(re.search(r'<pre id="model-settings">(.*?)</pre>', page, re.S).group(1)))
     assert page_snippet == snippet
-    assert "Late compact" in client.get("/session/t").get_data(as_text=True)
-    assert "Late compact" not in client.get("/session/n").get_data(as_text=True)  # high preTokens, low request
+    badge = '<span class="badge late-compact">Late compact</span>'
+    assert badge in client.get("/session/t").get_data(as_text=True)
+    assert badge not in client.get("/session/n").get_data(as_text=True)  # high preTokens, low request
 
 
 def test_cli_and_page_show_the_clamp_note_and_global_badge(root, configure):
