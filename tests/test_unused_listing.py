@@ -242,3 +242,38 @@ def test_table_shows_top_25_then_one_row_for_the_rest(root, service_for):
     assert len(f.table.rows) == 26
     assert f.table.rows[0][0] == "s27" and f.table.rows[24][0] == "s3"
     assert f.table.rows[25] == ("2 more listings", "", "", "", "$0.03")
+
+
+def test_listing_written_before_the_period_is_charged_to_its_active_streams_period_requests(
+        root, service_for):
+    root.write_transcript("p", "s1", [
+        req("e1", "2026-10-20T10:00:00Z", write_1h=1000),
+        req("p1", "2026-10-30T10:00:00Z", cache_read=1_000_000),
+        req("p2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+        req("p3", "2026-10-30T10:10:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-20T09:59:00Z", _skill("old", 10_000))])
+    # a Stream with no Request in the Period is not read at all
+    root.write_transcript("p", "idle", [req("i1", "2026-10-20T10:00:00Z", write_1h=1000),
+                                        req("i2", "2026-10-20T10:05:00Z", cache_read=1000)],
+                          extra_lines=[skill_listing_line("2026-10-20T09:59:00Z", _skill("old2", 10_000))])
+    since = __import__("datetime").date(2026, 10, 30)
+    f = _by_id(service_for(root).findings(since))["unused-listing"]
+    assert [r.message_id for r in f.requests] == ["p2", "p3"]
+    assert f.avoidable == pytest.approx(0.004)
+    assert [r[0] for r in f.table.rows] == ["old"]
+
+
+def test_suffix_matching_agrees_with_the_endswith_rule_including_colons_in_the_prefix():
+    from claude_cost.findings.unused_listing import _used
+
+    def oracle(name, kind, used):
+        return name in used or (kind == "skill" and any(name.endswith(f":{u}") for u in used))
+
+    names = ["tdd", "plug:tdd", "a:b:tdd", "a:b:", "a::b", ":x", "x", "a:b"]
+    useds = ["tdd", "b:tdd", "a:b:tdd", "plug", "a:b", "b", "", "x", "a", "::b", "plug:tdd"]
+    for name in names:
+        for u in useds:
+            for kind in ("skill", "mcp"):
+                assert _used(name, kind, {u}) == oracle(name, kind, {u}), (name, u, kind)
+    assert _used("a:b:tdd", "skill", {"zzz", "b:tdd"})
+    assert not _used("a:b:tdd", "mcp", {"b:tdd"})

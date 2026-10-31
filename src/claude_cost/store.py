@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS session_links (
   stem TEXT PRIMARY KEY,
   logical_session_id TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS session_links_sid ON session_links (logical_session_id);
 -- cache event of each request's write: cold | warm | none (ticket #10, see cache.py)
 CREATE TABLE IF NOT EXISTS request_cache (
   message_id TEXT PRIMARY KEY,
@@ -206,6 +207,7 @@ CREATE TABLE IF NOT EXISTS tool_uses (
   name TEXT NOT NULL,
   ts_epoch REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS tool_uses_ts ON tool_uses (ts_epoch);
 """
 
 

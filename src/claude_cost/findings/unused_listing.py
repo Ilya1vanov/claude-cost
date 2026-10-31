@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from collections import defaultdict
+from functools import lru_cache
 from itertools import accumulate
+import json
 
 from .. import pricing
 from ..projects import project_display_names
@@ -17,11 +19,15 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
+@lru_cache(maxsize=None)
+def _suffixes(name: str) -> frozenset[str]:
+    """What follows each ':' in `name`: a skill may be invoked without its plugin prefix, and
+    the prefix itself may contain ':'."""
+    return frozenset(name[i + 1:] for i, c in enumerate(name) if c == ":")
+
+
 def _used(listing_name: str, kind: str, used: set[str]) -> bool:
-    if listing_name in used:
-        return True
-    # a skill may be invoked without its plugin prefix
-    return kind == "skill" and any(listing_name.endswith(f":{u}") for u in used)
+    return listing_name in used or (kind == "skill" and not used.isdisjoint(_suffixes(listing_name)))
 
 
 def _read_rate(ctx: FindingContext, r) -> float:
@@ -65,56 +71,56 @@ def detect(ctx: FindingContext) -> Detection:
     if ctx.conn is None or not period:
         return Detection([])
     start = min(r.ts for r in period)
-    sid_of = {x["stem"]: x["sid"] for x in ctx.conn.execute(
-        "SELECT stem, logical_session_id AS sid FROM session_links")}
     agent_of = {x["message_id"]: x["agent_id"] or "" for x in ctx.conn.execute(
         "SELECT message_id, agent_id FROM request_surface")}
     by_stream: dict[tuple[str, str], list] = defaultdict(list)  # (session, agent) -> requests
     for r in period:
         by_stream[(r.session_id, agent_of.get(r.message_id, ""))].append(r)
-    used: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for x in ctx.conn.execute("SELECT project, kind, name, ts_epoch FROM tool_uses"):
-        if x["ts_epoch"] >= start:
-            used[x["project"]][x["kind"] + ":" + x["name"]] += 1
-    attributed: dict[str, set[str]] = defaultdict(set)  # project -> skills used by slash command
-    slash: dict[str, int] = defaultdict(int)  # skill -> slash command uses in any project
-    for x in ctx.conn.execute("SELECT r.project, r.ts_epoch, s.skill FROM request_skills s "
-                              "JOIN requests r ON r.message_id = s.message_id"):
-        if x["ts_epoch"] >= start:  # slash commands and attributionSkill count as uses too
-            attributed[x["project"]].add(x["skill"])
-            slash[x["skill"]] += 1
+    # Listings and removals are read for the active Streams only, selected by Stream and never
+    # by time: a Stream's earliest Listing and its removals can predate the Period.
+    active = json.dumps(sorted({sid for sid, _ in by_stream}))
+    sid_of = {x["stem"]: x["sid"] for x in ctx.conn.execute(
+        "SELECT stem, logical_session_id AS sid FROM session_links "
+        "WHERE logical_session_id IN (SELECT value FROM json_each(?)) "
+        "OR stem IN (SELECT value FROM json_each(?))", (active, active))}
+    stems = json.dumps(sorted(set(sid_of) | {sid for sid, _ in by_stream if sid not in sid_of}))
+    names_used: dict[tuple[str, str], set[str]] = defaultdict(set)  # (project, kind) -> names
+    uses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # kind -> name -> uses
+    for x in ctx.conn.execute("SELECT project, kind, name FROM tool_uses WHERE ts_epoch >= ?",
+                              (start,)):
+        names_used[(x["project"], x["kind"])].add(x["name"])
+        uses[x["kind"]][x["name"]] += 1
+    for x in ctx.conn.execute("SELECT r.project, s.skill FROM request_skills s "
+                              "JOIN requests r ON r.message_id = s.message_id "
+                              "WHERE r.ts_epoch >= ?", (start,)):
+        # slash commands and attributionSkill count as uses too
+        names_used[(x["project"], "skill")].add(x["skill"])
+        uses["slash"][x["skill"]] += 1
     # earliest Listing per (project, session, agent, kind, name); resume copies repeat them
     listed: dict[tuple, tuple[float, int]] = {}
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
-                              "FROM listings ORDER BY ts_epoch"):
+                              "FROM listings WHERE stem IN (SELECT value FROM json_each(?)) "
+                              "ORDER BY ts_epoch", (stems,)):
         sid = sid_of.get(x["stem"], x["stem"])
         key = (x["project"], sid, x["agent_id"], x["kind"], x["name"])
         listed.setdefault(key, (x["ts_epoch"], x["tokens"]))
     removed: dict[tuple, list[float]] = defaultdict(list)  # removal times
-    for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals"):
+    for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals "
+                              "WHERE stem IN (SELECT value FROM json_each(?))", (stems,)):
         sid = sid_of.get(x["stem"], x["stem"])
         removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
     def elsewhere(kind: str, name: str) -> int:
         """Invocations of the listing, matched like `_used`, in every project."""
-        n = sum(n for counts in used.values() for k, n in counts.items()
-                if k.startswith(kind + ":") and _used(name, kind, {k.split(":", 1)[1]}))
-        if kind == "skill":  # slash commands count as uses too
-            n += sum(c for s, c in slash.items() if _used(name, kind, {s}))
-        return n
-    used_names: dict[tuple[str, str], set[str]] = {}  # (project, kind) -> names used there
+        pools = [uses[kind]] + ([uses["slash"]] if kind == "skill" else [])  # slash commands too
+        return sum(pool.get(m, 0) for pool in pools
+                   for m in (name, *(_suffixes(name) if kind == "skill" else ())))
     streams: dict[tuple[str, str], _Stream] = {}
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
         reqs = by_stream.get((sid, agent))
         if not reqs:
             continue  # session not active in the period
-        u = used_names.get((project, kind))
-        if u is None:
-            u = {k.split(":", 1)[1] for k in used[project] if k.startswith(kind + ":")}
-            if kind == "skill":
-                u |= attributed[project]
-            used_names[(project, kind)] = u
-        if _used(name, kind, u):
+        if _used(name, kind, names_used[(project, kind)]):
             continue
         stream = streams.get((sid, agent))
         if stream is None:  # period rows are oldest first, so each stream's requests already are
