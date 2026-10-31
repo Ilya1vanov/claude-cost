@@ -534,7 +534,7 @@ class QueryService:
             for a, first in self._subagent_starts(session_id) if a.parent_agent_id == agent_id)
         sides = tuple(SideSessionMark(s.session_id, first, index(first), s.cost, s.requests,
                                       s.link_kind)
-                      for s, first in self._side_sessions(session_id)) if agent_id is None else ()
+                      for s, first in self._child_sessions(session_id)) if agent_id is None else ()
         parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
         return SessionTimeline(
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
@@ -561,7 +561,8 @@ class QueryService:
         return [(a, self._first_ts(session_id, a.agent_id))
                 for a in self.subagent_summaries() if a.session_id == session_id]
 
-    def _side_sessions(self, session_id: str) -> list[tuple[SessionSummary, float]]:
+    def _child_sessions(self, session_id: str) -> list[tuple[SessionSummary, float]]:
+        """Sessions whose Parent session is `session_id` (Side sessions and Forks), with first timestamps."""
         children = set(self.graph.children(session_id))
         return [(s, self._first_ts(s.session_id)) for s in self.session_summaries()
                 if s.session_id in children]

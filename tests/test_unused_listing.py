@@ -257,3 +257,13 @@ def test_listing_in_a_resumed_sessions_second_transcript_is_attributed_to_that_s
     assert [s.session_id for s in f.sessions] == ["a-old"]
     assert f.avoidable == pytest.approx(0.004)
     assert f.table.rows[0][2].items == ("p: $0.00, 1 session",)
+
+
+def test_detector_loads_the_session_graph_when_given_a_conn_without_one(root, service_for):
+    from claude_cost import findings as findings_mod
+    from claude_cost.findings import unused_listing
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    svc = service_for(root)
+    ctx = findings_mod.FindingContext(findings_mod.load_rows(svc._conn, None, None, None),
+                                      {}, findings_mod.all_thresholds(), svc._table, svc._conn)
+    assert unused_listing.detect(ctx).covered
