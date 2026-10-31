@@ -301,7 +301,7 @@ def create_app(service_factory: Callable[[], QueryService],
                 abort(400, "from and to must both be dates like 2026-10-01")
             if agent_id is None:
                 in_period = service.session_spend(session_id, period)
-        chart = {"labels": [service.local_time(p.ts).strftime("%H:%M:%S")
+        chart = {"labels": [service.local_time(p.ts).strftime("%Y-%m-%d %H:%M:%S")
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
                  "cost": [round(p.cost, 4) for p in timeline.points],

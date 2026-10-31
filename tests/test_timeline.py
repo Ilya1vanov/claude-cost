@@ -83,4 +83,4 @@ def test_session_page_shows_times_in_the_configured_time_zone(root, tmp_path):
     page = client.get("/session/s1").get_data(as_text=True)
     assert "2026-10-30 02:00:00 CET" in page          # m1 was 01:00:00Z
     assert "2026-10-30 01:00:00 UTC" not in page
-    assert '"02:00:00"' in page                        # chart label
+    assert '"2026-10-30 02:00:00"' in page                       # chart label
