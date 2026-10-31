@@ -259,3 +259,86 @@ def test_payback_is_for_the_threshold_applied_and_the_models_own_prices(root, se
     assert haiku.threshold == a.global_.threshold
     assert haiku.compaction_cost == pytest.approx(a.global_.post_tokens_p75 * per_post("claude-haiku-5-5"))
     assert haiku.compaction_cost != pytest.approx(a.global_.compaction_cost)
+
+
+# --- stored Compact analysis: computed at ingest, read back by the query service ---
+
+@pytest.fixture
+def analyze_calls(monkeypatch):
+    from claude_cost import compact
+    calls = []
+    real = compact.analyze
+
+    def spy(*a, **kw):
+        calls.append(1)
+        return real(*a, **kw)
+    monkeypatch.setattr(compact, "analyze", spy)
+    return calls
+
+
+def _ingest(tmp_path, root, **kw):
+    from claude_cost import ingest as ingest_mod, pricing, store
+    conn = store.connect(tmp_path / "store.sqlite")
+    ingest_mod.ingest(conn, [root.path], price_table=pricing.build_table(kw.pop("prices", None)), **kw)
+    return conn
+
+
+def test_reingest_without_new_transcript_bytes_does_not_recompute(root, tmp_path, analyze_calls):
+    _ramp_sessions(root, 3)
+    _ingest(tmp_path, root)
+    assert len(analyze_calls) == 1
+    _ingest(tmp_path, root)
+    assert len(analyze_calls) == 1
+    root.write_transcript("p", "new", [req("n1", "2026-10-20T10:00:00Z", cache_read=1_000)])
+    _ingest(tmp_path, root)
+    assert len(analyze_calls) == 2
+
+
+def test_changed_settings_or_prices_recompute_at_the_next_ingest(root, tmp_path, analyze_calls):
+    from claude_cost import compact
+    _ramp_sessions(root, 3)
+    _ingest(tmp_path, root)
+    _ingest(tmp_path, root, compact_settings=(compact.MIN_SAMPLE, 5_000))
+    assert len(analyze_calls) == 2
+    _ingest(tmp_path, root, compact_settings=(compact.MIN_SAMPLE, 5_000))
+    assert len(analyze_calls) == 2
+    _ingest(tmp_path, root, compact_settings=(5, 5_000))
+    assert len(analyze_calls) == 3
+    _ingest(tmp_path, root, compact_settings=(5, 5_000),
+            prices={"claude-opus-5-5": {"input": 9.0, "output": 40.0}})
+    assert len(analyze_calls) == 4
+
+
+def test_read_with_settings_that_differ_from_the_stored_ones_gets_the_right_thresholds(root, service_for):
+    _ramp_sessions(root, 20)
+    stored = service_for(root).compact_thresholds()
+    finer = service_for(root, thresholds={"compact_step": 5_000}).compact_thresholds()
+    assert {c.threshold % 10_000 for c in stored.global_.curve} == {0}
+    assert {c.threshold % 10_000 for c in finer.global_.curve} == {0, 5_000}
+    assert service_for(root).compact_thresholds().global_.curve == stored.global_.curve  # read wrote nothing
+
+
+def test_stored_analysis_equals_a_fresh_one(root, tmp_path):
+    from claude_cost import compact
+    from claude_cost.query import QueryService
+    _ramp_sessions(root, 20)
+    _ramp_sessions(root, 3, model="claude-sonnet-5-5", prefix="x")
+    root.write_transcript("p", "h", [req("h1", "2026-10-02T10:00:00Z", model="claude-haiku-5-5", cache_read=50_000)])
+    conn = _ingest(tmp_path, root)
+    assert QueryService(conn, "UTC").compact_thresholds() == compact.analyze(conn)
+
+
+def test_oversized_context_charges_one_compaction_per_subagent_stream(root, service_for):
+    _ramp_sessions(root, 20)
+    root.write_transcript("p", "main", [req("a1", "2026-10-20T10:00:00Z", cache_read=900_000)])
+    for agent in ("x", "y"):
+        root.write_subagent_transcript("p", "main", agent, [
+            req(f"{agent}1", "2026-10-20T10:01:00Z", cache_read=900_000),
+            req(f"{agent}2", "2026-10-20T10:02:00Z", cache_read=900_000)],
+            meta={"agentType": "general-purpose"})
+    f = {f.id: f for f in service_for(root).findings()}["oversized-context"]
+    mine = {r.message_id: r.avoidable for r in f.requests if r.session_id == "main"}
+    reads = 770_000 * 0.2e-6
+    assert sorted(mine) == ["a1", "x1", "x2", "y1", "y2"]
+    assert sorted(round(v, 6) for v in mine.values()) == sorted(
+        [round(reads - 0.28, 6)] * 3 + [round(reads, 6)] * 2)

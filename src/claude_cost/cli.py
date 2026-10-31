@@ -13,6 +13,7 @@ from importlib import metadata
 from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
+from . import compact
 from . import ingest as ingest_mod
 from . import localtime
 from . import pricing
@@ -116,7 +117,9 @@ def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> i
                 print(warning, file=err)
         return ingest_mod.ingest(conn, config.data_roots, rebuild=rebuild, now=now,
                                  price_table=pricing.build_table(config.prices),
-                                 desktop_stores=config.desktop_stores)
+                                 desktop_stores=config.desktop_stores,
+                                 compact_settings=(config.thresholds["compact_min_sample"],
+                                                   config.thresholds["compact_step"]))
     finally:
         conn.close()
 

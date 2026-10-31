@@ -12,14 +12,13 @@ recomputes all Requests from the kept copies.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cache, ownership, pricing, sources
+from . import cache, compact, ownership, pricing, sources
 from .localtime import price_day
 
 
@@ -402,7 +401,7 @@ def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) 
 
 def reprice(conn: sqlite3.Connection, table: dict) -> None:
     """Re-price every stored Request when the price table in effect changed since last time."""
-    fp = hashlib.sha256(repr(sorted(table.items())).encode()).hexdigest()
+    fp = pricing.fingerprint(table)
     row = conn.execute("SELECT fingerprint FROM pricing_state").fetchone()
     if row and row["fingerprint"] == fp:
         return
@@ -424,6 +423,21 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
             "UPDATE requests SET priced=?, cost_input=?, cost_output=?, cost_cache_write_5m=?, "
             "cost_cache_write_1h=?, cost_cache_read=? WHERE message_id=?", updates)
         conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
+
+
+def _store_compact(conn: sqlite3.Connection, table: dict, settings: tuple[int, int],
+                   data_changed: bool) -> None:
+    """Keep the Compact analysis in `meta`; recompute only when its inputs may have changed."""
+    key = compact.key(table, *settings)
+    row = conn.execute("SELECT value FROM meta WHERE key = 'compact_key'").fetchone()
+    if (not data_changed and row is not None and row["value"] == key
+            and conn.execute("SELECT 1 FROM meta WHERE key = 'compact_analysis'").fetchone()):
+        return
+    analysis = compact.analyze(conn, table, *settings)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('compact_analysis', ?)",
+                     (compact.to_json(analysis),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('compact_key', ?)", (key,))
 
 
 def _desktop_signature(stores: list[Path]) -> str:
@@ -550,7 +564,8 @@ def _str(meta: dict, key: str) -> str | None:
 
 def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False,
            now: datetime | None = None, price_table: dict | None = None,
-           desktop_stores: list[Path] | None = None) -> int:
+           desktop_stores: list[Path] | None = None,
+           compact_settings: tuple[int, int] = (compact.MIN_SAMPLE, compact.STEP)) -> int:
     """Ingest all Data roots; returns the number of Requests in the store afterwards.
 
     `desktop_stores` are Desktop session store folders (scanned recursively) that link Side
@@ -673,4 +688,5 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
     reprice(conn, price_table)
+    _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

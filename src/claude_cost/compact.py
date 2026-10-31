@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from enum import Enum
 from functools import cached_property
@@ -28,6 +28,7 @@ from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
+FORMAT = 1  # shape of the stored analysis (`to_json`); bump it whenever that shape changes
 
 # Autocompact fires at autoCompactWindow - 33,000: the window minus an output reserve, minus a
 # buffer. Read from the Claude Code 2.1.314 bundle; re-check when autocompacts fire elsewhere.
@@ -106,7 +107,6 @@ class _Req:
 class CompactAnalysis:
     models: tuple[ModelThreshold, ...]  # models with at least one observed compaction
     global_: ModelThreshold | None  # None when there are no compactions at all
-    stream_of: Mapping[str, tuple[str, str | None]]  # message_id -> (logical session, agent id)
     own_prices: Mapping[str, tuple[float, float]] = field(default_factory=dict)
     # model -> (average $ per post token of a compaction, average cache-read $ per token)
 
@@ -204,7 +204,6 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
                          x["ctx"], p.cache_read / 1_000_000, out_per_token))
         if x["agent_id"] is None:
             last_model.setdefault(x["sid"], []).append((x["ts_epoch"], x["model"]))
-    stream_of = {r.message_id: r.stream for r in reqs}
 
     posts: dict[str, list[int]] = {}
     for c in conn.execute(
@@ -220,7 +219,7 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         own_prices[model] = (sum(r.cost_per_post for r in mine) / len(mine),
                              sum(r.read_price for r in mine) / len(mine))
     if not all_posts:
-        return CompactAnalysis((), None, stream_of, own_prices)
+        return CompactAnalysis((), None, own_prices)
 
     global_ = _fit(None, reqs, all_posts, "global", step)
     models = []
@@ -234,7 +233,29 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
             models.append(ModelThreshold(
                 model, global_.threshold, "global", len(ps), own.post_tokens_p75,
                 cost, payback, own.actual_cost, global_.curve))
-    return CompactAnalysis(tuple(models), global_, stream_of, own_prices)
+    return CompactAnalysis(tuple(models), global_, own_prices)
+
+
+def key(table, min_sample: int, step: int) -> str:
+    """What a stored analysis depends on: prices, settings and the stored shape. (The time zone
+    is not an input: `price_day` is always the UTC day.)"""
+    return json.dumps([pricing.fingerprint(table), min_sample, step, FORMAT])
+
+
+def to_json(a: CompactAnalysis) -> str:
+    return json.dumps({"models": [asdict(m) for m in a.models],
+                       "global": None if a.global_ is None else asdict(a.global_),
+                       "own_prices": a.own_prices})
+
+
+def from_json(text: str) -> CompactAnalysis:
+    def threshold(d: dict) -> ModelThreshold:
+        return ModelThreshold(**{**d, "curve": tuple(CurvePoint(**c) for c in d["curve"])})
+    d = json.loads(text)
+    return CompactAnalysis(
+        tuple(threshold(m) for m in d["models"]),
+        None if d["global"] is None else threshold(d["global"]),
+        {m: tuple(p) for m, p in d["own_prices"].items()})
 
 
 def read_price(model: str, day: date, table=None) -> float | None:

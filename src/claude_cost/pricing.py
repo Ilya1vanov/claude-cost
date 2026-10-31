@@ -8,6 +8,7 @@ Config overrides (`build_table`) replace a model's entries; unknown models are n
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import date
 from typing import Mapping
@@ -144,3 +145,8 @@ def price_request(model: str, on: date, *, input: int, output: int,
         cache_write_1h=write_1h * p.input * WRITE_1H_MULT / m,
         cache_read=cache_read * p.cache_read / m,
     )
+
+
+def fingerprint(table: Mapping[str, list[PriceEntry]]) -> str:
+    """Identifies the price table in effect: changes when any price or effective date does."""
+    return hashlib.sha256(repr(sorted(table.items())).encode()).hexdigest()

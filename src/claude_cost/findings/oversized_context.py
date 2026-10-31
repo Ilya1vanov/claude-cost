@@ -16,7 +16,7 @@ def detect(ctx: FindingContext) -> Detection:
         if t is None or price is None or r.context <= t.threshold:
             continue
         avoidable = (r.context - t.threshold) * price  # reads above T
-        stream = analysis.stream_of.get(r.message_id, (r.session_id, None))
+        stream = (r.session_id, r.agent_id)
         if stream not in charged:  # one compaction per stream pays for all its excess reads
             charged.add(stream)
             avoidable -= t.compaction_cost
