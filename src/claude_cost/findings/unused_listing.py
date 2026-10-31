@@ -47,12 +47,16 @@ class _Stream:
         self.ts = [r.ts for r in reqs]
         self.rates = [_read_rate(ctx, r) for r in reqs]
         self.delta = [0] * (len(reqs) + 1)
+        # the Stream's last Request before the Period, if any (its gap is stored at ingest)
+        self.prev_ts = None if reqs[0].gap is None else reqs[0].ts - reqs[0].gap
 
     def charge(self, ts: float, gone: float | None, tokens: int) -> float | None:
         """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
-        the cache: those after the one that wrote it, before the removal. Returns its $, or
-        None when no request read it."""
-        lo = bisect_left(self.ts, ts) + 1
+        the cache: those after the one that wrote it (the first at or after `ts`, possibly before
+        the Period), before the removal. Returns its $, or None when no request read it."""
+        lo = bisect_left(self.ts, ts)
+        if lo or self.prev_ts is None or self.prev_ts < ts:  # the writer is a Period Request: skip it
+            lo += 1
         hi = len(self.reqs) if gone is None else bisect_left(self.ts, gone)
         if lo >= hi:
             return None
