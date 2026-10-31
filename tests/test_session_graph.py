@@ -62,6 +62,14 @@ def test_fork_of_a_fork_names_the_immediate_parent(root, graph_for):
     assert g.link("s2") == ("s1", "fork")
 
 
+def test_fork_of_a_fork_holding_its_grandparents_copies_names_the_immediate_parent(root, graph_for):
+    t(root, "s1")
+    root.write_transcript("p", "s3", [req("m1-s1", "2026-10-30T01:00:00Z", output=M, forked_from="s1"),
+                                      req("m2", "2026-10-30T02:00:00Z", output=M, forked_from="s2"),
+                                      req("m3", "2026-10-30T03:00:00Z", output=M)])
+    assert graph_for(root).link("s3") == ("s2", "fork")
+
+
 def test_fork_subagent_never_links(root, graph_for):
     t(root, "s1")
     root.write_subagent_transcript("p", "s1", "f1", [req("m2", "2026-10-30T02:00:00Z", output=M,
