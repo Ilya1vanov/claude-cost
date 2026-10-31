@@ -5,7 +5,7 @@ from .core import OPPORTUNITY, Covered, Detection, FindingContext, FindingDef
 
 
 def detect(ctx: FindingContext) -> Detection:
-    return Detection([Covered(r.message_id) for r in ctx.period_rows if r.agent_id and r.agent_fork])
+    return Detection([Covered(r.message_id) for r in ctx.rows if r.agent_id and r.agent_fork])
 
 
 FINDING = FindingDef(

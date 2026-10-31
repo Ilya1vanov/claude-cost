@@ -8,12 +8,8 @@ THRESHOLD = "wide_subagent_context_tokens"
 
 def detect(ctx: FindingContext) -> Detection:
     limit = ctx.threshold(THRESHOLD)
-    first: dict[str, int] = {}  # agent_id -> context of its first request (rows are time-ordered)
-    for r in ctx.rows:
-        if r.agent_id and r.agent_id not in first:
-            first[r.agent_id] = r.context
-    return Detection([Covered(r.message_id) for r in ctx.period_rows
-                      if r.agent_id and first[r.agent_id] >= limit],
+    return Detection([Covered(r.message_id) for r in ctx.rows
+                      if r.agent_id and r.stream_first_context >= limit],
                      f"first-request context >= {limit:,} tokens")
 
 

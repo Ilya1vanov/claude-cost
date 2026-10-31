@@ -15,9 +15,9 @@ def is_cold_resume(cache_event: str, gap: float | None, context: int,
 def detect(ctx: FindingContext) -> Detection:
     idle = ctx.threshold("cold_resume_idle_minutes")
     min_ctx = ctx.threshold("cold_resume_min_context")
-    fresh = ctx.median_first_context()
+    fresh = ctx.median_first_context
     covered = []
-    for r in ctx.period_rows:
+    for r in ctx.rows:
         if not is_cold_resume(r.cache_event, r.gap, r.context, idle, min_ctx):
             continue
         written = r.write_5m + r.write_1h

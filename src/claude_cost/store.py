@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS request_cache (
   message_id TEXT PRIMARY KEY,
   event TEXT NOT NULL
 );
+-- per-Stream facts findings need from before their Period, stored with the cache events
+-- (see cache.py): idle gap since the Stream's previous Request (NULL for its first) and the
+-- context of the Stream's first Request
+CREATE TABLE IF NOT EXISTS request_stream (
+  message_id TEXT PRIMARY KEY,
+  gap REAL,
+  first_context INTEGER NOT NULL
+);
 -- pricing inputs not in `requests`, so a price change can re-price stored rows (ticket #5)
 CREATE TABLE IF NOT EXISTS request_attrs (
   message_id TEXT PRIMARY KEY,

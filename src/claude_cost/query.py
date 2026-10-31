@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from . import cache
 from . import compact as compact_mod
 from . import explore
 from . import findings as findings_mod
@@ -724,7 +725,8 @@ class QueryService:
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
-                                          self.compact_thresholds(), self._compare_model)
+                                          self.compact_thresholds(), self._compare_model,
+                                          cache.median_first_context(self._conn))
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,

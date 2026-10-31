@@ -228,3 +228,56 @@ def test_cold_resume_gap_is_per_stream_not_per_session(root, service_for):
     root.write_subagent_transcript("p", "s1", "a1", [req("sub", "2026-10-30T12:30:00Z", write_1h=1_000)])
     f = _by_id(service_for(root).findings())["cold-resume"]
     assert [r.message_id for r in f.requests] == ["resume"]
+
+
+# --- findings load only Period Requests; Stream facts come from ingest ---
+
+def test_cold_resume_detects_a_cold_write_whose_previous_request_precedes_the_period(root, service_for):
+    _cold_session(root)  # 10:00 on 10-30, resume at 13:00 on 10-30 (same day as the Period below)
+    root.write_transcript("p", "s2", [
+        req("old", "2026-09-01T10:00:00Z", write_1h=20_000),
+        req("back", "2026-10-30T09:00:00Z", write_1h=150_000)])
+    svc = service_for(root)
+    f = _by_id(svc.findings(date(2026, 10, 30), date(2026, 10, 30)))["cold-resume"]
+    assert {r.message_id for r in f.requests} == {"resume", "back"}
+
+
+def test_findings_context_holds_only_period_requests(root, service_for):
+    from claude_cost import findings as findings_mod
+    _cold_session(root)
+    svc = service_for(root)
+    rows = findings_mod.load_rows(svc._conn, None, 1e18, None)
+    assert rows == []
+    assert [r.message_id for r in findings_mod.load_rows(svc._conn, None, None, None)] == ["first", "resume"]
+
+
+@pytest.fixture
+def classify_calls(monkeypatch):
+    from claude_cost import cache
+    calls = []
+    real = cache.classify_all
+    monkeypatch.setattr(cache, "classify_all", lambda conn: (calls.append(1), real(conn))[1])
+    return calls
+
+
+def test_reingest_recomputes_stream_facts_only_when_inputs_changed(root, tmp_path, classify_calls):
+    _cold_session(root)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 1
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 1
+    root.write_transcript("p", "s9", [req("n1", "2026-10-30T11:00:00Z", write_1h=1_000)])
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 2
+
+
+def test_pre_change_store_gets_stream_facts_at_the_next_ingest(root, tmp_path, classify_calls):
+    _cold_session(root)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("DELETE FROM request_stream")
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 2
+    assert conn.execute("SELECT COUNT(*) FROM request_stream").fetchone()[0] == 2

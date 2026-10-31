@@ -8,7 +8,6 @@ at $0, a lower bound) and the Sessions and Requests it covers. See conventions.m
 from __future__ import annotations
 
 import sqlite3
-import statistics
 from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
@@ -48,8 +47,9 @@ CORE_THRESHOLDS = (
 
 @dataclass(frozen=True)
 class RequestRow:
-    """One Request with everything detectors need. `gap` = seconds since the previous
-    request of the same logical Session (None for its first request)."""
+    """One Period Request with everything detectors need. `gap` = seconds since the previous
+    Request of its Stream (None for the Stream's first); `stream_first_context` = context of
+    that Stream's first Request. Both are stored at ingest, so they may predate the Period."""
     message_id: str
     session_id: str  # logical Session
     project: str
@@ -67,7 +67,7 @@ class RequestRow:
     speed: str | None
     inference_geo: str | None
     gap: float | None
-    in_period: bool
+    stream_first_context: int
     agent_id: str | None = None  # the Subagent that made the request (None = main transcript)
     agent_type: str | None = None
     agent_fork: bool = False  # that Subagent is a fork (subagent metadata)
@@ -164,13 +164,15 @@ class Finding:
 
 
 class FindingContext:
-    """What a detector sees: every request (`rows`), thresholds, prices and the time zone."""
+    """What a detector sees: the Period's Requests (`rows`) and the facts stored per Stream at
+    ingest, never all history; plus thresholds, prices and the time zone."""
 
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
-                 compare_model: str = DEFAULT_COMPARE_MODEL):
+                 compare_model: str = DEFAULT_COMPARE_MODEL, median_first_context: float = 0.0):
         self.rows = rows
+        self.median_first_context = median_first_context  # lifetime, not per Period
         self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.compact = compact  # compact.CompactAnalysis: learned Compact thresholds
         self.price_table = price_table
@@ -180,10 +182,6 @@ class FindingContext:
     def threshold(self, name: str) -> int:
         return self._thresholds.get(name, self._defs[name].default)
 
-    @property
-    def period_rows(self) -> list[RequestRow]:
-        return [r for r in self.rows if r.in_period]
-
     def price(self, model: str, r: RequestRow) -> pricing.CostComponents | None:
         """What `r`'s tokens would cost on `model` (same date, speed and region)."""
         return pricing.price_request(
@@ -191,43 +189,40 @@ class FindingContext:
             write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
             inference_geo=r.inference_geo, table=self.price_table)
 
-    def median_first_context(self) -> float:
-        """Median context of the first request of every Session (all history)."""
-        firsts = [r.context for r in self.rows if r.gap is None and r.agent_id is None]
-        return statistics.median(firsts) if firsts else 0.0
-
 
 def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
               hi: float | None) -> list[RequestRow]:
-    """All requests, oldest first, with session gaps. `lo`/`hi` only set `in_period`."""
+    """The Requests from `lo` up to `hi` (all when None), oldest first, with their stored Stream facts."""
+    where, args = [], []
+    if lo is not None:
+        where.append("r.ts_epoch >= ?")
+        args.append(lo)
+    if hi is not None:
+        where.append("r.ts_epoch < ?")
+        args.append(hi)
     sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
            f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
+           "st.gap, COALESCE(st.first_context, 0) AS first_context, "
            "sf.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
            f"FROM requests r {SESSION_JOIN} "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
+           "LEFT JOIN request_stream st ON st.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
            "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "
            "LEFT JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
            "FROM subagent_files GROUP BY agent_id) sf ON sf.agent_id = sv.agent_id "
-           "ORDER BY r.ts_epoch, r.message_id")
-    prev: dict[tuple, float] = {}  # per stream (session + agent), as the cache classification is
-    out = []
-    for x in conn.execute(sql):
-        ts = x["ts_epoch"]
-        stream = (x["sid"], x["agent_id"])
-        gap = ts - prev[stream] if stream in prev else None
-        prev[stream] = ts
-        out.append(RequestRow(
-            x["message_id"], x["sid"], x["project"], ts, local_day(ts, tz),
-            x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
-            x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
-            x["inference_geo"] or None, gap,
-            (lo is None or ts >= lo) and (hi is None or ts < hi),
-            x["agent_id"], x["agent_type"], bool(x["is_fork"])))
-    return out
+           + ("WHERE " + " AND ".join(where) + " " if where else "")
+           + "ORDER BY r.ts_epoch, r.message_id")
+    return [RequestRow(
+        x["message_id"], x["sid"], x["project"], x["ts_epoch"], local_day(x["ts_epoch"], tz),
+        x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
+        x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
+        x["inference_geo"] or None, x["gap"], x["first_context"],
+        x["agent_id"], x["agent_type"], bool(x["is_fork"]))
+        for x in conn.execute(sql, args)]
 
 
 def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow]) -> Finding:

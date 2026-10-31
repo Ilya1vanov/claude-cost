@@ -61,7 +61,7 @@ class _Stream:
 
 
 def detect(ctx: FindingContext) -> Detection:
-    period = ctx.period_rows
+    period = ctx.rows
     if ctx.conn is None or not period:
         return Detection([])
     start = min(r.ts for r in period)
