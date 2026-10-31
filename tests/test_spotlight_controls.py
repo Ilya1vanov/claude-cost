@@ -45,7 +45,7 @@ def test_add_and_remove_session_endpoints_and_joined_as_column(root, tmp_path):
     html = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     table = html.split('id="spotlight-sessions"')[1].split("</table>")[0]
     assert "Joined as" in table and ">Link<" not in table
-    assert table.count("Key match") == 1 and table.count("Picked") == 1
+    assert table.count(">Key match<") == 1 and table.count(">Picked<") == 1
     assert client.post("/spotlights/PROJ-12/remove", data={"session": "s2"}).status_code == 400
     assert client.post("/spotlights/PROJ-12/remove", data={"session": "s1"}).status_code == 302
     table = client.get("/spotlights/PROJ-12").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]

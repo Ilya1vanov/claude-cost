@@ -315,3 +315,5 @@ td.tree-depth-1 { padding-left: 28px; }
 td.tree-depth-2 { padding-left: 48px; }
 td.tree-depth-3 { padding-left: 68px; }
 td.tree-depth-4 { padding-left: 88px; }
+td.tree-node { min-width: 280px; }
+.badge.joined { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
