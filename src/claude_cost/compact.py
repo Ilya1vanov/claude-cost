@@ -242,6 +242,24 @@ def key(table, min_sample: int, step: int) -> str:
     return json.dumps([pricing.fingerprint(table), min_sample, step, FORMAT])
 
 
+_KEY_META, _ANALYSIS_META = "compact_key", "compact_analysis"  # the `meta` rows that hold it
+
+
+def stored(conn: sqlite3.Connection, key: str) -> CompactAnalysis | None:
+    """The analysis kept in `meta` if it was made for `key`; None when absent or made for other inputs."""
+    rows = {r[0]: r[1] for r in conn.execute(
+        "SELECT key, value FROM meta WHERE key IN (?, ?)", (_KEY_META, _ANALYSIS_META))}
+    if rows.get(_KEY_META) != key or _ANALYSIS_META not in rows:
+        return None
+    return from_json(rows[_ANALYSIS_META])
+
+
+def store(conn: sqlite3.Connection, key: str, analysis: CompactAnalysis) -> None:
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (_ANALYSIS_META, to_json(analysis)))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (_KEY_META, key))
+
+
 def to_json(a: CompactAnalysis) -> str:
     return json.dumps({"models": [asdict(m) for m in a.models],
                        "global": None if a.global_ is None else asdict(a.global_),

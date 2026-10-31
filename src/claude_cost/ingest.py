@@ -429,15 +429,9 @@ def _store_compact(conn: sqlite3.Connection, table: dict, settings: tuple[int, i
                    data_changed: bool) -> None:
     """Keep the Compact analysis in `meta`; recompute only when its inputs may have changed."""
     key = compact.key(table, *settings)
-    row = conn.execute("SELECT value FROM meta WHERE key = 'compact_key'").fetchone()
-    if (not data_changed and row is not None and row["value"] == key
-            and conn.execute("SELECT 1 FROM meta WHERE key = 'compact_analysis'").fetchone()):
+    if not data_changed and compact.stored(conn, key) is not None:
         return
-    analysis = compact.analyze(conn, table, *settings)
-    with conn:
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('compact_analysis', ?)",
-                     (compact.to_json(analysis),))
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('compact_key', ?)", (key,))
+    compact.store(conn, key, compact.analyze(conn, table, *settings))
 
 
 def _desktop_signature(stores: list[Path]) -> str:

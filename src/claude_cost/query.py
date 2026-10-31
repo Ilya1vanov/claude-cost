@@ -481,12 +481,8 @@ class QueryService:
         Read from what ingest stored; computed on the fly (and not stored) when the stored
         analysis was made with other prices or settings."""
         min_sample, step = self._threshold("compact_min_sample"), self._threshold("compact_step")
-        stored = {r["key"]: r["value"] for r in self._conn.execute(
-            "SELECT key, value FROM meta WHERE key IN ('compact_key', 'compact_analysis')")}
-        if stored.get("compact_key") == compact_mod.key(self._table, min_sample, step) \
-                and "compact_analysis" in stored:
-            return compact_mod.from_json(stored["compact_analysis"])
-        return compact_mod.analyze(self._conn, self._table, min_sample, step)
+        return (compact_mod.stored(self._conn, compact_mod.key(self._table, min_sample, step))
+                or compact_mod.analyze(self._conn, self._table, min_sample, step))
 
     def _threshold(self, name: str) -> int:
         return self._thresholds.get(name, findings_mod.all_thresholds()[name].default)

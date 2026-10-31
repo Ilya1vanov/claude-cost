@@ -13,14 +13,13 @@ from importlib import metadata
 from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
-from . import compact
 from . import ingest as ingest_mod
 from . import localtime
 from . import pricing
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
-from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
+from .findings import DRAIN, all_thresholds, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
@@ -118,8 +117,9 @@ def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> i
         return ingest_mod.ingest(conn, config.data_roots, rebuild=rebuild, now=now,
                                  price_table=pricing.build_table(config.prices),
                                  desktop_stores=config.desktop_stores,
-                                 compact_settings=(config.thresholds["compact_min_sample"],
-                                                   config.thresholds["compact_step"]))
+                                 compact_settings=tuple(
+                                     config.thresholds.get(n, all_thresholds()[n].default)
+                                     for n in ("compact_min_sample", "compact_step")))
     finally:
         conn.close()
 

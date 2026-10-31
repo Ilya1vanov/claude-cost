@@ -221,3 +221,18 @@ def test_ingest_with_no_changes_does_not_rebuild_links_or_cache(root, desktop, t
     root.append_to_transcript("p", "s1", [req("m2", "2026-10-30T02:00:00Z", write_1h=1_000)])
     run()
     assert event() != "sentinel"  # a transcript changed
+
+
+def test_cli_ingest_stores_the_compact_analysis_for_the_configured_settings(root, configure, tmp_path):
+    import dataclasses
+    from claude_cost import compact, pricing
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=1_000)])
+    cfg = cli.load_config(configure(root))
+    custom = dataclasses.replace(cfg, thresholds={"compact_min_sample": 7, "compact_step": 5_000})
+    cli._ingest(custom, NOW)
+    conn = store.connect(cfg.store_path)
+    table = pricing.build_table(cfg.prices)
+    assert compact.stored(conn, compact.key(table, 7, 5_000)) is not None
+    assert compact.stored(conn, compact.key(table, compact.MIN_SAMPLE, compact.STEP)) is None
+    cli._ingest(dataclasses.replace(cfg, thresholds={}), NOW)  # missing settings fall back to defaults
+    assert compact.stored(conn, compact.key(table, compact.MIN_SAMPLE, compact.STEP)) is not None

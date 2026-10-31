@@ -2,6 +2,7 @@
 import pytest
 
 from claude_cost.compact import WindowClamp
+from claude_cost.query import QueryService
 from helpers import compact_line, req
 
 # claude-opus-5-5: cache read $0.20/M, output $20/M, 1h write $8/M.
@@ -155,7 +156,6 @@ def test_cli_compact_and_pages(root, configure):
     import json
     import re
     from claude_cost import cli, ingest, store
-    from claude_cost.query import QueryService
     from claude_cost.web import create_app
     from conftest import NOW
 
@@ -193,7 +193,6 @@ def test_cli_compact_and_pages(root, configure):
 def test_cli_and_page_show_the_clamp_note_and_global_badge(root, configure):
     import io
     from claude_cost import cli, ingest, store
-    from claude_cost.query import QueryService
     from claude_cost.web import create_app
     from conftest import NOW
 
@@ -311,8 +310,11 @@ def test_changed_settings_or_prices_recompute_at_the_next_ingest(root, tmp_path,
 
 def test_read_with_settings_that_differ_from_the_stored_ones_gets_the_right_thresholds(root, service_for):
     _ramp_sessions(root, 20)
-    stored = service_for(root).compact_thresholds()
-    finer = service_for(root, thresholds={"compact_step": 5_000}).compact_thresholds()
+    svc = service_for(root)
+    stored = svc.compact_thresholds()
+    before = _meta(svc._conn)
+    finer = QueryService(svc._conn, "UTC", thresholds={"compact_step": 5_000}).compact_thresholds()
+    assert _meta(svc._conn) == before
     assert {c.threshold % 10_000 for c in stored.global_.curve} == {0}
     assert {c.threshold % 10_000 for c in finer.global_.curve} == {0, 5_000}
     assert service_for(root).compact_thresholds().global_.curve == stored.global_.curve  # read wrote nothing
@@ -320,7 +322,6 @@ def test_read_with_settings_that_differ_from_the_stored_ones_gets_the_right_thre
 
 def test_stored_analysis_equals_a_fresh_one(root, tmp_path):
     from claude_cost import compact
-    from claude_cost.query import QueryService
     _ramp_sessions(root, 20)
     _ramp_sessions(root, 3, model="claude-sonnet-5-5", prefix="x")
     root.write_transcript("p", "h", [req("h1", "2026-10-02T10:00:00Z", model="claude-haiku-5-5", cache_read=50_000)])
@@ -342,3 +343,42 @@ def test_oversized_context_charges_one_compaction_per_subagent_stream(root, serv
     assert sorted(mine) == ["a1", "x1", "x2", "y1", "y2"]
     assert sorted(round(v, 6) for v in mine.values()) == sorted(
         [round(reads - 0.28, 6)] * 3 + [round(reads, 6)] * 2)
+
+
+def _meta(conn):
+    return [tuple(r) for r in conn.execute("SELECT key, value FROM meta ORDER BY key")]
+
+
+def test_pre_change_store_gets_the_stored_analysis_at_the_next_ingest_without_new_bytes(
+        root, tmp_path, analyze_calls):
+    from claude_cost import compact, pricing
+    _ramp_sessions(root, 3)
+    conn = _ingest(tmp_path, root)
+    with conn:
+        conn.execute("DELETE FROM meta WHERE key IN ('compact_key', 'compact_analysis')")
+    conn = _ingest(tmp_path, root)  # no transcript changes
+    assert len(analyze_calls) == 2
+    assert compact.stored(conn, compact.key(pricing.build_table(None), compact.MIN_SAMPLE, compact.STEP))
+    QueryService(conn, "UTC").compact_thresholds()
+    assert len(analyze_calls) == 2
+
+
+def test_read_with_the_stored_key_does_not_analyze(root, service_for, analyze_calls):
+    _ramp_sessions(root, 3)
+    svc = service_for(root)
+    assert len(analyze_calls) == 1  # ingest
+    svc.compact_thresholds()
+    svc.compact_thresholds()
+    assert len(analyze_calls) == 1
+
+
+def test_read_with_other_prices_equals_a_live_analysis_and_writes_nothing(root, tmp_path):
+    from claude_cost import compact, pricing, store
+    _ramp_sessions(root, 20)
+    conn = _ingest(tmp_path, root)
+    before = _meta(conn)
+    table = pricing.build_table({"claude-opus-5-5": {"input": 9.0, "output": 40.0}})
+    got = QueryService(conn, "UTC", price_table=table).compact_thresholds()
+    assert got == compact.analyze(conn, table)
+    assert got != QueryService(conn, "UTC").compact_thresholds()
+    assert _meta(conn) == before
