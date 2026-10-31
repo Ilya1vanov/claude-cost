@@ -7,7 +7,20 @@ uv tool install git+https://github.com/Ilya1vanov/claude-cost
 claude-cost today      # today's spend
 claude-cost serve      # dashboard on http://127.0.0.1:8765/
 claude-cost --version  # installed version
+
+# Spotlights from Bash (any Claude session can drive these; no LLM or Jira inside claude-cost)
+claude-cost spotlight list [--json]
+claude-cost spotlight show "Sprint 5" [--json]
+claude-cost spotlight search PROJ-12 [--json]        # same ranking as the web picker; prints full session ids
+claude-cost spotlight create "Sprint 5" [--session ID]... [--include SPOTLIGHT]...
+claude-cost spotlight add "Sprint 5" ID...           # Picked sessions
+claude-cost spotlight remove "Sprint 5" ID...
+claude-cost spotlight include "Sprint 5" PROJ-12 PROJ-13   # Included spotlights, one level of nesting
+claude-cost spotlight exclude "Sprint 5" PROJ-13
+claude-cost spotlight delete "Sprint 5"
 ```
+
+Spotlight commands ingest first, call the same `QueryService` operations as the web, and on a bad name, session id or nesting print one `claude-cost: ...` line to stderr and exit 1. `--json` shapes: `list` is an array of `{name, kind, total, requests, sessions, includes, first_activity, last_activity}`; `show` is that object plus `picked` (ids), `included` (`{name, kind, cost, sessions}`) and `members` (`{id, label, cost, requests, joined_as, picked, key_matched, via}`); `search` is an array of `{id, label, cost, kind}`.
 
 ## Developer conventions
 

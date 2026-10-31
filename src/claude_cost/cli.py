@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import subprocess
@@ -21,6 +22,7 @@ from . import config as config_mod
 from .config import Config, ConfigError, load_config
 from .findings import DRAIN, all_thresholds, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
+from .spotlights import SpotlightError
 
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
 
@@ -181,6 +183,91 @@ def cmd_prices(config: Config, now: datetime, out, err) -> int:
     return 0
 
 
+def _date(d: date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _summary_json(s) -> dict:
+    return {"name": s.name, "kind": s.kind, "total": round(s.total, 4), "requests": s.requests,
+            "sessions": s.sessions, "includes": s.includes,
+            "first_activity": _date(s.first_activity), "last_activity": _date(s.last_activity)}
+
+
+def _require_spotlight(svc: QueryService, name: str) -> None:
+    if name not in {s.name for s in svc.spotlights()}:
+        raise SpotlightError(f"no Spotlight named {name!r}")
+
+
+def _require_sessions(svc: QueryService, ids: Sequence[str]) -> None:
+    known = svc.session_labels()
+    for sid in ids:
+        if sid not in known:
+            raise SpotlightError(f"no Session with id {sid!r}")
+
+
+def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
+    """`spotlight` group: each subcommand calls the QueryService operation the web uses."""
+    svc = _service(config, now, err)  # ingest first, so new Sessions can be picked
+    act, name = args.spotlight_action, getattr(args, "name", None)
+    if act == "list":
+        rows = svc.spotlights()
+        if args.json:
+            print(json.dumps([_summary_json(s) for s in rows], indent=2), file=out)
+        for s in ([] if args.json else rows):
+            print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions"
+                  f"{f'  includes {s.includes}' if s.includes else ''}", file=out)
+    elif act == "show":
+        try:
+            d = svc.spotlight(name)
+        except KeyError:
+            raise SpotlightError(f"no Spotlight named {name!r}") from None
+        if args.json:
+            print(json.dumps({**_summary_json(d.summary), "picked": list(d.picked),
+                              "included": [{"name": i.name, "kind": i.kind, "cost": round(i.cost, 4),
+                                            "sessions": i.sessions} for i in d.included],
+                              "members": [{"id": s.session_id, "label": s.label, "cost": round(s.cost, 4),
+                                           "requests": s.requests, "joined_as": s.joined_as,
+                                           "picked": s.picked, "key_matched": s.key_matched, "via": s.via}
+                                          for s in d.sessions]}, indent=2), file=out)
+        else:
+            s = d.summary
+            print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions, {s.requests} requests", file=out)
+            for i in d.included:
+                print(f"  includes {i.name}  {_money(i.cost)}  {i.sessions} sessions", file=out)
+            for m in d.sessions:
+                print(f"  {m.session_id}  {_money(m.cost)}  {m.label}  [{m.joined_as}]", file=out)
+    elif act == "search":
+        found = svc.search_sessions(args.text, "")
+        if args.json:
+            print(json.dumps([{"id": c.session_id, "label": c.label, "cost": round(c.cost, 4), "kind": c.kind}
+                              for c in found], indent=2), file=out)
+        for c in ([] if args.json else found):
+            print(f"{c.session_id}  {_money(c.cost)}  {c.label}{f'  [{c.kind}]' if c.kind else ''}", file=out)
+    elif act == "create":
+        if name.strip() in {s.name for s in svc.spotlights()}:
+            raise SpotlightError(f"a Spotlight named {name.strip()!r} already exists")
+        for other in args.include:
+            _require_spotlight(svc, other)
+        _require_sessions(svc, args.session)
+        svc.create_spotlight(name, args.session, args.include)
+    elif act in ("delete", "add", "remove", "include", "exclude"):
+        _require_spotlight(svc, name)
+        if act == "delete":
+            svc.delete_spotlight(name)
+        elif act in ("add", "remove"):
+            _require_sessions(svc, args.session)
+            if act == "add":
+                svc.add_sessions(name, args.session)
+            for sid in ([] if act == "add" else args.session):
+                svc.remove_session(name, sid)
+        else:
+            for other in args.other:
+                _require_spotlight(svc, other)
+            for other in args.other:
+                (svc.include_spotlight if act == "include" else svc.exclude_spotlight)(name, other)
+    return 0
+
+
 def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
               run_server: Callable | None, open_browser: Callable[[str], object]) -> int:
     from .web import create_app
@@ -242,6 +329,30 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
     sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
+    spot = sub.add_parser("spotlight", help="list, show, create and edit Spotlights")
+    spot_sub = spot.add_subparsers(dest="spotlight_action", required=True)
+    sp = spot_sub.add_parser("list", help="every Spotlight with its total")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("show", help="one Spotlight: included Spotlights and sessions")
+    sp.add_argument("name")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("search", help="find sessions by key or text, ranked as the web picker does")
+    sp.add_argument("text")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("create", help="create a Spotlight")
+    sp.add_argument("name")
+    sp.add_argument("--session", action="append", default=[], help="Picked session id (repeatable)")
+    sp.add_argument("--include", action="append", default=[], help="Spotlight to include (repeatable)")
+    for act, helptext in (("delete", "delete a Spotlight"),):
+        spot_sub.add_parser(act, help=helptext).add_argument("name")
+    for act, helptext in (("add", "pick sessions"), ("remove", "unpick sessions")):
+        sp = spot_sub.add_parser(act, help=helptext)
+        sp.add_argument("name")
+        sp.add_argument("session", nargs="+")
+    for act, helptext in (("include", "include Spotlights"), ("exclude", "stop including Spotlights")):
+        sp = spot_sub.add_parser(act, help=helptext)
+        sp.add_argument("name")
+        sp.add_argument("other", nargs="+")
     cfg = sub.add_parser("config", help="show or change settings in config.toml")
     cfg_sub = cfg.add_subparsers(dest="config_action")
     cfg_sub.add_parser("path", help="print the config file location")
@@ -276,6 +387,12 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         except ConfigError as e:
             print(f"claude-cost: {e}", file=err)
             return 2
+    if args.command == "spotlight":
+        try:
+            return cmd_spotlight(args, config, now_fn(), out, err)
+        except SpotlightError as e:
+            print(f"claude-cost: {e}", file=err)
+            return 1
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)
