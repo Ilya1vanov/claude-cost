@@ -78,6 +78,9 @@ class SpotlightSession:
     key_matched: bool  # an Auto-spotlight's Key match: shown as a fixed chip
     removable: bool  # picked and not Key match: the Remove control applies
     via: str | None = None  # the included Spotlight that brought it in, when it did
+    parent_id: str | None = None  # its parent Session when that is in the Spotlight, else None (a root)
+    depth: int = 0  # nesting level in the Session tree
+    subtree_cost: float = 0.0  # own cost plus every descendant's
 
 
 @dataclass(frozen=True)
@@ -1011,13 +1014,13 @@ class QueryService:
                         continue
                     in_other.setdefault(sid, []).append(other)
         by = {s.session_id: s for s in self.session_summaries()}
-        sessions = tuple(sorted(
-            (SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
-                              by[sid].requests, self._joined_as(sid, infos, ms, defn),
-                              tuple(sorted(in_other.get(sid, ()))), sid in defn.picked,
-                              sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched,
-                              ms.via.get(sid))
-             for sid in ms.members if sid in by), key=lambda x: (-x.cost, x.session_id)))
+        members = [SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
+                                 by[sid].requests, self._joined_as(sid, infos, ms, defn),
+                                 tuple(sorted(in_other.get(sid, ()))), sid in defn.picked,
+                                 sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched,
+                                 ms.via.get(sid))
+                for sid in ms.members if sid in by]
+        sessions = self._session_tree(members, {sid: infos[sid].parent for sid in ms.members})
         related = tuple(sorted(
             (SpotlightRelated(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
                               infos[sid].parent or "") for sid in ms.related),
@@ -1072,6 +1075,32 @@ class QueryService:
         if len(names) < 2:
             raise ValueError("select at least two different Spotlights")
         return [self.spotlight(n) for n in names]
+
+    @staticmethod
+    def _session_tree(rows: list[SpotlightSession],
+                      parents: dict[str, str | None]) -> tuple[SpotlightSession, ...]:
+        """Rows in tree order: parent links restricted to the members, costliest subtree first."""
+        by = {r.session_id: r for r in rows}
+        kids: dict[str | None, list[str]] = {}
+        for sid in by:
+            parent = parents.get(sid)
+            kids.setdefault(parent if parent in by and parent != sid else None, []).append(sid)
+        total: dict[str, float] = {}
+
+        def subtree(sid: str, seen: frozenset[str]) -> float:
+            if sid not in total:
+                total[sid] = by[sid].cost + sum(
+                    subtree(k, seen | {sid}) for k in kids.get(sid, ()) if k not in seen)
+            return total[sid]
+
+        out: list[SpotlightSession] = []
+
+        def walk(parent: str | None, depth: int) -> None:
+            for sid in sorted(kids.get(parent, ()), key=lambda k: (-subtree(k, frozenset()), k)):
+                out.append(dataclasses.replace(by[sid], parent_id=parent, depth=depth, subtree_cost=total[sid]))
+                walk(sid, depth + 1)
+        walk(None, 0)
+        return tuple(out)
 
     @staticmethod
     def _joined_as(sid: str, infos: dict[str, spotlights.SessionInfo],

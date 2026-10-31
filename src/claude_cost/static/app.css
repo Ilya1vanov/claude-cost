@@ -309,3 +309,9 @@ details summary { cursor: pointer; color: var(--accent); margin-bottom: 8px; }
 .picker-item { display: flex; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .picker-item:hover { background: var(--surface-2); }
 .picker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Spotlight session tree: indent by nesting level (capped at 4) */
+td.tree-depth-1 { padding-left: 28px; }
+td.tree-depth-2 { padding-left: 48px; }
+td.tree-depth-3 { padding-left: 68px; }
+td.tree-depth-4 { padding-left: 88px; }
