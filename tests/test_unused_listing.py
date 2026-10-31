@@ -258,9 +258,23 @@ def test_listing_written_before_the_period_is_charged_to_its_active_streams_peri
                           extra_lines=[skill_listing_line("2026-10-20T09:59:00Z", _skill("old2", 10_000))])
     since = __import__("datetime").date(2026, 10, 30)
     f = _by_id(service_for(root).findings(since))["unused-listing"]
+    # e1 wrote it, so p1 reads it from the cache like p2 and p3: 3 x 10K x $0.20/M
+    assert [r.message_id for r in f.requests] == ["p1", "p2", "p3"]
+    assert f.avoidable == pytest.approx(0.006)
+    assert [r[0] for r in f.table.rows] == ["old"]
+
+
+def test_listing_written_by_the_first_period_request_is_not_charged_to_it(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("e1", "2026-10-20T10:00:00Z", write_1h=1000),
+        req("p1", "2026-10-30T10:00:00Z", write_1h=1000),
+        req("p2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+        req("p3", "2026-10-30T10:10:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("new", 10_000))])
+    since = __import__("datetime").date(2026, 10, 30)
+    f = _by_id(service_for(root).findings(since))["unused-listing"]
     assert [r.message_id for r in f.requests] == ["p2", "p3"]
     assert f.avoidable == pytest.approx(0.004)
-    assert [r[0] for r in f.table.rows] == ["old"]
 
 
 def test_suffix_matching_agrees_with_the_endswith_rule_including_colons_in_the_prefix():
