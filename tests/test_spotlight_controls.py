@@ -63,3 +63,15 @@ def test_auto_spotlights_hint_only_without_key_pattern(root, tmp_path):
     assert "Auto-spotlights are off" in page and "spotlight_key_pattern" in page
     on, _ = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
     assert "Auto-spotlights are off" not in on.get("/spotlights").get_data(as_text=True)
+
+
+def test_days_table_has_subagent_summary_cell_and_sessions_costliest_first(root, tmp_path):
+    root.write_transcript("p", "cheap", [req("m1", "2026-10-30T01:00:00Z", output=M // 10)], title="CHEAP PROJ-1")
+    root.write_transcript("p", "dear", [req("m2", "2026-10-30T01:00:00Z", output=M)], title="DEAR PROJ-1")
+    root.write_subagent_transcript("p", "dear", "a1", [req("m3", "2026-10-30T02:00:00Z", output=M)],
+                                   meta={"agentType": "Explore"})
+    client, _ = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
+    page = client.get("/spotlights/PROJ-1").get_data(as_text=True)
+    days = page[page.index('id="spotlight-days"'):]
+    assert "$20.00 · 1 run · all Explore" in days
+    assert days.index("DEAR") < days.index("CHEAP")

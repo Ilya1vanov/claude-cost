@@ -78,11 +78,20 @@ class SpotlightRelated:
 
 
 @dataclass(frozen=True)
+class SubagentDay:
+    """A day's Subagent spend in one figure."""
+    total: float
+    runs: int         # distinct Subagent runs with spend that day
+    top_type: str     # the type with the most cost (not the most runs); "unknown" when the type is missing
+    all_same: bool    # every run that day has top_type
+
+
+@dataclass(frozen=True)
 class SpotlightDay:
     day: date
     cost: float
     sessions: dict[str, float]    # Session id -> cost that day (Subagents included)
-    subagents: dict[str, float]   # "<Session id>/<agent id>" -> cost that day (a subset of sessions)
+    subagent: SubagentDay | None  # None when no Subagent spend that day
     components: dict[str, float]  # Cost component name -> cost that day
 
 
@@ -970,6 +979,8 @@ class QueryService:
             key=lambda x: (-x.cost, x.session_id)))
         subs = tuple(SpotlightSubagent(a.session_id, a.agent_id, a.agent_type, a.description, a.cost)
                      for a in self.subagent_summaries() if a.session_id in ms.members)
+        agent_types = {(a.session_id, a.agent_id): a.agent_type or "unknown"
+                       for a in self.subagent_summaries()}
         days: dict[date, list] = {}
         comps = {n: 0.0 for n, _ in COMPONENTS}
         for r in rows:
@@ -984,13 +995,24 @@ class QueryService:
             d[0] += total
             d[1][r["sid"]] = d[1].get(r["sid"], 0.0) + total
             if r["agent"] is not None:
-                key = f"{r['sid']}/{r['agent']}"
+                key = (r["sid"], r["agent"])
                 d[2][key] = d[2].get(key, 0.0) + total
+        def day_subagent(runs: dict) -> SubagentDay | None:
+            if not runs:
+                return None
+            by_type: dict[str, float] = {}
+            for key, cost in runs.items():
+                t = agent_types.get(key, "unknown")
+                by_type[t] = by_type.get(t, 0.0) + cost
+            top = max(by_type, key=lambda t: (by_type[t], t))
+            return SubagentDay(sum(runs.values()), len(runs), top, len(by_type) == 1)
+
         out_days = ()
         if days:
             first, last = min(days), max(days)
+            blank = [0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS}]
             out_days = tuple(
-                SpotlightDay(day, *(days[day] if day in days else (0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS})))
+                SpotlightDay(day, (c := days.get(day, blank))[0], c[1], day_subagent(c[2]), c[3])
                 for day in (first + timedelta(n) for n in range((last - first).days + 1)))
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
                                tuple(sorted(defn.pins)))
