@@ -8,6 +8,12 @@ from .. import pricing
 from ..projects import project_display_names
 from .core import DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef
 
+TOP = 25  # table rows before the rest are summed into one
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" + ("" if n == 1 else "s")
+
 
 def _used(listing_name: str, kind: str, used: set[str]) -> bool:
     if listing_name in used:
@@ -40,10 +46,12 @@ def detect(ctx: FindingContext) -> Detection:
         if x["ts_epoch"] >= start:
             used[x["project"]][x["kind"] + ":" + x["name"]] += 1
     attributed: dict[str, set[str]] = defaultdict(set)  # project -> skills used by slash command
+    slash: dict[str, int] = defaultdict(int)  # skill -> slash command uses in any project
     for x in ctx.conn.execute("SELECT r.project, r.ts_epoch, s.skill FROM request_skills s "
                               "JOIN requests r ON r.message_id = s.message_id"):
         if x["ts_epoch"] >= start:  # slash commands and attributionSkill count as uses too
             attributed[x["project"]].add(x["skill"])
+            slash[x["skill"]] += 1
     # earliest Listing per (project, session, agent, kind, name); resume copies repeat them
     listed: dict[tuple, tuple[float, int]] = {}
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
@@ -57,8 +65,11 @@ def detect(ctx: FindingContext) -> Detection:
         removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
     def elsewhere(kind: str, name: str) -> int:
         """Invocations of the listing, matched like `_used`, in every project."""
-        return sum(n for counts in used.values() for k, n in counts.items()
-                   if k.startswith(kind + ":") and _used(name, kind, {k.split(":", 1)[1]}))
+        n = sum(n for counts in used.values() for k, n in counts.items()
+                if k.startswith(kind + ":") and _used(name, kind, {k.split(":", 1)[1]}))
+        if kind == "skill":  # slash commands count as uses too
+            n += sum(c for s, c in slash.items() if _used(name, kind, {s}))
+        return n
     avoidable: dict[str, float] = defaultdict(float)
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
@@ -75,6 +86,8 @@ def detect(ctx: FindingContext) -> Detection:
         gone = min((t for t in removed.get((sid, agent, kind, name), ()) if t > ts), default=None)
         if gone is not None:  # a removed Listing is no longer read from that point
             later = [r for r in later if r.ts < gone]
+        if not later:
+            continue  # never read again, so it cost nothing
         cost = 0.0
         for r in later:
             c = _read_price(ctx, r, tokens)
@@ -88,17 +101,24 @@ def detect(ctx: FindingContext) -> Detection:
     by_listing: dict[tuple[str, str], list] = defaultdict(list)  # (kind, name) -> [(project, item)]
     for (project, kind, name), i in items.items():
         by_listing[(kind, name)].append((names.get(project, project), i))
+    ranked = sorted(by_listing.items(), key=lambda kv: (-sum(i["cost"] for _, i in kv[1]), kv[0]))
     rows = []
-    for (kind, name), per_project in sorted(
-            by_listing.items(), key=lambda kv: (-sum(i["cost"] for _, i in kv[1]), kv[0])):
+    for (kind, name), per_project in ranked[:TOP]:
         n = len(per_project)
         cells = tuple(f"{p}: ${i['cost']:.2f}, {len(i['sessions'])} session"
                       f"{'' if len(i['sessions']) == 1 else 's'}"
                       for p, i in sorted(per_project, key=lambda x: (-x[1]["cost"], x[0])))
         rows.append((name, kind, CollapsibleCell(f"{n} project{'' if n == 1 else 's'}", cells),
                      str(elsewhere(kind, name)), f"${sum(i['cost'] for _, i in per_project):.2f}"))
+    if rest := ranked[TOP:]:
+        rows.append((_count(len(rest), "more listing"), "", "", "",
+                     f"${sum(i['cost'] for _, pp in rest for _, i in pp):.2f}"))
+    if not rows:
+        return Detection(covered)
+    projects = {p for p, _, _ in items}
     table = DetailTable(("Listing", "Kind", "Unused in", "Used elsewhere", "Avoidable"), tuple(rows))
-    return Detection(covered, table=table if rows else None)
+    return Detection(covered, f"{_count(len(by_listing), 'unused listing')} in "
+                              f"{_count(len(projects), 'project')}", table)
 
 
 FINDING = FindingDef(

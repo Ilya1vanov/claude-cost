@@ -115,7 +115,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 ### Findings
 
 70. As a user, I want each finding to show Attributed spend and Avoidable spend separately, so that measured facts and estimates aren't mixed.
-71. As a user, I want Avoidable spend to always be a lower bound, shown with its formula, so that forecasts are never optimistic.
+71. As a user, I want Avoidable spend to always be a lower bound, with its formula on the finding's page, so that forecasts are never optimistic.
 72. As a user, I want a negative avoidable estimate shown as $0, so that a finding never claims a saving that didn't exist.
 73. As a user, I want avoidable figures labelled "not additive" and no "total avoidable" headline, so that overlapping findings don't overstate savings.
 74. As a user, I want Drains and Opportunities shown separately, so that real waste isn't confused with choices I may have made on purpose.
