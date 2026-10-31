@@ -48,12 +48,13 @@ def load(conn: sqlite3.Connection) -> SessionGraph:
         child, parent = of(r["child_stem"]), of(r["parent_stem"])
         if child != parent:
             links.setdefault(child, (parent, r["kind"]))
-    # A transcript holding copied history (forkedFrom) is a Fork of the Session it copied.
+    # A transcript holding copied history (forkedFrom) is a Fork of the Session it copied; when
+    # it also holds its grandparent's copies, the newest copied record names the immediate parent.
     for r in conn.execute(
-            "SELECT DISTINCT f.file_stem AS stem, c.session_id AS orig FROM request_copies c "
-            "JOIN ingest_files f ON f.path = c.path "
+            "SELECT f.file_stem AS stem, c.session_id AS orig, MAX(c.ts_epoch) AS last "
+            "FROM request_copies c JOIN ingest_files f ON f.path = c.path "
             "WHERE c.is_copy = 1 AND c.path NOT IN (SELECT path FROM subagent_files) "
-            "ORDER BY stem, orig"):
+            "GROUP BY stem, orig ORDER BY stem, last DESC, orig"):
         child, parent = of(r["stem"]), of(r["orig"])
         if child != parent:
             links.setdefault(child, (parent, "fork"))
