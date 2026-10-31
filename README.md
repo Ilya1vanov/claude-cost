@@ -6,6 +6,7 @@ Local, AI-free analysis of what Claude Code usage costs. Terms are defined in `G
 uv tool install git+https://github.com/Ilya1vanov/claude-cost
 claude-cost today      # today's spend
 claude-cost serve      # dashboard on http://127.0.0.1:8765/
+claude-cost serve --browser=none  # same, without opening a browser (or BROWSER=none)
 claude-cost --version  # installed version
 
 # Spotlights from Bash (any Claude session can drive these; no LLM or Jira inside claude-cost)

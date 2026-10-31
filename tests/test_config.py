@@ -215,3 +215,20 @@ def test_fresh_config_comments_the_detected_path(mac, env):
     text = cfg_file(env).read_text()
     assert f'# desktop_session_stores = ["{folder}"]' in text
     assert tomllib.loads(text) == {}
+def test_serve_opens_browser_by_default(env, root):
+    run(["config", "set", "data_roots", str(root.path)], env)
+    opened = []
+    run(["serve"], env, run_server=lambda app, host, port: None, open_browser=opened.append)
+    assert opened == ["http://127.0.0.1:8765/"]
+
+
+@pytest.mark.parametrize("argv, extra_env", [
+    (["serve", "--browser=none"], {}),
+    (["serve"], {"BROWSER": "none"}),
+])
+def test_serve_skips_browser_when_none(env, root, argv, extra_env):
+    run(["config", "set", "data_roots", str(root.path)], env)
+    opened = []
+    code, out, _ = run(argv, {**env, **extra_env}, run_server=lambda app, host, port: None,
+                       open_browser=opened.append)
+    assert code == 0 and opened == [] and "Serving http://127.0.0.1:8765/" in out

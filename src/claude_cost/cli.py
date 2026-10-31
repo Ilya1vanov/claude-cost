@@ -326,7 +326,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
-    sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
+    p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
+    p_serve.add_argument("--browser", choices=["default", "none"],
+                         help="none: don't open a browser (also BROWSER=none)")
     spot = sub.add_parser("spotlight", help="list, show, create and edit Spotlights")
     spot_sub = spot.add_subparsers(dest="spotlight_action", required=True)
     sp = spot_sub.add_parser("list", help="every Spotlight with its total")
@@ -392,6 +394,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
             return 1
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
+    if (args.browser or env.get("BROWSER")) == "none":
+        open_browser = lambda url: None
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)
 
 
