@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import cache, compact, ownership, pricing, sources
+from . import cache, compact, ownership, pricing, sources, spotlight_migration
 from .localtime import price_day
 
 
@@ -690,4 +690,5 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
+    spotlight_migration.run(conn)  # once, after the Sessions are grouped
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

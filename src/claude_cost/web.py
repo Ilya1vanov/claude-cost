@@ -164,7 +164,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_create():
         name = request.form.get("name", "")
         try:
-            service_factory().save_spotlight(name, request.form.get("rule", ""))
+            service_factory().create_spotlight(name, request.form.getlist("session"))
         except SpotlightError as e:
             abort(400, str(e))
         return redirect(url_for("spotlight_page", name=name.strip()))
@@ -198,7 +198,7 @@ def create_app(service_factory: Callable[[], QueryService],
                             for c in detail.components]}
         return render_template(
             "spotlight.html", d=detail, chart_data=chart,
-            choices=[c for c in service.session_choices() if c[0] not in detail.pins])
+            choices=[c for c in service.session_choices() if c[0] not in detail.picked])
 
     def _edit(name, action):
         service = service_factory()
@@ -208,17 +208,13 @@ def create_app(service_factory: Callable[[], QueryService],
             abort(400, str(e))
         return redirect(url_for("spotlight_page", name=name))
 
-    @app.post("/spotlights/<path:name>/rule")
-    def spotlight_rule(name):
-        return _edit(name, lambda s: s.save_spotlight(name, request.form.get("rule", "")))
+    @app.post("/spotlights/<path:name>/add")
+    def spotlight_add(name):
+        return _edit(name, lambda s: s.add_session(name, request.form.get("session", "")))
 
-    @app.post("/spotlights/<path:name>/pin")
-    def spotlight_pin(name):
-        return _edit(name, lambda s: s.pin_session(name, request.form.get("session", "")))
-
-    @app.post("/spotlights/<path:name>/unpin")
-    def spotlight_unpin(name):
-        return _edit(name, lambda s: s.unpin_session(name, request.form.get("session", "")))
+    @app.post("/spotlights/<path:name>/remove")
+    def spotlight_remove(name):
+        return _edit(name, lambda s: s.remove_session(name, request.form.get("session", "")))
 
     @app.post("/spotlights/<path:name>/delete")
     def spotlight_delete(name):

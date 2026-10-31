@@ -66,15 +66,15 @@ def test_dashboard_counts_equal_the_marks_on_the_page(root, service_for):
     assert top["s1"].forks == sum(m.kind == "fork" for m in marks) == 1
 
 
-def test_pin_and_unpin_by_transcript_id_act_on_the_session(root, desktop, service_for):
+def test_add_and_remove_by_transcript_id_act_on_the_session(root, desktop, service_for):
     root.write_transcript("p", "a-old", [req("m1", "2026-10-29T01:00:00Z", output=M)])
     root.write_transcript("p", "b-new", [req("m2", "2026-10-29T02:00:00Z", output=M)])
     desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
     svc = service_for(root, desktop=desktop)
-    svc.pin_session("work", "b-new")
-    assert svc.spotlight("work").pins == ("a-old",)
-    svc.unpin_session("work", "b-new")
-    assert svc.spotlight("work").pins == ()
+    svc.add_session("work", "b-new")
+    assert svc.spotlight("work").picked == ("a-old",)
+    svc.remove_session("work", "b-new")
+    assert svc.spotlight("work").picked == ()
 
 
 def test_session_page_compactions_include_every_transcript(root, desktop, service_for):
