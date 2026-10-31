@@ -16,6 +16,10 @@ _Avoid_: repo, folder, workspace
 The client that ran a session: CLI, Desktop, SDK.
 _Avoid_: app, interface, entrypoint
 
+**Transcript**:
+One file Claude Code writes a session's records to; a session spans one or more through resumes and clears, and a request may have copies in several.
+_Avoid_: stem, log, file
+
 ## Units of spend
 
 **Request**:
@@ -30,17 +34,29 @@ _Avoid_: request, exchange, message
 One logical conversation, which may span several transcripts through resumes and clears, owning the requests it made itself.
 _Avoid_: conversation, chat, transcript
 
+**Parent session**:
+The session a side session or fork was started from.
+_Avoid_: origin, source session
+
 **Side session**:
-A separate session started from another session, which stays linked to it as a child.
+A separate session started from a parent session, which stays linked to it.
 _Avoid_: child session, spawned session
 
 **Fork**:
-A session started with a copy of another session's history; the copied requests stay owned by the original session.
+A session started from a parent session with a copy of its history; the copied requests stay owned by the parent session.
 _Avoid_: branch, clone
 
 **Subagent**:
 A child run launched from inside a session, whose spend rolls up into that session.
 _Avoid_: agent, task, sidechain
+
+**Fork subagent**:
+A subagent started with a copy of its session's history; it stays part of that session and is not a fork.
+_Avoid_: forked agent
+
+**Stream**:
+A Session's own requests, or one Subagent's requests, in time order; prompt caching, idle gaps and Listings belong to a stream.
+_Avoid_: thread, sidechain, transcript
 
 **Subagent type**:
 The kind of a subagent, such as Explore or Plan, as named in its transcript metadata; requests made by the session itself have none.
