@@ -105,3 +105,31 @@ def resolve(defn: Definition, sessions: dict[str, SessionInfo],
     related = {sid for sid, info in sessions.items()
                if sid not in members and info.kind == "fork" and info.parent in members}
     return Membership(frozenset(key_matched), frozenset(members), frozenset(related))
+
+
+def match_score(query: str, text: str) -> int | None:
+    """How well `query` matches `text` as a case-insensitive subsequence; None when it doesn't.
+
+    Higher is better: each pair of query characters that sit next to each other in the text
+    adds 10, and a match that starts later loses one point per position. Every place the first
+    character occurs is tried as the start, so a contiguous run later in the text beats a
+    scattered match that begins earlier.
+    """
+    q, t = query.lower(), text.lower()
+    best: int | None = None
+    start = t.find(q[0]) if q else 0
+    while start != -1:
+        pos, adjacent, ok = start, 0, True
+        for i in range(1, len(q)):
+            nxt = t.find(q[i], pos + 1)
+            if nxt == -1:
+                ok = False
+                break
+            adjacent += nxt == pos + 1
+            pos = nxt
+        if not ok:
+            break  # later starts have even less text left to match in
+        score = 10 * adjacent - start
+        best = score if best is None else max(best, score)
+        start = t.find(q[0], start + 1)
+    return best

@@ -415,3 +415,77 @@ def test_day_subagent_summary_unknown_type(root, service_for):
 def test_day_without_subagent_spend_has_no_summary(root, service_for):
     root.write_transcript("p", "s1", [req("m0", "2026-10-29T01:00:00Z", output=M)], branch="proj-1")
     assert service_for(root, key_pattern=KEY).spotlight("PROJ-1").days[0].subagent is None
+
+
+# ---- Session search for the picker -------------------------------------------------------
+
+def search_root(root, desktop):
+    """w holds `base`; `fork-hi` ($40) and `fork-lo` ($10) are Forks of it; `bill` is unrelated."""
+    def add(sid, prompt, out):
+        root.write_transcript("p", sid, [req(f"m-{sid}", "2026-10-30T01:00:00Z", output=out)],
+                              prompt=prompt)
+    add("base", "login form", M)
+    add("fork-lo", "aa flow", M // 2)
+    add("fork-hi", "bb flow", 2 * M)
+    add("bill", "billing page", M)
+    desktop.write_session("d1", "base")
+    desktop.write_session("d2", "fork-lo", forkedFromSessionId="local_d1")
+    desktop.write_session("d3", "fork-hi", forkedFromSessionId="local_d1")
+
+
+def picked_service(root, desktop, service_for):
+    search_root(root, desktop)
+    svc = service_for(root, desktop=desktop)
+    svc.create_spotlight("w", ["base"])
+    return svc
+
+
+def test_search_with_an_empty_query_suggests_unpicked_forks_costliest_first(root, desktop, service_for):
+    svc = picked_service(root, desktop, service_for)
+    got = svc.search_sessions("", "w")
+    assert [(c.session_id, c.kind, c.suggested) for c in got] == [
+        ("fork-hi", "Fork", True), ("fork-lo", "Fork", True)]
+    assert got[0].label == "bb flow" and got[0].cost == pytest.approx(40.0)
+
+
+def test_search_matches_label_and_id_as_a_case_insensitive_subsequence(root, desktop, service_for):
+    svc = picked_service(root, desktop, service_for)
+    assert [c.session_id for c in svc.search_sessions("BLPG", "w")] == ["bill"]  # label: BiLling PaGe
+    assert [c.session_id for c in svc.search_sessions("fkh", "w")] == ["fork-hi"]  # id: Fork-Hi
+    assert svc.search_sessions("zzz", "w") == []
+    assert svc.search_sessions("bb", "w")[0].kind == "Fork"
+
+
+def test_search_does_not_look_in_branch_worktree_or_prompt_beyond_the_label(root, desktop, service_for):
+    root.write_transcript("p", "x1", [req("mx", "2026-10-30T01:00:00Z", output=M)],
+                          branch="feature/zebra", cwd="/work/zebra", prompt="start")
+    svc = service_for(root, desktop=desktop)
+    assert svc.search_sessions("zebra", "nothing") == []
+
+
+def test_search_excludes_direct_members(root, desktop, service_for):
+    svc = picked_service(root, desktop, service_for)
+    assert "base" not in [c.session_id for c in svc.search_sessions("base", "w")]
+    assert "base" in [c.session_id for c in svc.search_sessions("base", "other")]
+
+
+def test_search_ranks_suggested_forks_then_match_quality_then_cost(root, desktop, service_for):
+    svc = picked_service(root, desktop, service_for)
+    got = svc.search_sessions("l", "w")
+    # Forks first (costliest first), then the unrelated session.
+    assert [c.session_id for c in got] == ["fork-hi", "fork-lo", "bill"]
+    assert [c.suggested for c in got] == [True, True, False]
+
+
+def test_search_prefers_contiguous_and_earlier_matches_over_cost(root, service_for):
+    for sid, prompt, out in (("a", "x login", M * 3), ("b", "l-o-g-i-n", M * 2), ("c", "login", M)):
+        root.write_transcript("p", sid, [req(f"m{sid}", "2026-10-30T01:00:00Z", output=out)], prompt=prompt)
+    svc = service_for(root)
+    assert [c.session_id for c in svc.search_sessions("login", "none")] == ["c", "a", "b"]
+
+
+def test_search_returns_at_most_ten(root, service_for):
+    for i in range(14):
+        root.write_transcript("p", f"s{i:02}", [req(f"m{i}", "2026-10-30T01:00:00Z", output=M)],
+                              prompt=f"task {i}")
+    assert len(service_for(root).search_sessions("t", "none")) == 10

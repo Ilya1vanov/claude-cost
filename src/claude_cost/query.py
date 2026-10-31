@@ -69,6 +69,16 @@ class SpotlightSession:
 
 
 @dataclass(frozen=True)
+class SessionCandidate:
+    """A Session the picker offers for a Spotlight."""
+    session_id: str
+    label: str
+    cost: float
+    kind: str | None  # "Fork" | "Side session" | None
+    suggested: bool   # an unpicked Fork of a member
+
+
+@dataclass(frozen=True)
 class SpotlightRelated:
     """A Fork of a member that is not counted ("related, excluded")."""
     session_id: str
@@ -1082,11 +1092,45 @@ class QueryService:
         first prompt, else the id. The single label source every page (and Top sessions) uses."""
         return {sid: info.label for sid, info in self._session_infos().items()}
 
-    def session_choices(self) -> list[tuple[str, str, float]]:
-        """(Session id, label, cost) of every top-level Session, costliest first: the pin picker."""
-        infos = self._session_infos()
-        return sorted(((s.session_id, infos[s.session_id].label, s.cost)
-                       for s in self.session_summaries()), key=lambda x: (-x[2], x[0]))
+    SEARCH_LIMIT = 10
+
+    def search_sessions(self, query: str, name: str,
+                        exclude: Iterable[str] = ()) -> list[SessionCandidate]:
+        """Sessions to pick for the Spotlight `name` (a name with no Spotlight yet has no members).
+
+        Candidates are every Session except the Spotlight's direct members and `exclude`. An empty
+        query returns the suggested Forks (unpicked Forks of members), costliest first. Otherwise
+        the query is matched as a case-insensitive subsequence of the label or the id; suggested
+        Forks rank first, then the better match, then the costlier Session; at most 10 are returned.
+        """
+        infos, defs, member = self._spotlight_state()
+        defn = next((d for d in defs if d.name == name), None)
+        ms = member.get(name)
+        direct = (ms.key_matched | defn.picked) if ms and defn else frozenset()
+        skip = direct | {self.graph.session_of(s) for s in exclude}
+        suggested = ms.related if ms else frozenset()
+        query = query.strip()
+        ranked = []
+        for s in self.session_summaries():
+            sid = s.session_id
+            if sid in skip:
+                continue
+            info = infos[sid]
+            if query:
+                scores = [m for m in (spotlights.match_score(query, info.label),
+                                      spotlights.match_score(query, sid)) if m is not None]
+                if not scores:
+                    continue
+                score = max(scores)
+            elif sid in suggested:
+                score = 0
+            else:
+                continue
+            kind = {"fork": "Fork", "side": "Side session"}.get(info.kind or "")
+            ranked.append((sid not in suggested, -score, -s.cost, sid,
+                           SessionCandidate(sid, info.label, s.cost, kind, sid in suggested)))
+        ranked.sort(key=lambda r: r[:4])
+        return [r[4] for r in ranked[:self.SEARCH_LIMIT]]
 
     # Explore (ticket #11): the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:

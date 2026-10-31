@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
 
 from . import explore
@@ -196,9 +196,15 @@ def create_app(service_factory: Callable[[], QueryService],
         chart = {"labels": [d.day.isoformat() for d in detail.days],
                  "series": [{"label": c, "data": [round(d.components[c], 4) for d in detail.days]}
                             for c in detail.components]}
-        return render_template(
-            "spotlight.html", d=detail, chart_data=chart,
-            choices=[c for c in service.session_choices() if c[0] not in detail.picked])
+        return render_template("spotlight.html", d=detail, chart_data=chart)
+
+    @app.get("/api/session-search")
+    def session_search():
+        found = service_factory().search_sessions(
+            request.args.get("q", ""), request.args.get("name", ""), request.args.getlist("exclude"))
+        return jsonify(results=[
+            {"id": c.session_id, "short_id": c.session_id[:8], "label": c.label,
+             "cost": round(c.cost, 2), "kind": c.kind, "suggested": c.suggested} for c in found])
 
     def _edit(name, action):
         service = service_factory()

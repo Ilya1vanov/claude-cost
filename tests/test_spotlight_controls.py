@@ -155,3 +155,45 @@ def test_days_table_has_subagent_summary_cell_and_sessions_costliest_first(root,
     days = page[page.index('id="spotlight-days"'):]
     assert "$20.00 · 1 run · all Explore" in days
     assert days.index("DEAR") < days.index("CHEAP")
+
+
+def test_search_endpoint_serves_ranked_candidates_as_json(root, tmp_path):
+    _root(root)
+    root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)], prompt="billing page")
+    client, new = _client(root, tmp_path)
+    svc = new()
+    svc.create_spotlight("login", ["s1"])
+    svc.close()
+    got = client.get("/api/session-search", query_string={"q": "bill", "name": "login"})
+    assert got.status_code == 200 and got.is_json
+    assert got.get_json() == {"results": [
+        {"id": "s2", "short_id": "s2", "label": "billing page", "cost": 20.0, "kind": None, "suggested": False}]}
+    skipped = client.get("/api/session-search", query_string={"q": "bill", "exclude": ["s2"]})
+    assert skipped.get_json() == {"results": []}
+    assert client.get("/api/session-search").get_json() == {"results": []}  # empty query, no Forks
+
+
+def test_spotlight_page_shows_chips_picker_and_no_dropdown(root, tmp_path):
+    _root(root)
+    root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)],
+                          branch="feature/proj-12-x", prompt="ticket work")
+    client, _ = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
+    client.post("/spotlights/PROJ-12/add", data={"session": "s1"})
+    page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
+    head = page.split("Cost per day", 1)[0]
+    assert "<h2>Add a Session</h2>" not in page and "<select" not in page and "Pin a Session" not in page
+    assert 'data-search-url="/api/session-search"' in head and 'data-name="PROJ-12"' in head
+    chips = head.split('class="chips"', 1)[1].split("</div>", 1)[0]
+    assert "ticket work" in chips and "login work" in chips
+    assert "Key match" in chips
+    assert chips.count("/spotlights/PROJ-12/remove") == 1  # only the Picked chip can be removed
+    assert "Suggested: Forks" in client.get("/static/picker.js").get_data(as_text=True)
+
+
+def test_new_spotlight_form_uses_the_picker(root, tmp_path):
+    _root(root)
+    client, _ = _client(root, tmp_path)
+    page = client.get("/spotlights").get_data(as_text=True)
+    form = page.split("<h2>New Spotlight</h2>", 1)[1]
+    assert 'data-search-url="/api/session-search"' in form and 'data-mode="collect"' in form
+    assert "/static/picker.js" in page
