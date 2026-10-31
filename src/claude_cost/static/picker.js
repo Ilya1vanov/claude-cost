@@ -13,6 +13,7 @@
     var input = root.querySelector(".picker-input");
     var list = root.querySelector(".picker-list");
     var chips = root.querySelector(".chips");
+    var submit = root.querySelector(".picker-submit");
     var idField = root.querySelector(".picker-form input[name=session]");
     var picked = [];
     var latest = 0;
@@ -20,6 +21,7 @@
     function addChip(c) {
       picked.push(c.id);
       var chip = el("span", "chip", c.label);
+      chip.title = c.label;
       var hidden = el("input");
       hidden.type = "hidden";
       hidden.name = "session";
@@ -30,18 +32,27 @@
       x.addEventListener("click", function () {
         picked.splice(picked.indexOf(c.id), 1);
         chip.remove();
+        sync();
       });
       chip.append(hidden, x);
       chips.append(chip);
+      sync();
+    }
+
+    function sync() {
+      if (!submit) return;
+      submit.hidden = picked.length === 0;
+      submit.textContent = "Add " + picked.length + (picked.length === 1 ? " session" : " sessions");
     }
 
     function choose(c) {
-      list.hidden = true;
       input.value = "";
       if (collect) {
         addChip(c);
         input.focus();
+        search();  // stays open, now without the pending pick
       } else {
+        list.hidden = true;
         idField.value = c.id;
         idField.form.submit();
       }
@@ -72,6 +83,7 @@
         .catch(function () { if (n === latest) { list.replaceChildren(); list.hidden = true; } });
     }
 
+    list.addEventListener("mousedown", function (e) { e.preventDefault(); });  // keep focus in the input
     input.addEventListener("focus", search);
     input.addEventListener("input", search);
     input.addEventListener("blur", function () { setTimeout(function () { list.hidden = true; }, 150); });

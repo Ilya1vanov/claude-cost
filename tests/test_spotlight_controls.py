@@ -91,18 +91,17 @@ def _two_spotlight_client(root, tmp_path):
 def test_sections_run_in_order_and_delete_is_the_last_card_on_user_spotlights_only(root, tmp_path):
     client = _two_spotlight_client(root, tmp_path)
     page = client.get("/spotlights/login").get_data(as_text=True)
-    order = ["<h1>", "Cost per day", "Cost components", 'id="spotlight-sessions"', 'id="spotlight-days"',
-             'id="spotlight-subagents"']
+    order = ["<h1>", "Cost per day", "Cost components", 'id="spotlight-sessions"', 'id="spotlight-days"']
     positions = [page.index(m) for m in order]
     assert positions == sorted(positions)
     assert "Delete Spotlight" not in page.split("Cost per day", 1)[0]
-    assert page.rindex("Delete Spotlight") > page.index('id="spotlight-subagents"')
+    assert page.rindex("Delete Spotlight") > page.index('id="spotlight-days"')
     assert 'class="card danger-zone"' in page.rsplit("<section", 1)[1]
     auto = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     assert "Delete Spotlight" not in auto
 
 
-def test_related_excluded_sits_between_subagents_and_delete(root, tmp_path):
+def test_related_excluded_sits_between_days_and_delete(root, tmp_path):
     _root(root)
     root.write_transcript("p", "fk", [req("m1", "2026-10-30T01:00:00Z", output=M, forked_from="s1"),
                                       req("m4", "2026-10-30T04:00:00Z", output=M)], prompt="go on")
@@ -112,7 +111,7 @@ def test_related_excluded_sits_between_subagents_and_delete(root, tmp_path):
     svc.create_spotlight("login", ["s1"])
     svc.close()
     page = client.get("/spotlights/login").get_data(as_text=True)
-    assert page.index('id="spotlight-subagents"') < page.index('id="spotlight-related"') < page.rindex("Delete Spotlight")
+    assert page.index('id="spotlight-days"') < page.index('id="spotlight-related"') < page.rindex("Delete Spotlight")
 
 
 def test_also_in_column_only_when_a_session_is_in_another_spotlight(root, tmp_path):
@@ -127,13 +126,11 @@ def test_also_in_column_only_when_a_session_is_in_another_spotlight(root, tmp_pa
     assert "Also in" in table and ">other<" in table
 
 
-def test_subagents_table_leads_with_description_and_id_on_hover(root, tmp_path):
+def test_subagents_card_is_gone_but_cost_stays_in_the_columns(root, tmp_path):
     client = _two_spotlight_client(root, tmp_path)
     page = client.get("/spotlights/login").get_data(as_text=True)
-    table = page.split('id="spotlight-subagents"')[1].split("</table>")[0]
-    assert 'title="agent-abc123"' in table and "Scan the repo" in table
-    assert "<small>Scan the repo" not in table
-    assert 'class="session-cell"' in table
+    assert 'id="spotlight-subagents"' not in page and "<h2>Subagents</h2>" not in page
+    assert "of which Subagents" in page and "$20.00 · 1 run" in page.split('id="spotlight-days"')[1]
 
 
 def test_auto_spotlights_hint_only_without_key_pattern(root, tmp_path):
@@ -173,7 +170,7 @@ def test_search_endpoint_serves_ranked_candidates_as_json(root, tmp_path):
     assert client.get("/api/session-search").get_json() == {"results": []}  # empty query, no Forks
 
 
-def test_spotlight_page_shows_chips_picker_and_no_dropdown(root, tmp_path):
+def test_spotlight_header_is_only_a_batch_picker_with_no_saved_chips(root, tmp_path):
     _root(root)
     root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)],
                           branch="feature/proj-12-x", prompt="ticket work")
@@ -181,13 +178,33 @@ def test_spotlight_page_shows_chips_picker_and_no_dropdown(root, tmp_path):
     client.post("/spotlights/PROJ-12/add", data={"session": "s1"})
     page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     head = page.split("Cost per day", 1)[0]
-    assert "<h2>Add a Session</h2>" not in page and "<select" not in page and "Pin a Session" not in page
+    assert "<select" not in page and "Pin a Session" not in page
     assert 'data-search-url="/api/session-search"' in head and 'data-name="PROJ-12"' in head
-    chips = head.split('class="chips"', 1)[1].split("</div>", 1)[0]
-    assert "ticket work" in chips and "login work" in chips
-    assert "Key match" in chips
-    assert chips.count("/spotlights/PROJ-12/remove") == 1  # only the Picked chip can be removed
-    assert "Suggested: Forks" in client.get("/static/picker.js").get_data(as_text=True)
+    assert 'data-mode="collect"' in head and 'action="/spotlights/PROJ-12/add"' in head
+    assert '<span class="chip"' not in head and "chip-x" not in head and "login work" not in head
+    assert "picker-submit" in head
+    js = client.get("/static/picker.js").get_data(as_text=True)
+    assert "Suggested: Forks" in js and "sessions" in js
+    table = page.split('id="spotlight-sessions"')[1].split("</table>")[0]  # saved members live here
+    assert "login work" in table and "/spotlights/PROJ-12/remove" in table and "Key match" in table
+
+
+def test_add_endpoint_takes_several_ids_in_one_post(root, tmp_path):
+    _root(root)
+    root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)], prompt="billing")
+    root.write_transcript("p", "s3", [req("m3", "2026-10-30T03:00:00Z", output=M)], prompt="search")
+    client, new = _client(root, tmp_path)
+    assert client.post("/spotlights/login/add", data={"session": ["s1", "s2", "s3"]}).status_code == 302
+    assert {s.session_id for s in new().spotlight("login").sessions} == {"s1", "s2", "s3"}
+
+
+def test_chip_remove_label_is_plain_text_and_chips_are_capped(root, tmp_path):
+    client, _ = _client(_root(root), tmp_path)
+    css = client.get("/static/app.css").get_data(as_text=True)
+    chip = css.split(".picker .chip {")[1].split("}")[0]
+    assert "text-overflow: ellipsis" in chip and "max-width" in chip and "white-space: nowrap" in chip
+    js = client.get("/static/picker.js").get_data(as_text=True)
+    assert 'setAttribute("aria-label", "Remove " + c.label)' in js and "chip.title = c.label" in js
 
 
 def test_new_spotlight_form_uses_the_picker(root, tmp_path):

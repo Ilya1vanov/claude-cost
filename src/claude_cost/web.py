@@ -221,7 +221,7 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.post("/spotlights/<path:name>/add")
     def spotlight_add(name):
-        return _edit(name, lambda s: s.add_session(name, request.form.get("session", "")))
+        return _edit(name, lambda s: s.add_sessions(name, request.form.getlist("session")))
 
     @app.post("/spotlights/<path:name>/remove")
     def spotlight_remove(name):

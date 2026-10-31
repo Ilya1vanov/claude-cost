@@ -11,7 +11,7 @@
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
         Includes Subagents and Side sessions.</p>
-      {% call ui.picker(s.name, "submit", url_for('spotlight_add', name=s.name)) %}{% for x in d.sessions if x.picked or x.key_matched %}<span class="chip{{ ' fixed' if x.key_matched }}">{{ session_label(x.session_id) }}{% if x.key_matched %} <small>Key match</small>{% else %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="chip-x" aria-label="Remove {{ session_label(x.session_id) }}">×</button></form>{% endif %}</span>{% endfor %}{% endcall %}
+      <form method="post" action="{{ url_for('spotlight_add', name=s.name) }}">{{ ui.picker(s.name, "collect", submit=true) }}</form>
     </div>
   </div>
 
@@ -51,16 +51,6 @@
       {% else %}<tr><td colspan="4" class="empty">No spend</td></tr>{% endfor %}
     </table></div>
   </section>
-
-  {% if d.subagents %}
-  <section class="card">
-    <h2>Subagents</h2>
-    <div class="table-wrap"><table id="spotlight-subagents">
-      <tr><th>Subagent</th><th>Subagent type</th><th class="session-cell">Session</th><th class="num">Cost</th></tr>
-      {% for a in d.subagents %}<tr><td class="main" title="{{ a.agent_id }}">{{ a.description or ui.sid(a.agent_id) }}</td><td>{{ a.agent_type or "" }}</td><td class="session-cell">{{ session_label(a.session_id) }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
-    </table></div>
-  </section>
-  {% endif %}
 
   {% if d.related %}
   <section class="card">
