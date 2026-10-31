@@ -7,7 +7,6 @@
   <div class="page-head">
     <div>
       <h1>Spotlight: {{ s.name }}</h1>
-      {% if s.kind != "auto" %}<form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>{% endif %}
       <p class="sub" id="spotlight-total">Lifetime: <strong>${{ "%.2f"|format(s.total) }}</strong> across {{ s.sessions }} Sessions and {{ s.requests }} requests
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
@@ -27,6 +26,20 @@
     </section>
   </div>
 
+  {% set show_also = d.sessions|selectattr("also_in")|list|length > 0 %}
+  <section class="card">
+    <h2>Sessions</h2>
+    <div class="table-wrap"><table id="spotlight-sessions">
+      <tr><th>Session</th><th class="num">Cost</th><th class="num">of which Subagents</th><th>Joined as</th>{% if show_also %}<th>Also in</th>{% endif %}<th></th></tr>
+      {% for x in d.sessions %}<tr><td>{{ session_label(x.session_id) }}</td>
+        <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
+        <td><span class="badge">{{ x.joined_as }}</span></td>
+        {% if show_also %}<td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>{% endif %}
+        <td class="num">{% if x.picked and x.joined_as != "Key match" %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
+      {% else %}<tr><td colspan="{{ 6 if show_also else 5 }}" class="empty">No Sessions</td></tr>{% endfor %}
+    </table></div>
+  </section>
+
   <section class="card">
     <h2>Days</h2>
     <div class="table-wrap"><table id="spotlight-days">
@@ -38,25 +51,12 @@
     </table></div>
   </section>
 
-  <section class="card">
-    <h2>Sessions</h2>
-    <div class="table-wrap"><table id="spotlight-sessions">
-      <tr><th>Session</th><th class="num">Cost</th><th class="num">of which Subagents</th><th>Joined as</th><th>Also in</th><th></th></tr>
-      {% for x in d.sessions %}<tr><td>{{ session_label(x.session_id) }}</td>
-        <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
-        <td><span class="badge">{{ x.joined_as }}</span></td>
-        <td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>
-        <td class="num">{% if x.picked and x.joined_as != "Key match" %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
-      {% else %}<tr><td colspan="6" class="empty">No Sessions</td></tr>{% endfor %}
-    </table></div>
-  </section>
-
   {% if d.subagents %}
   <section class="card">
     <h2>Subagents</h2>
     <div class="table-wrap"><table id="spotlight-subagents">
-      <tr><th>Session</th><th>Subagent</th><th>Subagent type</th><th class="num">Cost</th></tr>
-      {% for a in d.subagents %}<tr><td>{{ session_label(a.session_id) }}</td><td>{{ ui.sid(a.agent_id) }}{% if a.description %} <small>{{ a.description }}</small>{% endif %}</td><td>{{ a.agent_type or "" }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
+      <tr><th>Subagent</th><th>Subagent type</th><th class="session-cell">Session</th><th class="num">Cost</th></tr>
+      {% for a in d.subagents %}<tr><td class="main" title="{{ a.agent_id }}">{{ a.description or ui.sid(a.agent_id) }}</td><td>{{ a.agent_type or "" }}</td><td class="session-cell">{{ session_label(a.session_id) }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
     </table></div>
   </section>
   {% endif %}
@@ -80,6 +80,12 @@
       <button type="submit">Add</button>
     </form>
   </section>
+  {% if s.kind != "auto" %}
+  <section class="card danger-zone">
+    <h2>Delete</h2>
+    <form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>
+  </section>
+  {% endif %}
 {% endblock %}
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
