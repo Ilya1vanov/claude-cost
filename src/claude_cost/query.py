@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import calendar
-from typing import NamedTuple
+from typing import Iterable, NamedTuple
 from datetime import date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -56,6 +56,15 @@ class SubagentSummary:
     requests: int
 
 
+@dataclass
+class _DayAcc:
+    """One Spotlight day while it is being summed."""
+    cost: float = 0.0
+    by_session: dict = field(default_factory=dict)
+    by_run: dict = field(default_factory=dict)  # (session, agent) -> cost
+    components: dict = field(default_factory=lambda: {n: 0.0 for n, _ in COMPONENTS})
+
+
 @dataclass(frozen=True)
 class SpotlightSession:
     session_id: str
@@ -63,9 +72,21 @@ class SpotlightSession:
     cost: float  # includes the Session's Subagents
     subagent_cost: float
     requests: int
-    link_kind: str | None  # "side" | "fork" | None
+    joined_as: str  # "Key match" | "Picked" | "Fork" | "Side session of <label>"
     also_in: tuple[str, ...]  # other Spotlights that count this Session fully too
-    pinned: bool
+    picked: bool  # a Picked session, also when it joined as Key match
+    key_matched: bool  # an Auto-spotlight's Key match: shown as a fixed chip
+    removable: bool  # picked and not Key match: the Remove control applies
+
+
+@dataclass(frozen=True)
+class SessionCandidate:
+    """A Session the picker offers for a Spotlight."""
+    session_id: str
+    label: str
+    cost: float
+    kind: str | None  # "Fork" | "Side session" | None
+    suggested: bool   # an unpicked Fork of a member
 
 
 @dataclass(frozen=True)
@@ -78,11 +99,20 @@ class SpotlightRelated:
 
 
 @dataclass(frozen=True)
+class SubagentDay:
+    """A day's Subagent spend in one figure."""
+    total: float
+    runs: int         # distinct Subagent runs with spend that day
+    top_type: str     # the type with the most cost (not the most runs); "unknown" when the type is missing
+    all_same: bool    # every run that day has top_type
+
+
+@dataclass(frozen=True)
 class SpotlightDay:
     day: date
     cost: float
     sessions: dict[str, float]    # Session id -> cost that day (Subagents included)
-    subagents: dict[str, float]   # "<Session id>/<agent id>" -> cost that day (a subset of sessions)
+    subagent: SubagentDay | None  # None when no Subagent spend that day
     components: dict[str, float]  # Cost component name -> cost that day
 
 
@@ -98,8 +128,7 @@ class SpotlightSubagent:
 @dataclass(frozen=True)
 class SpotlightSummary:
     name: str
-    kind: str  # "auto" | "rule" | "pinned"
-    rule: str  # regex, "" for pinned; the key for an Auto-spotlight
+    kind: str  # "picked" | "auto"
     total: float  # lifetime cost; Spotlight totals overlap and must never be added together
     requests: int
     sessions: int
@@ -130,7 +159,7 @@ class SpotlightDetail:
     related: tuple[SpotlightRelated, ...]
     days: tuple[SpotlightDay, ...]  # lifetime, first to last activity, days without spend included
     components: dict[str, float]  # lifetime cost per Cost component
-    pins: tuple[str, ...]
+    picked: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -865,15 +894,14 @@ class QueryService:
     def _definitions(self, infos: dict[str, spotlights.SessionInfo],
                      keys: dict[str, list[str]]) -> list[spotlights.Definition]:
         """User-defined Spotlights, then an Auto-spotlight per key (unless a user-defined one has the name)."""
-        pins: dict[str, set[str]] = {}
+        picked: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT spotlight, session_id FROM spotlight_pins"):
-            pins.setdefault(r["spotlight"], set()).add(self.graph.session_of(r["session_id"]))
-        defs = [spotlights.Definition(r["name"], "rule" if r["rule"] else "pinned", r["rule"],
-                                      frozenset(pins.get(r["name"], ())))
-                for r in self._conn.execute("SELECT name, rule FROM spotlights ORDER BY name")]
+            picked.setdefault(r["spotlight"], set()).add(self.graph.session_of(r["session_id"]))
+        defs = [spotlights.Definition(r["name"], "picked", "", frozenset(picked.get(r["name"], ())))
+                for r in self._conn.execute("SELECT name FROM spotlights ORDER BY name")]
         taken = {d.name for d in defs}
         found = sorted({k for ks in keys.values() for k in ks} - taken)
-        return defs + [spotlights.Definition(k, "auto", k, frozenset(pins.get(k, ()))) for k in found]
+        return defs + [spotlights.Definition(k, "auto", k, frozenset(picked.get(k, ()))) for k in found]
 
     def _spotlight_state(self):
         infos = self._session_infos()
@@ -893,7 +921,7 @@ class QueryService:
     def _spotlight_summary(self, defn, total: float, requests: int, sessions: int,
                            first_ts: float | None, last_ts: float | None) -> SpotlightSummary:
         return SpotlightSummary(
-            defn.name, defn.kind, defn.rule, total, requests, sessions,
+            defn.name, defn.kind, total, requests, sessions,
             self._local_day(first_ts) if first_ts is not None else None,
             self._local_day(last_ts) if last_ts is not None else None)
 
@@ -961,8 +989,9 @@ class QueryService:
         by = {s.session_id: s for s in self.session_summaries()}
         sessions = tuple(sorted(
             (SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
-                              by[sid].requests, infos[sid].kind, tuple(sorted(in_other.get(sid, ()))),
-                              sid in defn.pins)
+                              by[sid].requests, self._joined_as(sid, infos, ms, defn),
+                              tuple(sorted(in_other.get(sid, ()))), sid in defn.picked,
+                              sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched)
              for sid in ms.members if sid in by), key=lambda x: (-x.cost, x.session_id)))
         related = tuple(sorted(
             (SpotlightRelated(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
@@ -970,30 +999,44 @@ class QueryService:
             key=lambda x: (-x.cost, x.session_id)))
         subs = tuple(SpotlightSubagent(a.session_id, a.agent_id, a.agent_type, a.description, a.cost)
                      for a in self.subagent_summaries() if a.session_id in ms.members)
-        days: dict[date, list] = {}
+        agent_types = {(a.session_id, a.agent_id): a.agent_type or "unknown"
+                       for a in self.subagent_summaries()}
+        days: dict[date, _DayAcc] = {}
         comps = {n: 0.0 for n, _ in COMPONENTS}
         for r in rows:
             if r["sid"] not in ms.members:
                 continue
-            d = days.setdefault(self._local_day(r["ts"]), [0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS}])
+            d = days.setdefault(self._local_day(r["ts"]), _DayAcc())
             total = 0.0
             for n, c in COMPONENTS:
-                d[3][n] += r[c]
+                d.components[n] += r[c]
                 comps[n] += r[c]
                 total += r[c]
-            d[0] += total
-            d[1][r["sid"]] = d[1].get(r["sid"], 0.0) + total
+            d.cost += total
+            d.by_session[r["sid"]] = d.by_session.get(r["sid"], 0.0) + total
             if r["agent"] is not None:
-                key = f"{r['sid']}/{r['agent']}"
-                d[2][key] = d[2].get(key, 0.0) + total
+                key = (r["sid"], r["agent"])
+                d.by_run[key] = d.by_run.get(key, 0.0) + total
+        def day_subagent(runs: dict) -> SubagentDay | None:
+            if not runs:
+                return None
+            by_type: dict[str, float] = {}
+            for key, cost in runs.items():
+                t = agent_types.get(key, "unknown")
+                by_type[t] = by_type.get(t, 0.0) + cost
+            top = max(by_type, key=lambda t: (by_type[t], t))
+            return SubagentDay(sum(runs.values()), len(runs), top, len(by_type) == 1)
+
         out_days = ()
         if days:
             first, last = min(days), max(days)
+            blank = _DayAcc()
             out_days = tuple(
-                SpotlightDay(day, *(days[day] if day in days else (0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS})))
+                SpotlightDay(day, (c := days.get(day, blank)).cost, c.by_session, day_subagent(c.by_run),
+                             c.components)
                 for day in (first + timedelta(n) for n in range((last - first).days + 1)))
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
-                               tuple(sorted(defn.pins)))
+                               tuple(sorted(defn.picked)))
 
     def spotlight_comparison(self, names: list[str]) -> list[SpotlightDetail]:
         """Two or more Spotlights side by side, each in full (never summed). KeyError if unknown."""
@@ -1002,53 +1045,108 @@ class QueryService:
             raise ValueError("select at least two different Spotlights")
         return [self.spotlight(n) for n in names]
 
-    # Editing user-defined Spotlights (rules and pins live in the store, not config.toml).
+    @staticmethod
+    def _joined_as(sid: str, infos: dict[str, spotlights.SessionInfo],
+                   ms: spotlights.Membership, defn: spotlights.Definition) -> str:
+        """How a member Session joined: Key match beats Picked; a Fork is only in when picked."""
+        info = infos[sid]
+        if sid in ms.key_matched:
+            return "Key match"
+        if info.kind == "fork":
+            return "Fork"
+        if sid in defn.picked:
+            return "Picked"
+        parent = infos[info.parent].label if info.parent in infos else ""
+        return f"Side session of {parent}"
 
-    def save_spotlight(self, name: str, rule: str = "") -> None:
-        """Create a Spotlight or change its rule ("" = pinned Sessions only)."""
-        name, rule = name.strip(), rule.strip()
+    # Editing user-defined Spotlights (Picked sessions live in the store, not config.toml).
+
+    def _insert_pins(self, name: str, session_ids: Iterable[str], create: bool) -> None:
+        """Add Picked sessions to `name`, first creating the user-defined Spotlight if `create`.
+        Call inside a transaction."""
+        if create:
+            self._conn.execute("INSERT OR IGNORE INTO spotlights (name) VALUES (?)", (name,))
+        self._conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
+                               [(name, self.graph.session_of(s)) for s in session_ids])
+
+    def create_spotlight(self, name: str, session_ids: Iterable[str] = ()) -> None:
+        """Create a Spotlight (empty with just a name) and add Picked sessions to it."""
+        name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
-        if rule:
-            spotlights.compile_pattern(rule, "rule")
         with self._conn:
-            self._conn.execute(
-                "INSERT INTO spotlights VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET rule = excluded.rule",
-                (name, rule))
+            self._insert_pins(name, session_ids, create=True)
 
     def delete_spotlight(self, name: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM spotlights WHERE name = ?", (name,))
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ?", (name,))
 
-    def pin_session(self, name: str, session_id: str) -> None:
-        """Pin a Session to a Spotlight: an Auto-spotlight of that name, else a user-defined one
-        (created if it does not exist yet)."""
+    def add_session(self, name: str, session_id: str) -> None:
+        """Add a Picked session to a Spotlight: an Auto-spotlight of that name, else a
+        user-defined one (created if it does not exist yet)."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
         is_auto = any(name in ks for ks in self.session_keys().values())
         with self._conn:
-            if not is_auto:
-                self._conn.execute("INSERT OR IGNORE INTO spotlights VALUES (?, '')", (name,))
-            self._conn.execute("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                               (name, self.graph.session_of(session_id)))
+            self._insert_pins(name, [session_id], create=not is_auto)
 
-    def unpin_session(self, name: str, session_id: str) -> None:
+    def remove_session(self, name: str, session_id: str) -> None:
+        """Remove a Picked session; Side sessions that joined through it leave with it.
+        A Key-match Session of an Auto-spotlight cannot be removed."""
+        sid = self.graph.session_of(session_id)
+        infos, defs, member = self._spotlight_state()
+        if any(d.name == name and sid in member[name].key_matched for d in defs):
+            raise spotlights.SpotlightError("a Key-match Session cannot be removed")
         with self._conn:
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ? AND session_id IN (?, ?)",
-                               (name, session_id, self.graph.session_of(session_id)))
+                               (name, session_id, sid))
 
     def session_labels(self) -> dict[str, str]:
         """Label of every logical Session id: custom title, else the first 60 characters of the
         first prompt, else the id. The single label source every page (and Top sessions) uses."""
         return {sid: info.label for sid, info in self._session_infos().items()}
 
-    def session_choices(self) -> list[tuple[str, str, float]]:
-        """(Session id, label, cost) of every top-level Session, costliest first: the pin picker."""
-        infos = self._session_infos()
-        return sorted(((s.session_id, infos[s.session_id].label, s.cost)
-                       for s in self.session_summaries()), key=lambda x: (-x[2], x[0]))
+    SEARCH_LIMIT = 10
+
+    def search_sessions(self, query: str, name: str,
+                        exclude: Iterable[str] = ()) -> list[SessionCandidate]:
+        """Sessions to pick for the Spotlight `name` (a name with no Spotlight yet has no members).
+
+        Candidates are every Session except the Spotlight's direct members and `exclude`. An empty
+        query returns the suggested Forks (unpicked Forks of members), costliest first. Otherwise
+        the query is matched as a case-insensitive subsequence of the label or the id; suggested
+        Forks rank first, then the better match, then the costlier Session; at most 10 are returned.
+        """
+        infos, defs, member = self._spotlight_state()
+        defn = next((d for d in defs if d.name == name), None)
+        ms = member.get(name)
+        direct = (ms.key_matched | defn.picked) if ms and defn else frozenset()
+        skip = direct | {self.graph.session_of(s) for s in exclude}
+        suggested = ms.related if ms else frozenset()
+        query = query.strip()
+        ranked = []
+        for s in self.session_summaries():
+            sid = s.session_id
+            if sid in skip:
+                continue
+            info = infos[sid]
+            if query:
+                scores = [m for m in (spotlights.match_score(query, info.label),
+                                      spotlights.match_score(query, sid)) if m is not None]
+                if not scores:
+                    continue
+                score = max(scores)
+            elif sid in suggested:
+                score = 0
+            else:
+                continue
+            kind = {"fork": "Fork", "side": "Side session"}.get(info.kind or "")
+            ranked.append((sid not in suggested, -score, -s.cost, sid,
+                           SessionCandidate(sid, info.label, s.cost, kind, sid in suggested)))
+        ranked.sort(key=lambda r: r[:4])
+        return [r[4] for r in ranked[:self.SEARCH_LIMIT]]
 
     # Explore (ticket #11): the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Callable
 
-from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
 
 from . import explore
@@ -19,6 +19,11 @@ from .tooltips import TOOLTIPS
 DASHBOARD_DAYS = 30
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
 REQUEST_ROWS = 1000
+
+
+def short_id(id: str, n: int = 8) -> str:
+    """The leading characters of an id, as the `ui.sid` template macro shows it (minus the ellipsis)."""
+    return id[:n]
 
 
 def create_app(service_factory: Callable[[], QueryService],
@@ -164,7 +169,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_create():
         name = request.form.get("name", "")
         try:
-            service_factory().save_spotlight(name, request.form.get("rule", ""))
+            service_factory().create_spotlight(name, request.form.getlist("session"))
         except SpotlightError as e:
             abort(400, str(e))
         return redirect(url_for("spotlight_page", name=name.strip()))
@@ -196,9 +201,15 @@ def create_app(service_factory: Callable[[], QueryService],
         chart = {"labels": [d.day.isoformat() for d in detail.days],
                  "series": [{"label": c, "data": [round(d.components[c], 4) for d in detail.days]}
                             for c in detail.components]}
-        return render_template(
-            "spotlight.html", d=detail, chart_data=chart,
-            choices=[c for c in service.session_choices() if c[0] not in detail.pins])
+        return render_template("spotlight.html", d=detail, chart_data=chart)
+
+    @app.get("/api/session-search")
+    def session_search():
+        found = service_factory().search_sessions(
+            request.args.get("q", ""), request.args.get("name", ""), request.args.getlist("exclude"))
+        return jsonify(results=[
+            {"id": c.session_id, "short_id": short_id(c.session_id), "label": c.label,
+             "cost": round(c.cost, 2), "kind": c.kind, "suggested": c.suggested} for c in found])
 
     def _edit(name, action):
         service = service_factory()
@@ -208,17 +219,13 @@ def create_app(service_factory: Callable[[], QueryService],
             abort(400, str(e))
         return redirect(url_for("spotlight_page", name=name))
 
-    @app.post("/spotlights/<path:name>/rule")
-    def spotlight_rule(name):
-        return _edit(name, lambda s: s.save_spotlight(name, request.form.get("rule", "")))
+    @app.post("/spotlights/<path:name>/add")
+    def spotlight_add(name):
+        return _edit(name, lambda s: s.add_session(name, request.form.get("session", "")))
 
-    @app.post("/spotlights/<path:name>/pin")
-    def spotlight_pin(name):
-        return _edit(name, lambda s: s.pin_session(name, request.form.get("session", "")))
-
-    @app.post("/spotlights/<path:name>/unpin")
-    def spotlight_unpin(name):
-        return _edit(name, lambda s: s.unpin_session(name, request.form.get("session", "")))
+    @app.post("/spotlights/<path:name>/remove")
+    def spotlight_remove(name):
+        return _edit(name, lambda s: s.remove_session(name, request.form.get("session", "")))
 
     @app.post("/spotlights/<path:name>/delete")
     def spotlight_delete(name):

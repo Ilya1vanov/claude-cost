@@ -19,3 +19,16 @@
   <script src="{{ url_for('static', filename='theme.js') }}"></script>
   <script src="{{ url_for('static', filename=page_script) }}"></script>
 {% endmacro %}
+
+{# Multi-chip Session picker. Chips are the picked Sessions; typing asks the search endpoint (picker.js).
+   mode "submit": chips are server-rendered and a choice posts to `add_url` at once.
+   mode "collect": picker.js keeps the chosen ids as hidden `session` inputs of the surrounding form. #}
+{% macro picker(name, mode, add_url="") %}
+<div class="picker" data-search-url="{{ url_for('session_search') }}" data-name="{{ name }}" data-mode="{{ mode }}">
+  <span class="chips">{{ caller() if caller }}</span>
+  {% set field %}<input type="text" class="picker-input" autocomplete="off" placeholder="Add a Session: type a label or id" aria-label="Add a Session">{% endset %}
+  {% if mode == "submit" %}<form class="picker-form" method="post" action="{{ add_url }}"><input type="hidden" name="session">{{ field }}</form>
+  {% else %}<span class="picker-form">{{ field }}</span>{% endif %}
+  <ul class="picker-list" hidden></ul>
+</div>
+{% endmacro %}

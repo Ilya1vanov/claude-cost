@@ -137,9 +137,10 @@ CREATE TABLE IF NOT EXISTS session_relations (
   parent_stem TEXT NOT NULL,
   kind TEXT NOT NULL
 );
--- Spotlights (ticket #13). session_meta: what rules and key detection read, per main
--- transcript stem. spotlights/spotlight_pins: user-defined Spotlights (a rule and/or pinned
--- Sessions, by logical session id); these are user data and survive `ingest --rebuild`.
+-- Spotlights (ticket #13). session_meta: what key detection reads, per main transcript stem.
+-- spotlights/spotlight_pins: user-defined Spotlights and their Picked sessions (by logical
+-- session id); these are user data and survive `ingest --rebuild`. `rule` is only read by the
+-- one-time migration that turns rules into Picked sessions; it is '' afterwards.
 CREATE TABLE IF NOT EXISTS session_meta (
   stem TEXT PRIMARY KEY,
   custom_title TEXT,
