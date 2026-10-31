@@ -75,18 +75,65 @@ def test_list_page_names_the_kinds_picked_and_auto_spotlight(root, tmp_path):
     assert "rule" not in page.lower() and "pinned" not in page.lower()
 
 
-def test_delete_sits_next_to_heading_for_user_spotlights_only(root, tmp_path):
+def _two_spotlight_client(root, tmp_path):
     _root(root)
     root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)],
                           branch="feature/proj-12-x")
+    root.write_subagent_transcript("p", "s1", "agent-abc123", [req("m3", "2026-10-30T03:00:00Z", output=M)],
+                                   meta={"agentType": "Explore", "description": "Scan the repo"})
     client, new = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
     svc = new()
     svc.create_spotlight("login", ["s1"])
     svc.close()
+    return client
+
+
+def test_sections_run_in_order_and_delete_is_the_last_card_on_user_spotlights_only(root, tmp_path):
+    client = _two_spotlight_client(root, tmp_path)
     page = client.get("/spotlights/login").get_data(as_text=True)
-    assert "Delete Spotlight" in page.split("<h1>", 1)[1].split("Cost per day", 1)[0]
+    order = ["<h1>", "Cost per day", "Cost components", 'id="spotlight-sessions"', 'id="spotlight-days"',
+             'id="spotlight-subagents"']
+    positions = [page.index(m) for m in order]
+    assert positions == sorted(positions)
+    assert "Delete Spotlight" not in page.split("Cost per day", 1)[0]
+    assert page.rindex("Delete Spotlight") > page.index('id="spotlight-subagents"')
+    assert 'class="card danger-zone"' in page.rsplit("<section", 1)[1]
     auto = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     assert "Delete Spotlight" not in auto
+
+
+def test_related_excluded_sits_between_subagents_and_delete(root, tmp_path):
+    _root(root)
+    root.write_transcript("p", "fk", [req("m1", "2026-10-30T01:00:00Z", output=M, forked_from="s1"),
+                                      req("m4", "2026-10-30T04:00:00Z", output=M)], prompt="go on")
+    root.write_subagent_transcript("p", "s1", "a1", [req("m3", "2026-10-30T03:00:00Z", output=M)])
+    client, new = _client(root, tmp_path)
+    svc = new()
+    svc.create_spotlight("login", ["s1"])
+    svc.close()
+    page = client.get("/spotlights/login").get_data(as_text=True)
+    assert page.index('id="spotlight-subagents"') < page.index('id="spotlight-related"') < page.rindex("Delete Spotlight")
+
+
+def test_also_in_column_only_when_a_session_is_in_another_spotlight(root, tmp_path):
+    client = _two_spotlight_client(root, tmp_path)
+    table = client.get("/spotlights/login").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]
+    assert "Also in" not in table
+    _, new = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
+    svc = new()
+    svc.create_spotlight("other", ["s2"])
+    svc.close()
+    table = client.get("/spotlights/PROJ-12").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]
+    assert "Also in" in table and ">other<" in table
+
+
+def test_subagents_table_leads_with_description_and_id_on_hover(root, tmp_path):
+    client = _two_spotlight_client(root, tmp_path)
+    page = client.get("/spotlights/login").get_data(as_text=True)
+    table = page.split('id="spotlight-subagents"')[1].split("</table>")[0]
+    assert 'title="agent-abc123"' in table and "Scan the repo" in table
+    assert "<small>Scan the repo" not in table
+    assert 'class="session-cell"' in table
 
 
 def test_auto_spotlights_hint_only_without_key_pattern(root, tmp_path):
