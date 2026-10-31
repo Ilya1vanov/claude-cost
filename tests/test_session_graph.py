@@ -72,14 +72,14 @@ def test_fork_subagent_never_links(root, graph_for):
 
 
 def test_no_self_link_across_a_sessions_resumed_transcripts(root, desktop, graph_for):
-    t(root, "old", ts="2026-10-29T01:00:00Z")
-    root.write_transcript("p", "new", [req("m-old", "2026-10-29T01:00:00Z", output=M, forked_from="old"),
+    t(root, "a-old", ts="2026-10-29T01:00:00Z")
+    root.write_transcript("p", "b-new", [req("m-a-old", "2026-10-29T01:00:00Z", output=M, forked_from="a-old"),
                                        req("m2", "2026-10-30T02:00:00Z", output=M)])
-    desktop.write_session("a", "new", priorCliSessionIds=["old"])
+    desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
     g = graph_for(root, desktop)
-    assert g.session_of("new") == "old"
-    assert g.link("old") is None
-    assert g.children("old") == []
+    assert g.session_of("b-new") == "a-old"
+    assert g.link("a-old") is None
+    assert g.children("a-old") == []
 
 
 def test_link_kept_when_parent_session_is_unknown(root, graph_for):
@@ -91,13 +91,13 @@ def test_link_kept_when_parent_session_is_unknown(root, graph_for):
 
 
 def test_transcripts_and_session_of(root, desktop, graph_for):
-    t(root, "old", ts="2026-10-29T01:00:00Z")
-    t(root, "new", ts="2026-10-30T02:00:00Z")
+    t(root, "a-old", ts="2026-10-29T01:00:00Z")
+    t(root, "b-new", ts="2026-10-30T02:00:00Z")
     t(root, "solo")
-    desktop.write_session("a", "new", priorCliSessionIds=["old"])
+    desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
     g = graph_for(root, desktop)
-    assert (g.session_of("old"), g.session_of("new"), g.session_of("solo")) == ("old", "old", "solo")
-    assert sorted(g.transcripts("old")) == ["new", "old"]
+    assert (g.session_of("a-old"), g.session_of("b-new"), g.session_of("solo")) == ("a-old", "a-old", "solo")
+    assert sorted(g.transcripts("a-old")) == ["b-new", "a-old"]
     assert g.transcripts("solo") == ["solo"]
     assert g.transcripts("unknown") == ["unknown"] and g.session_of("unknown") == "unknown"
 
