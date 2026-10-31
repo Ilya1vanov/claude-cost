@@ -39,7 +39,7 @@ def test_fork_timeline_names_parent_and_parent_marks_the_fork(root, service_for)
     child = svc.session_timeline("s9")
     assert (child.parent_session_id, child.link_kind) == ("s1", "fork")
     [mark] = svc.session_timeline("s1").side_sessions
-    assert (mark.session_id, mark.kind, mark.before_index) == ("s9", "fork", 1)
+    assert (mark.session_id, mark.kind, mark.before_index) == ("s9", "fork", 2)
 
 
 def test_fork_session_page_reads_fork_session_of_parent(root, tmp_path):

@@ -169,8 +169,9 @@ class FindingContext:
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
-                 compare_model: str = DEFAULT_COMPARE_MODEL):
+                 compare_model: str = DEFAULT_COMPARE_MODEL, graph=None):
         self.rows = rows
+        self.graph = graph  # session_graph.SessionGraph: how Transcripts group into Sessions
         self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.compact = compact  # compact.CompactAnalysis: learned Compact thresholds
         self.price_table = price_table

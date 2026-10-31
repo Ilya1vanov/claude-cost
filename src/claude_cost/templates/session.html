@@ -3,7 +3,7 @@
 {% block title %}Session {{ t.session_id }}{% if t.agent_id %} / {{ t.agent_id }}{% endif %} · claude-cost{% endblock %}
 {% block content %}
   <div class="crumbs"><a href="{{ url_for('dashboard') }}">Dashboard</a>
-    {% if t.parent_session_id %}<span class="sep">/</span>{{ t.link_kind|capitalize }} session of <a href="{{ url_for('session_timeline', session_id=t.parent_session_id) }}">{{ session_label(t.parent_session_id) }}</a>{% endif %}
+    {% if t.parent_session_id %}<span class="sep">/</span>{{ t.link_kind|capitalize }} session of {{ session_label(t.parent_session_id) }}{% endif %}
     {% if t.agent_id %}<span class="sep">/</span><a href="{{ url_for('session_timeline', session_id=t.session_id) }}">Parent session {{ session_label(t.session_id) }}</a>{% endif %}</div>
   <div class="page-head">
     <div>
@@ -40,7 +40,7 @@
       {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
         <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
           {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
-      {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>Side session started</td>
+      {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>{{ "Fork" if s.kind == "fork" else "Side session" }} started</td>
         <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ session_label(s.session_id, link=False) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
       {% if not (t.compactions or t.subagents or t.side_sessions) %}<tr><td colspan="3" class="empty">No events</td></tr>{% endif %}
     </table></div>
