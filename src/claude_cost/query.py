@@ -181,6 +181,10 @@ class SessionTimeline:
     side_sessions: tuple[SideSessionMark, ...]
     parent_session_id: str | None = None  # of a Side session / Fork
     link_kind: str | None = None
+    # Session timeline only: the Session with all its Subagents, as Top sessions counts it
+    total_cost: float | None = None
+    total_requests: int | None = None
+    subagent_cost: float = 0.0
 
     @property
     def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
@@ -537,7 +541,9 @@ class QueryService:
         return SessionTimeline(
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
             sides, parent.parent_session_id if parent and agent_id is None else None,
-            parent.link_kind if parent and agent_id is None else None)
+            parent.link_kind if parent and agent_id is None else None,
+            *((parent.cost, parent.requests, parent.subagent_cost)
+              if parent and agent_id is None else ()))
 
     @staticmethod
     def _mark(c, before: int, points: list[TimelinePoint]) -> CompactionMark:
@@ -609,6 +615,15 @@ class QueryService:
         row = self._conn.execute(
             f"SELECT {cols} FROM requests WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()
         return {c: row[c] for _, c in COMPONENTS}
+
+    def session_spend(self, session_id: str, p: Period) -> tuple[float, int]:
+        """A Session's cost and requests in the Period, Subagents included, as Top sessions counts them."""
+        lo, hi = self._bounds(p)
+        row = self._conn.execute(
+            f"SELECT COALESCE(SUM({COST_SQL}), 0) AS cost, COUNT(*) AS n FROM requests r {SESSION_JOIN} "
+            f"WHERE {SESSION_ID_SQL} = ? AND r.ts_epoch >= ? AND r.ts_epoch < ?",
+            (session_id, lo, hi)).fetchone()
+        return row["cost"], row["n"]
 
     def _top(self, key_sql: str, p: Period, n: int) -> tuple[RankedSpend, ...]:
         lo, hi = self._bounds(p)

@@ -104,7 +104,7 @@
       <div class="table-wrap"><table>
         <tr><th></th><th>Session</th><th class="num">Cost</th><th class="num">Requests</th></tr>
         {% for s in c.top_sessions %}<tr><td class="rank">{{ loop.index }}</td>
-          <td>{{ session_label(s.key) }}
+          <td>{{ session_label(s.key, period=c.current) }}
             {% if s.subagents or s.side_sessions or s.forks %}<small>{% if s.subagents %}{{ s.subagents }} subagent{{ "s" if s.subagents != 1 }} = ${{ "%.2f"|format(s.subagent_cost) }}{% endif %}{% if s.subagents and (s.side_sessions or s.forks) %}; {% endif %}{% if s.side_sessions or s.forks %}{% if s.side_sessions %}{{ s.side_sessions }} side session{{ "s" if s.side_sessions != 1 }}{% endif %}{% if s.side_sessions and s.forks %}, {% endif %}{% if s.forks %}{{ s.forks }} fork{{ "s" if s.forks != 1 }}{% endif %} not included{% endif %}</small>{% endif %}</td>
           <td class="num">${{ "%.2f"|format(s.cost) }}</td><td class="num">{{ s.requests }}</td></tr>
         {% else %}<tr><td colspan="4" class="empty">No spend in this period</td></tr>{% endfor %}

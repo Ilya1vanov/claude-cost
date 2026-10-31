@@ -87,3 +87,43 @@ def test_dashboard_rolls_up_sessions_once_per_request(root, desktop, tmp_path, m
     conn.set_trace_callback(lambda sql: calls.append(1) if "FROM session_relations" in sql else None)
     create_app(lambda: QueryService(conn, "UTC"), lambda: NOW).test_client().get("/")
     assert len(calls) == 1
+
+
+def _session_pages(root, tmp_path, follow_link=False):
+    """The dashboard, and s1's Session page: its plain URL, or the Top sessions row's link."""
+    def factory():
+        conn = store.connect(tmp_path / "store.sqlite")
+        ingest.ingest(conn, [root.path])
+        return QueryService(conn, "UTC")
+    client = create_app(factory, lambda: NOW).test_client()
+    dashboard = client.get("/").get_data(as_text=True)
+    url = "/session/s1"
+    if follow_link:
+        row = re.search(r'<tr><td class="rank">1</td>.*?</tr>', dashboard, re.S).group(0)
+        url = re.search(r'href="([^"]+)"', row).group(1).replace("&amp;", "&")
+    return dashboard, client.get(url).get_data(as_text=True)
+
+
+def test_session_page_headline_matches_top_sessions_row_including_nested_subagents(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m2", "2026-10-29T02:00:00Z", output=M)])
+    root.write_subagent_transcript("p", "s1", "a2", [req("m3", "2026-10-29T02:30:00Z", output=M)],
+                                   meta={"parentAgentId": "a1"})
+    dashboard, page = _session_pages(root, tmp_path)
+    row = re.search(r'<tr><td class="rank">1</td>.*?</tr>', dashboard, re.S).group(0)
+    cost, n = re.search(r'<td class="num">(\$[\d.,]+)</td><td class="num">(\d+)</td>', row).groups()
+    head = re.search(r'<p class="sub">(\d+) requests, <strong>(\$[\d.,]+)</strong>', page).groups()
+    assert (cost, n) == ("$60.00", "3")
+    assert head == (n, cost)
+
+
+def test_session_page_opened_from_top_sessions_shows_period_and_all_time_totals(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m0", "2026-09-01T01:00:00Z", output=M),
+                                      req("m1", "2026-10-29T01:00:00Z", output=M)])
+    dashboard, page = _session_pages(root, tmp_path, follow_link=True)
+    row = re.search(r'<tr><td class="rank">1</td>.*?</tr>', dashboard, re.S).group(0)
+    assert '<td class="num">$20.00</td><td class="num">1</td>' in row
+    head = re.search(r'<p class="sub">(.*?)</p>', page, re.S).group(1)
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", head))
+    assert re.match(r"1 requests, \$20\.00 in 2026-10-\d\d to 2026-10-\d\d;", text)
+    assert "all time: 2 requests, $40.00" in text

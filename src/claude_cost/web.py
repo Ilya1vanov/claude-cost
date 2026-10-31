@@ -12,7 +12,7 @@ from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
-from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
+from .query import COMPARISON_MODES, PERIOD_MODES, Period, QueryService
 from .spotlights import SpotlightError
 from .tooltips import TOOLTIPS
 
@@ -47,14 +47,16 @@ def create_app(service_factory: Callable[[], QueryService],
         return g.helper_service
 
     @app.template_global()
-    def session_label(session_id: str, link: bool = True) -> Markup:
-        """A Session by its label, the id on hover; linked to its Session page unless `link` is off."""
+    def session_label(session_id: str, link: bool = True, period: Period | None = None) -> Markup:
+        """A Session by its label, the id on hover; linked to its Session page unless `link` is off.
+        With `period`, the page also shows the Session's spend in that Period."""
         if "session_labels" not in g:
             g.session_labels = helper_service().session_labels()
         label, sid = escape(g.session_labels.get(session_id, session_id)), escape(session_id)
         if not link:
             return Markup(f'<span class="id" title="{sid}">{label}</span>')
-        return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id))}" '
+        args = {"from": period.start.isoformat(), "to": period.end.isoformat()} if period else {}
+        return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id, **args))}" '
                       f'class="id" title="{sid}">{label}</a>')
 
     @app.template_global()
@@ -283,6 +285,15 @@ def create_app(service_factory: Callable[[], QueryService],
         timeline = service.session_timeline(session_id, agent_id)
         if timeline is None:
             abort(404)
+        period = in_period = None
+        if "from" in request.args or "to" in request.args:
+            try:
+                period = Period(date.fromisoformat(request.args["from"]),
+                                date.fromisoformat(request.args["to"]))
+            except (KeyError, ValueError):
+                abort(400, "from and to must both be dates like 2026-10-01")
+            if agent_id is None:
+                in_period = service.session_spend(session_id, period)
         chart = {"labels": [service.local_time(p.ts).strftime("%H:%M:%S")
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
@@ -298,6 +309,7 @@ def create_app(service_factory: Callable[[], QueryService],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,
+                               period=period, in_period=in_period,
                                when=lambda ts: service.local_time(ts).strftime("%Y-%m-%d %H:%M:%S %Z"))
 
     return app

@@ -8,7 +8,12 @@
   <div class="page-head">
     <div>
       <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ session_label(t.session_id) }}</small>{% else %}Session {{ session_label(t.session_id, link=False) }}{% endif %}</h1>
-      <p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>
+      {% if in_period %}<p class="sub">{{ in_period[1] }} requests, <strong>${{ "%.2f"|format(in_period[0]) }}</strong> in {{ period.start }} to {{ period.end }};
+        all time: {{ t.total_requests }} requests, ${{ "%.2f"|format(t.total_cost) }}{% if t.subagent_cost %}
+        (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }}){% endif %}</p>
+      {% elif t.total_cost is not none and t.subagent_cost %}<p class="sub">{{ t.total_requests }} requests, <strong>${{ "%.2f"|format(t.total_cost) }}</strong>
+        (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }})</p>
+      {% else %}<p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>{% endif %}
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
   </div>
