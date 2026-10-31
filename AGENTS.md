@@ -14,6 +14,10 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Git workflow
 
-Single-developer project: never create pull requests. When work is done, suggest merging to `main` and pushing instead.
+Single-developer project: never create pull requests.
 
-Create every worktree under `.claude/worktrees/`.
+Run `/implement` and `/implement-spec` in a worktree, and create every worktree under `.claude/worktrees/`.
+
+Review finished work with `/mattpocock-skills:code-review`: it runs in subagents and checks the diff against its spec issue.
+
+When work is done, offer to finish it in one step: merge to `main`, push `main`, then delete the worktree and its branch, locally and on the remote.
