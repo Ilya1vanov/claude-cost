@@ -97,7 +97,7 @@ def test_transcripts_and_session_of(root, desktop, graph_for):
     desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
     g = graph_for(root, desktop)
     assert (g.session_of("a-old"), g.session_of("b-new"), g.session_of("solo")) == ("a-old", "a-old", "solo")
-    assert sorted(g.transcripts("a-old")) == ["b-new", "a-old"]
+    assert sorted(g.transcripts("a-old")) == ["a-old", "b-new"]
     assert g.transcripts("solo") == ["solo"]
     assert g.transcripts("unknown") == ["unknown"] and g.session_of("unknown") == "unknown"
 
