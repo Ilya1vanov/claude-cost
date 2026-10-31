@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import calendar
 from typing import Iterable, NamedTuple
 from datetime import date, datetime, time, timedelta, tzinfo
@@ -56,6 +56,15 @@ class SubagentSummary:
     requests: int
 
 
+@dataclass
+class _DayAcc:
+    """One Spotlight day while it is being summed."""
+    cost: float = 0.0
+    by_session: dict = field(default_factory=dict)
+    by_run: dict = field(default_factory=dict)  # (session, agent) -> cost
+    components: dict = field(default_factory=lambda: {n: 0.0 for n, _ in COMPONENTS})
+
+
 @dataclass(frozen=True)
 class SpotlightSession:
     session_id: str
@@ -65,7 +74,9 @@ class SpotlightSession:
     requests: int
     joined_as: str  # "Key match" | "Picked" | "Fork" | "Side session of <label>"
     also_in: tuple[str, ...]  # other Spotlights that count this Session fully too
-    picked: bool  # a Picked session (it can be removed), also when it joined as Key match
+    picked: bool  # a Picked session, also when it joined as Key match
+    key_matched: bool  # an Auto-spotlight's Key match: shown as a fixed chip
+    removable: bool  # picked and not Key match: the Remove control applies
 
 
 @dataclass(frozen=True)
@@ -979,7 +990,8 @@ class QueryService:
         sessions = tuple(sorted(
             (SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
                               by[sid].requests, self._joined_as(sid, infos, ms, defn),
-                              tuple(sorted(in_other.get(sid, ()))), sid in defn.picked)
+                              tuple(sorted(in_other.get(sid, ()))), sid in defn.picked,
+                              sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched)
              for sid in ms.members if sid in by), key=lambda x: (-x.cost, x.session_id)))
         related = tuple(sorted(
             (SpotlightRelated(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
@@ -989,22 +1001,22 @@ class QueryService:
                      for a in self.subagent_summaries() if a.session_id in ms.members)
         agent_types = {(a.session_id, a.agent_id): a.agent_type or "unknown"
                        for a in self.subagent_summaries()}
-        days: dict[date, list] = {}
+        days: dict[date, _DayAcc] = {}
         comps = {n: 0.0 for n, _ in COMPONENTS}
         for r in rows:
             if r["sid"] not in ms.members:
                 continue
-            d = days.setdefault(self._local_day(r["ts"]), [0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS}])
+            d = days.setdefault(self._local_day(r["ts"]), _DayAcc())
             total = 0.0
             for n, c in COMPONENTS:
-                d[3][n] += r[c]
+                d.components[n] += r[c]
                 comps[n] += r[c]
                 total += r[c]
-            d[0] += total
-            d[1][r["sid"]] = d[1].get(r["sid"], 0.0) + total
+            d.cost += total
+            d.by_session[r["sid"]] = d.by_session.get(r["sid"], 0.0) + total
             if r["agent"] is not None:
                 key = (r["sid"], r["agent"])
-                d[2][key] = d[2].get(key, 0.0) + total
+                d.by_run[key] = d.by_run.get(key, 0.0) + total
         def day_subagent(runs: dict) -> SubagentDay | None:
             if not runs:
                 return None
@@ -1018,9 +1030,10 @@ class QueryService:
         out_days = ()
         if days:
             first, last = min(days), max(days)
-            blank = [0.0, {}, {}, {n: 0.0 for n, _ in COMPONENTS}]
+            blank = _DayAcc()
             out_days = tuple(
-                SpotlightDay(day, (c := days.get(day, blank))[0], c[1], day_subagent(c[2]), c[3])
+                SpotlightDay(day, (c := days.get(day, blank)).cost, c.by_session, day_subagent(c.by_run),
+                             c.components)
                 for day in (first + timedelta(n) for n in range((last - first).days + 1)))
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
                                tuple(sorted(defn.picked)))
@@ -1048,15 +1061,21 @@ class QueryService:
 
     # Editing user-defined Spotlights (Picked sessions live in the store, not config.toml).
 
+    def _insert_pins(self, name: str, session_ids: Iterable[str], create: bool) -> None:
+        """Add Picked sessions to `name`, first creating the user-defined Spotlight if `create`.
+        Call inside a transaction."""
+        if create:
+            self._conn.execute("INSERT OR IGNORE INTO spotlights (name) VALUES (?)", (name,))
+        self._conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
+                               [(name, self.graph.session_of(s)) for s in session_ids])
+
     def create_spotlight(self, name: str, session_ids: Iterable[str] = ()) -> None:
         """Create a Spotlight (empty with just a name) and add Picked sessions to it."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
         with self._conn:
-            self._conn.execute("INSERT OR IGNORE INTO spotlights (name) VALUES (?)", (name,))
-            self._conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                                   [(name, self.graph.session_of(s)) for s in session_ids])
+            self._insert_pins(name, session_ids, create=True)
 
     def delete_spotlight(self, name: str) -> None:
         with self._conn:
@@ -1071,10 +1090,7 @@ class QueryService:
             raise spotlights.SpotlightError("a Spotlight needs a name")
         is_auto = any(name in ks for ks in self.session_keys().values())
         with self._conn:
-            if not is_auto:
-                self._conn.execute("INSERT OR IGNORE INTO spotlights (name) VALUES (?)", (name,))
-            self._conn.execute("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                               (name, self.graph.session_of(session_id)))
+            self._insert_pins(name, [session_id], create=not is_auto)
 
     def remove_session(self, name: str, session_id: str) -> None:
         """Remove a Picked session; Side sessions that joined through it leave with it.

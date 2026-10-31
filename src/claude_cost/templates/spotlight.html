@@ -11,7 +11,7 @@
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
         Includes Subagents and Side sessions.</p>
-      {% call ui.picker(s.name, "submit", url_for('spotlight_add', name=s.name)) %}{% for x in d.sessions if x.picked or x.joined_as == "Key match" %}<span class="chip{{ ' fixed' if x.joined_as == 'Key match' }}">{{ session_label(x.session_id) }}{% if x.joined_as == "Key match" %} <small>Key match</small>{% else %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="chip-x" aria-label="Remove {{ session_label(x.session_id) }}">×</button></form>{% endif %}</span>{% endfor %}{% endcall %}
+      {% call ui.picker(s.name, "submit", url_for('spotlight_add', name=s.name)) %}{% for x in d.sessions if x.picked or x.key_matched %}<span class="chip{{ ' fixed' if x.key_matched }}">{{ session_label(x.session_id) }}{% if x.key_matched %} <small>Key match</small>{% else %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="chip-x" aria-label="Remove {{ session_label(x.session_id) }}">×</button></form>{% endif %}</span>{% endfor %}{% endcall %}
     </div>
   </div>
 
@@ -36,7 +36,7 @@
         <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
         <td><span class="badge">{{ x.joined_as }}</span></td>
         {% if show_also %}<td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>{% endif %}
-        <td class="num">{% if x.picked and x.joined_as != "Key match" %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
+        <td class="num">{% if x.removable %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
       {% else %}<tr><td colspan="{{ 6 if show_also else 5 }}" class="empty">No Sessions</td></tr>{% endfor %}
     </table></div>
   </section>

@@ -61,6 +61,19 @@ def test_ingest_turns_a_rule_into_picked_sessions_keeping_total_and_sessions(roo
     assert conn.execute("SELECT rule FROM spotlights WHERE name = 'login'").fetchone()[0] == ""
 
 
+def test_a_rule_that_does_not_compile_is_skipped_and_left_untouched(root, tmp_path):
+    from claude_cost import ingest
+    from claude_cost.query import QueryService
+    sprint_root(root)
+    conn = legacy_rule_store(root, tmp_path, [("bad", "(unclosed"), ("login", "login")])
+    ingest.ingest(conn, [root.path])
+    svc = QueryService(conn, "UTC")
+    assert svc.spotlight("bad").sessions == ()
+    assert conn.execute("SELECT rule FROM spotlights WHERE name = 'bad'").fetchone()[0] == "(unclosed"
+    assert {s.session_id for s in svc.spotlight("login").sessions} >= {"by-title"}
+    assert conn.execute("SELECT rule FROM spotlights WHERE name = 'login'").fetchone()[0] == ""
+
+
 def test_the_rule_migration_runs_once(root, tmp_path):
     from claude_cost import ingest
     from claude_cost.query import QueryService
@@ -304,6 +317,9 @@ def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_remo
     d = svc.spotlight("PROJ-12")
     assert d.summary.kind == "auto"
     assert {s.session_id: s.joined_as for s in d.sessions} == {"s1": "Key match", "s3": "Picked"}
+    by_id = {s.session_id: s for s in d.sessions}
+    assert by_id["s1"].key_matched and not by_id["s1"].removable
+    assert not by_id["s3"].key_matched and by_id["s3"].removable
     with pytest.raises(SpotlightError):
         svc.remove_session("PROJ-12", "s1")
     svc.remove_session("PROJ-12", "s3")
@@ -311,6 +327,7 @@ def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_remo
     svc.add_session("PROJ-12", "s1")  # picked too: Key match takes precedence, still fixed
     s1 = svc.spotlight("PROJ-12").sessions[0]
     assert s1.joined_as == "Key match" and s1.picked
+    assert s1.key_matched and not s1.removable
     with pytest.raises(SpotlightError):
         svc.remove_session("PROJ-12", "s1")
 

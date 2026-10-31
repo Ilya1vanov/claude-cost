@@ -21,6 +21,11 @@ CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show al
 REQUEST_ROWS = 1000
 
 
+def short_id(id: str, n: int = 8) -> str:
+    """The leading characters of an id, as the `ui.sid` template macro shows it (minus the ellipsis)."""
+    return id[:n]
+
+
 def create_app(service_factory: Callable[[], QueryService],
                now: Callable[[], datetime],
                refresh: Callable[[], object] | None = None, top_n: int = 10) -> Flask:
@@ -203,7 +208,7 @@ def create_app(service_factory: Callable[[], QueryService],
         found = service_factory().search_sessions(
             request.args.get("q", ""), request.args.get("name", ""), request.args.getlist("exclude"))
         return jsonify(results=[
-            {"id": c.session_id, "short_id": c.session_id[:8], "label": c.label,
+            {"id": c.session_id, "short_id": short_id(c.session_id), "label": c.label,
              "cost": round(c.cost, 2), "kind": c.kind, "suggested": c.suggested} for c in found])
 
     def _edit(name, action):
