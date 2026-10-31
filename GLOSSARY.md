@@ -83,8 +83,12 @@ _Avoid_: incremental write
 ## Spotlights
 
 **Spotlight**:
-A named, saved set of sessions whose total cost is tracked together, including their subagents and side sessions.
+A named set of sessions the user picks, whose total cost is tracked together, including their subagents, their side sessions and any forks picked too.
 _Avoid_: group, tag, bucket
+
+**Picked session**:
+A session the user added to a spotlight by hand, rather than one that joined as a side session or by key.
+_Avoid_: pinned session, rule match
 
 **Auto-spotlight**:
 A spotlight created for each key, such as a ticket id, that a configured pattern finds in sessions.
