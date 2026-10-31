@@ -61,6 +61,19 @@ def test_ingest_turns_a_rule_into_picked_sessions_keeping_total_and_sessions(roo
     assert conn.execute("SELECT rule FROM spotlights WHERE name = 'login'").fetchone()[0] == ""
 
 
+def test_a_rule_that_does_not_compile_is_skipped_and_left_untouched(root, tmp_path):
+    from claude_cost import ingest
+    from claude_cost.query import QueryService
+    sprint_root(root)
+    conn = legacy_rule_store(root, tmp_path, [("bad", "(unclosed"), ("login", "login")])
+    ingest.ingest(conn, [root.path])
+    svc = QueryService(conn, "UTC")
+    assert svc.spotlight("bad").sessions == ()
+    assert conn.execute("SELECT rule FROM spotlights WHERE name = 'bad'").fetchone()[0] == "(unclosed"
+    assert {s.session_id for s in svc.spotlight("login").sessions} >= {"by-title"}
+    assert conn.execute("SELECT rule FROM spotlights WHERE name = 'login'").fetchone()[0] == ""
+
+
 def test_the_rule_migration_runs_once(root, tmp_path):
     from claude_cost import ingest
     from claude_cost.query import QueryService

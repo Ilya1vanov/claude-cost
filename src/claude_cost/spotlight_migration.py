@@ -23,11 +23,16 @@ def run(conn: sqlite3.Connection) -> None:
     rules = conn.execute("SELECT name, rule FROM spotlights WHERE rule != ''").fetchall()
     infos = QueryService(conn)._session_infos() if rules else {}
     with conn:
+        done = []
         for name, rule in rules:
-            pattern = re.compile(rule, re.IGNORECASE)
+            try:
+                pattern = re.compile(rule, re.IGNORECASE)
+            except re.error:
+                continue  # a rule that no longer compiles is left as stored, never breaking ingest
             conn.executemany(
                 "INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
                 [(name, sid) for sid, info in infos.items()
                  if any(pattern.search(t) for t in info.texts())])
-        conn.execute("UPDATE spotlights SET rule = ''")
+            done.append(name)
+        conn.executemany("UPDATE spotlights SET rule = '' WHERE name = ?", [(n,) for n in done])
         conn.execute("INSERT INTO meta VALUES (?, '1')", (GUARD,))
