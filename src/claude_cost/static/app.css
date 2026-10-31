@@ -186,6 +186,7 @@ th:last-child, td:last-child { padding-right: 0; }
 td small { display: block; margin-top: 2px; }
 td.empty { color: var(--muted); text-align: center; padding: 20px; }
 td.nowrap { white-space: nowrap; }
+td.name-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.session-cell, th.session-cell { width: 160px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.title { min-width: 260px; max-width: 420px; }
 .rank { color: var(--muted); width: 1%; font-variant-numeric: tabular-nums; }

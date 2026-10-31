@@ -177,6 +177,11 @@ def test_spotlight_pages_edit_picked_sessions_and_compare(root, configure):
     cmp = client.get("/spotlights/compare?s=PROJ-7&s=PROJ-8")
     assert cmp.status_code == 200 and 'id="spotlight-compare-chart"' in cmp.get_data(as_text=True)
     assert client.get("/spotlights/compare?s=PROJ-7&s=nope").status_code == 404
+    long_name = "Sprint 5 " + "very-long-spotlight-name-" * 4
+    for n in (long_name, "short"):
+        client.post("/spotlights", data={"name": n, "session": ["s2"]})
+    page = client.get("/spotlights/compare", query_string={"s": [long_name, "short"]}).get_data(as_text=True)
+    assert f'<td class="name-cell" title="{long_name}">' in page
     assert client.get("/spotlights/nope").status_code == 404
 
 
