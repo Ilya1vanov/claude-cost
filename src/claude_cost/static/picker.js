@@ -13,7 +13,7 @@
     var input = root.querySelector(".picker-input");
     var list = root.querySelector(".picker-list");
     var chips = root.querySelector(".chips");
-    var idField = root.querySelector("input[name=session]");
+    var idField = root.querySelector(".picker-form input[name=session]");
     var picked = [];
     var latest = 0;
 
@@ -68,7 +68,8 @@
       picked.forEach(function (id) { params.append("exclude", id); });
       fetch(root.dataset.searchUrl + "?" + params)
         .then(function (r) { return r.json(); })
-        .then(function (d) { if (n === latest) show(d.results, input.value.trim() === ""); });
+        .then(function (d) { if (n === latest) show(d.results, input.value.trim() === ""); })
+        .catch(function () { if (n === latest) { list.replaceChildren(); list.hidden = true; } });
     }
 
     input.addEventListener("focus", search);

@@ -317,6 +317,9 @@ def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_remo
     d = svc.spotlight("PROJ-12")
     assert d.summary.kind == "auto"
     assert {s.session_id: s.joined_as for s in d.sessions} == {"s1": "Key match", "s3": "Picked"}
+    by_id = {s.session_id: s for s in d.sessions}
+    assert by_id["s1"].key_matched and not by_id["s1"].removable
+    assert not by_id["s3"].key_matched and by_id["s3"].removable
     with pytest.raises(SpotlightError):
         svc.remove_session("PROJ-12", "s1")
     svc.remove_session("PROJ-12", "s3")
@@ -324,6 +327,7 @@ def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_remo
     svc.add_session("PROJ-12", "s1")  # picked too: Key match takes precedence, still fixed
     s1 = svc.spotlight("PROJ-12").sessions[0]
     assert s1.joined_as == "Key match" and s1.picked
+    assert s1.key_matched and not s1.removable
     with pytest.raises(SpotlightError):
         svc.remove_session("PROJ-12", "s1")
 
