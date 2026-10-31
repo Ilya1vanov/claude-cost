@@ -23,7 +23,7 @@ def test_included_spotlights_card_lists_rows_and_names_the_includer_in_joined_as
     picker = card.split("<select")[1]
     assert "Spare" in picker and "PROJ-12" not in picker
     table = html.split('id="spotlight-sessions"')[1].split("</table>")[0]
-    assert "Included spotlight PROJ-12" in table
+    assert '<span class="badge joined" title="Included spotlight PROJ-12">via PROJ-12</span>' in table
     assert 'id="included-spotlights"' not in client.get("/spotlights/PROJ-12").get_data(as_text=True)
 
 
