@@ -81,12 +81,7 @@ def detect(ctx: FindingContext) -> Detection:
 
     # Listings and removals are read for the active Streams only, selected by Stream and never
     # by time: a Stream's earliest Listing and its removals can predate the Period.
-    active = json.dumps(sorted({sid for sid, _ in by_stream}))
-    sid_of = {x["stem"]: x["sid"] for x in ctx.conn.execute(
-        "SELECT stem, logical_session_id AS sid FROM session_links "
-        "WHERE logical_session_id IN (SELECT value FROM json_each(?)) "
-        "OR stem IN (SELECT value FROM json_each(?))", (active, active))}
-    stems = json.dumps(sorted(set(sid_of) | {sid for sid, _ in by_stream if sid not in sid_of}))
+    stems = json.dumps(sorted({t for sid, _ in by_stream for t in ctx.graph.transcripts(sid)}))
     names_used: dict[tuple[str, str], set[str]] = defaultdict(set)  # (project, kind) -> names
     uses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # kind -> name -> uses
     for x in ctx.conn.execute("SELECT project, kind, name FROM tool_uses WHERE ts_epoch >= ?",
@@ -104,13 +99,13 @@ def detect(ctx: FindingContext) -> Detection:
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
                               "FROM listings WHERE stem IN (SELECT value FROM json_each(?)) "
                               "ORDER BY ts_epoch", (stems,)):
-        sid = sid_of.get(x["stem"], x["stem"])
+        sid = ctx.graph.session_of(x["stem"])
         key = (x["project"], sid, x["agent_id"], x["kind"], x["name"])
         listed.setdefault(key, (x["ts_epoch"], x["tokens"]))
     removed: dict[tuple, list[float]] = defaultdict(list)  # removal times
     for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals "
                               "WHERE stem IN (SELECT value FROM json_each(?))", (stems,)):
-        sid = sid_of.get(x["stem"], x["stem"])
+        sid = ctx.graph.session_of(x["stem"])
         removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
     def elsewhere(kind: str, name: str) -> int:
         """Invocations of the listing, matched like `_used`, in every project."""

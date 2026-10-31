@@ -53,7 +53,7 @@ def create_app(service_factory: Callable[[], QueryService],
         if "session_labels" not in g:
             g.session_labels = helper_service().session_labels()
         label, sid = escape(g.session_labels.get(session_id, session_id)), escape(session_id)
-        if not link:
+        if not link or session_id not in g.session_labels:  # unknown to the store: nothing to open
             return Markup(f'<span class="id" title="{sid}">{label}</span>')
         args = {"from": period.start.isoformat(), "to": period.end.isoformat()} if period else {}
         return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id, **args))}" '

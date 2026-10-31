@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
-from .. import compact, pricing
+from .. import compact, pricing, session_graph
 from ..localtime import local_day
 from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
@@ -170,9 +170,13 @@ class FindingContext:
     def __init__(self, rows: list[RequestRow], thresholds: Mapping[str, int],
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
-                 compare_model: str = DEFAULT_COMPARE_MODEL, median_first_context: float = 0.0):
+                 compare_model: str = DEFAULT_COMPARE_MODEL, median_first_context: float = 0.0,
+                 graph=None):
         self.rows = rows
         self.median_first_context = median_first_context  # lifetime, not per Period
+        if graph is None and conn is not None:
+            graph = session_graph.load(conn)
+        self.graph = graph  # session_graph.SessionGraph: how Transcripts group into Sessions
         self.conn = conn  # for detectors that need data beyond requests (e.g. Listings)
         self.compact = compact  # compact.CompactAnalysis: learned Compact thresholds
         self.price_table = price_table
