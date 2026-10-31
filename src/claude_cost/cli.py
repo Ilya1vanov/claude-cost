@@ -241,7 +241,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
-    sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
+    p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
+    p_serve.add_argument("--browser", choices=["default", "none"],
+                         help="none: don't open a browser (also BROWSER=none)")
     cfg = sub.add_parser("config", help="show or change settings in config.toml")
     cfg_sub = cfg.add_subparsers(dest="config_action")
     cfg_sub.add_parser("path", help="print the config file location")
@@ -278,6 +280,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
             return 2
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
+    if (args.browser or env.get("BROWSER")) == "none":
+        open_browser = lambda url: None
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)
 
 

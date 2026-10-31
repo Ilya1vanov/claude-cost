@@ -143,3 +143,22 @@ def test_serve_uses_configured_port(env, root):
     code, out, _ = run(["serve"], env, run_server=lambda app, host, port: seen.append((host, port)),
                        open_browser=lambda url: None)
     assert code == 0 and seen == [("127.0.0.1", 9321)]
+
+
+def test_serve_opens_browser_by_default(env, root):
+    run(["config", "set", "data_roots", str(root.path)], env)
+    opened = []
+    run(["serve"], env, run_server=lambda app, host, port: None, open_browser=opened.append)
+    assert opened == ["http://127.0.0.1:8765/"]
+
+
+@pytest.mark.parametrize("argv, extra_env", [
+    (["serve", "--browser=none"], {}),
+    (["serve"], {"BROWSER": "none"}),
+])
+def test_serve_skips_browser_when_none(env, root, argv, extra_env):
+    run(["config", "set", "data_roots", str(root.path)], env)
+    opened = []
+    code, out, _ = run(argv, {**env, **extra_env}, run_server=lambda app, host, port: None,
+                       open_browser=opened.append)
+    assert code == 0 and opened == [] and "Serving http://127.0.0.1:8765/" in out
