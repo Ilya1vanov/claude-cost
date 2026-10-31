@@ -7,7 +7,9 @@ the real home directory. Settings are declared once in SETTINGS; loading, the
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 import tomllib
 import zoneinfo
 from dataclasses import dataclass, field
@@ -49,6 +51,7 @@ class Setting:
     example: str  # TOML value used in the commented line of the default file
     coerce: Callable[[Any], Any]  # validates a TOML value, returns the normalised value
     parse: Callable[[str], Any]  # parses a CLI string into a TOML-compatible value
+    detect: Callable[[Path], Any] | None = None  # given HOME, a detected default; falsy = nothing found
 
 
 def _int_in(name: str, lo: int, hi: int | None = None) -> Callable[[Any], int]:
@@ -103,6 +106,16 @@ def _coerce_stores(v: Any) -> list[str]:
     return v
 
 
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _detect_desktop_stores(home: Path) -> list[str]:
+    """The Claude Desktop session folder, when on macOS and it exists."""
+    folder = home / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+    return [str(folder)] if _is_macos() and folder.is_dir() else []
+
+
 def _coerce_tz(v: Any) -> str:
     if not isinstance(v, str) or not v:
         raise ConfigError(f"timezone must be an IANA time zone name, got {v!r}")
@@ -155,9 +168,10 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
     Setting("desktop_session_stores",
             "Desktop session store folders (scanned recursively for local_*.json) that link Side "
             "sessions, Forks and earlier transcripts; CLI: comma-separated. Applies to every Data "
-            "root; a store for one root is set in data_roots. Empty = no Desktop links.",
+            "root; a store for one root is set in data_roots. On macOS the Claude Desktop folder is used "
+            "when it exists; an empty list turns Desktop links off.",
             [], "[]", '["~/Library/Application Support/Claude/claude-code-sessions"]',
-            _coerce_stores, _parse_roots),
+            _coerce_stores, _parse_roots, _detect_desktop_stores),
     Setting("fable_compare_model",
             "Model whose prices the Fable usage Opportunity compares Fable requests against.",
             DEFAULT_COMPARE_MODEL, DEFAULT_COMPARE_MODEL, f'"{DEFAULT_COMPARE_MODEL}"',
@@ -180,24 +194,30 @@ for _t in all_thresholds().values():
                                 _int_in(_t.name, _t.minimum), _parse_int(_t.name))
 
 
+def _home(env: Mapping[str, str] | None) -> Path:
+    return Path((os.environ if env is None else env).get("HOME", str(Path.home())))
+
+
 def config_path_for(env: Mapping[str, str]) -> Path:
-    home = Path(env.get("HOME", str(Path.home())))
+    home = _home(env)
     return Path(env.get("CLAUDE_COST_CONFIG_DIR") or home / ".config" / "claude-cost") / "config.toml"
 
 
-def default_file_text() -> str:
+def default_file_text(env: Mapping[str, str] | None = None) -> str:
     parts = ["# claude-cost settings. Uncomment a line to override its default.\n"]
     for s in SETTINGS.values():
-        parts.append(f"\n# {s.doc}\n# {s.name} = {s.example}\n")
+        found = s.detect(_home(env)) if s.detect else None
+        example = json.dumps(found) if found else s.example
+        parts.append(f"\n# {s.doc}\n# {s.name} = {example}\n")
     return "".join(parts)
 
 
-def ensure_config_file(path: Path) -> bool:
+def ensure_config_file(path: Path, env: Mapping[str, str] | None = None) -> bool:
     """Create the config file with commented defaults on first run. True if created."""
     if path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(default_file_text())
+    path.write_text(default_file_text(env))
     return True
 
 
@@ -217,7 +237,7 @@ def _setting(name: str) -> Setting:
 
 
 def load_config(env: Mapping[str, str]) -> Config:
-    home = Path(env.get("HOME", str(Path.home())))
+    home = _home(env)
     data_dir = Path(env.get("CLAUDE_COST_DATA_DIR") or home / ".local" / "share" / "claude-cost")
     config_path = config_path_for(env)
     raw = _read_raw(config_path)
@@ -227,7 +247,8 @@ def load_config(env: Mapping[str, str]) -> Config:
         if name in raw:
             values[name], sources[name] = s.coerce(raw[name]), "config"
         else:
-            values[name], sources[name] = s.default, "default"
+            found = s.detect(home) if s.detect else None
+            values[name], sources[name] = (found, "default (detected)") if found else (s.default, "default")
     entries = values["data_roots"] or []
     roots = [Path(e["path"] if isinstance(e, dict) else e).expanduser() for e in entries] \
         or [home / ".claude"]
@@ -259,20 +280,25 @@ class SettingView:
     source: str  # "default" or "config"
 
 
-def describe_settings(config_path: Path) -> list[SettingView]:
+def describe_settings(config_path: Path, env: Mapping[str, str] | None = None) -> list[SettingView]:
     raw = _read_raw(config_path)
+    home = _home(env)
     out = []
     for name, s in SETTINGS.items():
         if name in raw:
             out.append(SettingView(name, json.dumps(s.coerce(raw[name])), s.default_text, "config"))
         else:
-            out.append(SettingView(name, s.default_text, s.default_text, "default"))
+            found = s.detect(home) if s.detect else None
+            if found:
+                out.append(SettingView(name, json.dumps(found), s.default_text, "default (detected)"))
+            else:
+                out.append(SettingView(name, s.default_text, s.default_text, "default"))
     return out
 
 
-def get_value(config_path: Path, name: str) -> str:
+def get_value(config_path: Path, name: str, env: Mapping[str, str] | None = None) -> str:
     _setting(name)
-    return next(v.value for v in describe_settings(config_path) if v.name == name)
+    return next(v.value for v in describe_settings(config_path, env) if v.name == name)
 
 
 def set_value(config_path: Path, name: str, text: str) -> str:
