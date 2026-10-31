@@ -205,18 +205,18 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
 
 def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[list[str]], object]) -> int:
     """`config` shows every setting; get/set/path/edit work on the file. Works even if the file is broken."""
-    config_mod.ensure_config_file(path)
+    config_mod.ensure_config_file(path, env)
     action = args.config_action
     if action == "path":
         print(path, file=out)
     elif action == "get":
-        print(config_mod.get_value(path, args.key), file=out)
+        print(config_mod.get_value(path, args.key, env), file=out)
     elif action == "set":
         print(f"{args.key} = {config_mod.set_value(path, args.key, args.value)}", file=out)
     elif action == "edit":
         run_editor([*shlex.split(env.get("EDITOR") or "vi"), str(path)])
     else:
-        for v in config_mod.describe_settings(path):
+        for v in config_mod.describe_settings(path, env):
             print(f"{v.name} = {v.value}  (default: {v.default}, source: {v.source})", file=out)
     return 0
 
@@ -256,7 +256,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     try:
         if args.command == "config":
             return cmd_config(args, config_mod.config_path_for(env), env, out, run_editor)
-        config_mod.ensure_config_file(config_mod.config_path_for(env))
+        config_mod.ensure_config_file(config_mod.config_path_for(env), env)
         config = load_config(env)
     except ConfigError as e:
         print(f"claude-cost: {e}", file=err)
