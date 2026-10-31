@@ -8,7 +8,9 @@
       datasets: data.series.map(function (s, i) {
         return { label: s.label, data: s.data, borderColor: theme.series(i), backgroundColor: theme.series(i) }; }),
     },
-    options: { plugins: { legend: { labels: { generateLabels: function (chart) {
+    options: { plugins: { tooltip: { callbacks: { label: function (item) {  // the full name, not the legend's shortened one
+                 return item.dataset.label + ": $" + item.formattedValue; } } },
+               legend: { labels: { generateLabels: function (chart) {
                  return Chart.defaults.plugins.legend.labels.generateLabels(chart).map(function (l) {
                    if (l.text.length > MAX_LEGEND) { l.text = l.text.slice(0, MAX_LEGEND - 1) + "\u2026"; }
                    return l; }); } } } },

@@ -245,7 +245,10 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.post("/spotlights/<path:name>/delete")
     def spotlight_delete(name):
-        service_factory().delete_spotlight(name)
+        try:
+            service_factory().delete_spotlight(name)
+        except SpotlightError as e:
+            abort(400, str(e))
         return redirect(url_for("spotlight_list"))
 
     def explore_service() -> QueryService:

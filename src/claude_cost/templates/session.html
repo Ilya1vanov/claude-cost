@@ -14,7 +14,7 @@
       {% elif t.total_cost is not none and t.subagent_cost %}<p class="sub">{{ t.total_requests }} requests, <strong>${{ "%.2f"|format(t.total_cost) }}</strong>
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }})</p>
       {% else %}<p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>{% endif %}
-      <p class="sub">{{ when(t.points[0].ts) }} to {{ when(t.points[-1].ts) }}</p>
+      {% if t.points %}<p class="sub">{{ when(t.points[0].ts) }} to {{ when(t.points[-1].ts) }}</p>{% endif %}
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
   </div>

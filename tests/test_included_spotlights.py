@@ -130,3 +130,54 @@ def test_includable_spotlights_lists_only_the_allowed_ones(svc):
     assert svc.includable_spotlights("Sprint") == ["PROJ-1", "PROJ-2", "Z"]
     assert svc.includable_spotlights("PROJ-1") == []
     assert svc.includable_spotlights("Z") == []
+
+
+@pytest.mark.parametrize("name", ["Sprint", "PROJ-1"])  # a user-defined name, an Auto-spotlight key
+def test_creating_a_spotlight_whose_name_is_taken_is_rejected(svc, name):
+    svc.create_spotlight("Sprint")
+    svc.create_spotlight("Big", includes=["Sprint"])
+    with pytest.raises(SpotlightError, match="already exists"):
+        svc.create_spotlight(name, ["k"], includes=["PROJ-2"])
+    assert [i.name for i in svc.spotlight("Big").included] == ["Sprint"]
+    assert svc.spotlight("Sprint").picked == ()
+
+
+def test_creating_with_an_unknown_session_is_rejected_and_leaves_nothing(svc):
+    with pytest.raises(SpotlightError, match="ghost"):
+        svc.create_spotlight("New", ["k", "ghost"])
+    with pytest.raises(KeyError):
+        svc.spotlight("New")
+
+
+def test_adding_an_unknown_session_is_rejected_and_picks_nothing(svc):
+    svc.create_spotlight("Sprint")
+    with pytest.raises(SpotlightError, match="ghost"):
+        svc.add_sessions("Sprint", ["k", "ghost"])
+    assert svc.spotlight("Sprint").picked == ()
+
+
+def test_editing_an_unknown_spotlight_is_rejected(svc):
+    svc.create_spotlight("Sprint")
+    with pytest.raises(SpotlightError, match="Nope"):
+        svc.add_sessions("Nope", ["k"], create=False)
+    for edit in (lambda: svc.remove_session("Nope", "k"), lambda: svc.delete_spotlight("Nope"),
+                 lambda: svc.exclude_spotlight("Nope", "PROJ-1"),
+                 lambda: svc.exclude_spotlight("Sprint", "Nope")):
+        with pytest.raises(SpotlightError, match="Nope"):
+            edit()
+    with pytest.raises(KeyError):
+        svc.spotlight("Nope")
+
+
+def test_related_forks_are_computed_over_the_union_of_direct_members(root, desktop, service_for):
+    """A Fork of a Session that is in only through an Included spotlight is Related, excluded."""
+    root.write_transcript("p", "base", [req("m1", "2026-10-30T01:00:00Z", output=M)], prompt="base work")
+    root.write_transcript("p", "fk", [req("m2", "2026-10-30T02:00:00Z", output=M)], prompt="forked")
+    desktop.write_session("d1", "base")
+    desktop.write_session("d2", "fk", forkedFromSessionId="local_d1")
+    svc = service_for(root, desktop=desktop)
+    svc.create_spotlight("X", ["base"])
+    svc.create_spotlight("Sprint", includes=["X"])
+    detail = svc.spotlight("Sprint")
+    assert ids(detail) == {"base"}
+    assert [r.session_id for r in detail.related] == ["fk"]

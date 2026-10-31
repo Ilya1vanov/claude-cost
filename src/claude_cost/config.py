@@ -296,9 +296,9 @@ def describe_settings(config_path: Path, env: Mapping[str, str] | None = None) -
     return out
 
 
-def get_value(config_path: Path, name: str, env: Mapping[str, str] | None = None) -> str:
+def get_setting(config_path: Path, name: str, env: Mapping[str, str] | None = None) -> SettingView:
     _setting(name)
-    return next(v.value for v in describe_settings(config_path, env) if v.name == name)
+    return next(v for v in describe_settings(config_path, env) if v.name == name)
 
 
 def set_value(config_path: Path, name: str, text: str) -> str:

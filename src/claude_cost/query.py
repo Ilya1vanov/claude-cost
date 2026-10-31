@@ -1063,9 +1063,11 @@ class QueryService:
                 SpotlightDay(day, (c := days.get(day, blank)).cost, c.by_session, day_subagent(c.by_run),
                              c.components)
                 for day in (first + timedelta(n) for n in range((last - first).days + 1)))
+        by_name = {d.name: d for d in defs}
         included = tuple(
-            SpotlightIncluded(n, d.kind, (s := self._summary(d, member[n].members, rows)).total, s.sessions)
-            for n in sorted(defn.includes) for d in defs if d.name == n)
+            SpotlightIncluded(n, by_name[n].kind,
+                              (s := self._summary(by_name[n], member[n].members, rows)).total, s.sessions)
+            for n in sorted(defn.includes))
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
                                tuple(sorted(defn.picked)), included)
 
@@ -1081,22 +1083,22 @@ class QueryService:
                       parents: dict[str, str | None]) -> tuple[SpotlightSession, ...]:
         """Rows in tree order: parent links restricted to the members, costliest subtree first."""
         by = {r.session_id: r for r in rows}
-        kids: dict[str | None, list[str]] = {}
+        members_under: dict[str | None, list[str]] = {}
         for sid in by:
             parent = parents.get(sid)
-            kids.setdefault(parent if parent in by and parent != sid else None, []).append(sid)
+            members_under.setdefault(parent if parent in by and parent != sid else None, []).append(sid)
         total: dict[str, float] = {}
 
         def subtree(sid: str, seen: frozenset[str]) -> float:
             if sid not in total:
                 total[sid] = by[sid].cost + sum(
-                    subtree(k, seen | {sid}) for k in kids.get(sid, ()) if k not in seen)
+                    subtree(k, seen | {sid}) for k in members_under.get(sid, ()) if k not in seen)
             return total[sid]
 
         out: list[SpotlightSession] = []
 
         def walk(parent: str | None, depth: int) -> None:
-            for sid in sorted(kids.get(parent, ()), key=lambda k: (-subtree(k, frozenset()), k)):
+            for sid in sorted(members_under.get(parent, ()), key=lambda k: (-subtree(k, frozenset()), k)):
                 out.append(dataclasses.replace(by[sid], parent_id=parent, depth=depth, subtree_cost=total[sid]))
                 walk(sid, depth + 1)
         walk(None, 0)
@@ -1150,18 +1152,36 @@ class QueryService:
             raise spotlights.SpotlightError(
                 f"{name!r} is included in {includer!r}, so it cannot include other Spotlights")
 
+    def _require_spotlights(self, *names: str) -> None:
+        """Raise SpotlightError for the first name that is no Spotlight (user-defined or Auto)."""
+        known = {d.name for d in self._spotlight_state()[1]}
+        for name in names:
+            if name not in known:
+                raise spotlights.SpotlightError(f"no Spotlight named {name!r}")
+
+    def _require_sessions(self, session_ids: Iterable[str]) -> None:
+        known = self._session_infos()
+        for sid in session_ids:
+            if self.graph.session_of(sid) not in known:
+                raise spotlights.SpotlightError(f"no Session with id {sid!r}")
+
     def create_spotlight(self, name: str, session_ids: Iterable[str] = (),
                          includes: Iterable[str] = ()) -> None:
         """Create a Spotlight (empty with just a name), add Picked sessions and Included
-        spotlights to it. Nothing is saved when an include breaks a nesting rule."""
+        spotlights to it. Nothing is saved when the name is taken (by a user-defined Spotlight
+        or an Auto-spotlight's key), a Session or included Spotlight is unknown, or an include
+        breaks a nesting rule."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
+        defs = self._spotlight_state()[1]
+        if any(d.name == name for d in defs):
+            raise spotlights.SpotlightError(f"a Spotlight named {name!r} already exists")
         includes = list(dict.fromkeys(includes))
-        if includes:
-            defs = self._spotlight_state()[1]
-            for other in includes:
-                self._check_include(name, other, defs, creating=True)
+        for other in includes:
+            self._check_include(name, other, defs, creating=True)
+        session_ids = list(session_ids)
+        self._require_sessions(session_ids)
         with self._conn:
             self._insert_pins(name, session_ids, create=True)
             self._conn.executemany("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)",
@@ -1174,6 +1194,7 @@ class QueryService:
             self._conn.execute("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)", (name, other))
 
     def exclude_spotlight(self, name: str, other: str) -> None:
+        self._require_spotlights(name, other)
         with self._conn:
             self._conn.execute("DELETE FROM spotlight_includes WHERE spotlight = ? AND included = ?",
                                (name, other))
@@ -1188,6 +1209,7 @@ class QueryService:
                       if d.name != name and not d.includes and d.name not in me.includes)
 
     def delete_spotlight(self, name: str) -> None:
+        self._require_spotlights(name)
         with self._conn:
             self._conn.execute("DELETE FROM spotlights WHERE name = ?", (name,))
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ?", (name,))
@@ -1197,12 +1219,17 @@ class QueryService:
     def add_session(self, name: str, session_id: str) -> None:
         self.add_sessions(name, [session_id])
 
-    def add_sessions(self, name: str, session_ids: Iterable[str]) -> None:
+    def add_sessions(self, name: str, session_ids: Iterable[str], create: bool = True) -> None:
         """Add Picked sessions to a Spotlight: an Auto-spotlight of that name, else a
-        user-defined one (created if it does not exist yet)."""
+        user-defined one (created if it does not exist yet, unless `create` is False, which
+        makes an unknown name an error)."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
+        session_ids = list(session_ids)
+        self._require_sessions(session_ids)
+        if not create:
+            self._require_spotlights(name)
         is_auto = any(name in ks for ks in self.session_keys().values())
         with self._conn:
             self._insert_pins(name, session_ids, create=not is_auto)
@@ -1212,6 +1239,8 @@ class QueryService:
         A Key-match Session of an Auto-spotlight cannot be removed."""
         sid = self.graph.session_of(session_id)
         infos, defs, member = self._spotlight_state()
+        if name not in member:
+            raise spotlights.SpotlightError(f"no Spotlight named {name!r}")
         if any(d.name == name and sid in member[name].key_matched for d in defs):
             raise spotlights.SpotlightError("a Key-match Session cannot be removed")
         with self._conn:
