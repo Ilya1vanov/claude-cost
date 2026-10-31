@@ -193,78 +193,74 @@ def _summary_json(s) -> dict:
             "first_activity": _date(s.first_activity), "last_activity": _date(s.last_activity)}
 
 
-def _require_spotlight(svc: QueryService, name: str) -> None:
-    if name not in {s.name for s in svc.spotlights()}:
-        raise SpotlightError(f"no Spotlight named {name!r}")
+def _print_spotlight_list(summaries, as_json: bool, out) -> None:
+    if as_json:
+        print(json.dumps([_summary_json(s) for s in summaries], indent=2), file=out)
+        return
+    for s in summaries:
+        includes = f"  includes {s.includes}" if s.includes else ""
+        print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
 
 
-def _require_sessions(svc: QueryService, ids: Sequence[str]) -> None:
-    known = svc.session_labels()
-    for sid in ids:
-        if sid not in known:
-            raise SpotlightError(f"no Session with id {sid!r}")
+def _print_spotlight_detail(detail, as_json: bool, out) -> None:
+    if as_json:
+        included = [{"name": i.name, "kind": i.kind, "cost": round(i.cost, 4), "sessions": i.sessions}
+                    for i in detail.included]
+        members = [{"id": m.session_id, "label": m.label, "cost": round(m.cost, 4),
+                    "requests": m.requests, "joined_as": m.joined_as, "picked": m.picked,
+                    "key_matched": m.key_matched, "via": m.via} for m in detail.sessions]
+        print(json.dumps({**_summary_json(detail.summary), "picked": list(detail.picked),
+                          "included": included, "members": members}, indent=2), file=out)
+        return
+    summary = detail.summary
+    print(f"{summary.name}  {summary.kind}  {_money(summary.total)}  "
+          f"{summary.sessions} sessions, {summary.requests} requests", file=out)
+    for inc in detail.included:
+        print(f"  includes {inc.name}  {_money(inc.cost)}  {inc.sessions} sessions", file=out)
+    for m in detail.sessions:
+        print(f"  {m.session_id}  {_money(m.cost)}  {m.label}  [{m.joined_as}]", file=out)
+
+
+def _print_session_search(found, as_json: bool, out) -> None:
+    if as_json:
+        print(json.dumps([{"id": c.session_id, "label": c.label, "cost": round(c.cost, 4), "kind": c.kind}
+                          for c in found], indent=2), file=out)
+        return
+    for c in found:
+        kind = f"  [{c.kind}]" if c.kind else ""
+        print(f"{c.session_id}  {_money(c.cost)}  {c.label}{kind}", file=out)
 
 
 def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
-    """`spotlight` group: each subcommand calls the QueryService operation the web uses."""
+    """`spotlight` group: each subcommand calls the QueryService operation the web uses, which
+    validates names and Sessions and raises SpotlightError."""
     svc = _service(config, now, err)  # ingest first, so new Sessions can be picked
-    act, name = args.spotlight_action, getattr(args, "name", None)
-    if act == "list":
-        rows = svc.spotlights()
-        if args.json:
-            print(json.dumps([_summary_json(s) for s in rows], indent=2), file=out)
-        for s in ([] if args.json else rows):
-            print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions"
-                  f"{f'  includes {s.includes}' if s.includes else ''}", file=out)
-    elif act == "show":
+    action = args.spotlight_action
+    if action == "list":
+        _print_spotlight_list(svc.spotlights(), args.json, out)
+    elif action == "show":
         try:
-            d = svc.spotlight(name)
+            detail = svc.spotlight(args.name)
         except KeyError:
-            raise SpotlightError(f"no Spotlight named {name!r}") from None
-        if args.json:
-            print(json.dumps({**_summary_json(d.summary), "picked": list(d.picked),
-                              "included": [{"name": i.name, "kind": i.kind, "cost": round(i.cost, 4),
-                                            "sessions": i.sessions} for i in d.included],
-                              "members": [{"id": s.session_id, "label": s.label, "cost": round(s.cost, 4),
-                                           "requests": s.requests, "joined_as": s.joined_as,
-                                           "picked": s.picked, "key_matched": s.key_matched, "via": s.via}
-                                          for s in d.sessions]}, indent=2), file=out)
-        else:
-            s = d.summary
-            print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions, {s.requests} requests", file=out)
-            for i in d.included:
-                print(f"  includes {i.name}  {_money(i.cost)}  {i.sessions} sessions", file=out)
-            for m in d.sessions:
-                print(f"  {m.session_id}  {_money(m.cost)}  {m.label}  [{m.joined_as}]", file=out)
-    elif act == "search":
-        found = svc.search_sessions(args.text, "")
-        if args.json:
-            print(json.dumps([{"id": c.session_id, "label": c.label, "cost": round(c.cost, 4), "kind": c.kind}
-                              for c in found], indent=2), file=out)
-        for c in ([] if args.json else found):
-            print(f"{c.session_id}  {_money(c.cost)}  {c.label}{f'  [{c.kind}]' if c.kind else ''}", file=out)
-    elif act == "create":
-        if name.strip() in {s.name for s in svc.spotlights()}:
-            raise SpotlightError(f"a Spotlight named {name.strip()!r} already exists")
-        for other in args.include:
-            _require_spotlight(svc, other)
-        _require_sessions(svc, args.session)
-        svc.create_spotlight(name, args.session, args.include)
-    elif act in ("delete", "add", "remove", "include", "exclude"):
-        _require_spotlight(svc, name)
-        if act == "delete":
-            svc.delete_spotlight(name)
-        elif act in ("add", "remove"):
-            _require_sessions(svc, args.session)
-            if act == "add":
-                svc.add_sessions(name, args.session)
-            for sid in ([] if act == "add" else args.session):
-                svc.remove_session(name, sid)
-        else:
-            for other in args.other:
-                _require_spotlight(svc, other)
-            for other in args.other:
-                (svc.include_spotlight if act == "include" else svc.exclude_spotlight)(name, other)
+            raise SpotlightError(f"no Spotlight named {args.name!r}") from None
+        _print_spotlight_detail(detail, args.json, out)
+    elif action == "search":
+        _print_session_search(svc.search_sessions(args.text, ""), args.json, out)
+    elif action == "create":
+        svc.create_spotlight(args.name, args.session, args.include)
+    elif action == "delete":
+        svc.delete_spotlight(args.name)
+    elif action == "add":
+        svc.add_sessions(args.name, args.session, create=False)
+    elif action == "remove":
+        for session_id in args.session:
+            svc.remove_session(args.name, session_id)
+    elif action == "include":
+        for other in args.other:
+            svc.include_spotlight(args.name, other)
+    elif action == "exclude":
+        for other in args.other:
+            svc.exclude_spotlight(args.name, other)
     return 0
 
 
@@ -297,7 +293,9 @@ def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[li
     if action == "path":
         print(path, file=out)
     elif action == "get":
-        print(config_mod.get_value(path, args.key, env), file=out)
+        setting = config_mod.get_setting(path, args.key, env)
+        detected = "  (source: default (detected))" if setting.source == "default (detected)" else ""
+        print(f"{setting.value}{detected}", file=out)
     elif action == "set":
         print(f"{args.key} = {config_mod.set_value(path, args.key, args.value)}", file=out)
     elif action == "edit":
@@ -343,14 +341,13 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sp.add_argument("name")
     sp.add_argument("--session", action="append", default=[], help="Picked session id (repeatable)")
     sp.add_argument("--include", action="append", default=[], help="Spotlight to include (repeatable)")
-    for act, helptext in (("delete", "delete a Spotlight"),):
-        spot_sub.add_parser(act, help=helptext).add_argument("name")
-    for act, helptext in (("add", "pick sessions"), ("remove", "unpick sessions")):
-        sp = spot_sub.add_parser(act, help=helptext)
+    spot_sub.add_parser("delete", help="delete a Spotlight").add_argument("name")
+    for action, helptext in (("add", "pick sessions"), ("remove", "unpick sessions")):
+        sp = spot_sub.add_parser(action, help=helptext)
         sp.add_argument("name")
         sp.add_argument("session", nargs="+")
-    for act, helptext in (("include", "include Spotlights"), ("exclude", "stop including Spotlights")):
-        sp = spot_sub.add_parser(act, help=helptext)
+    for action, helptext in (("include", "include Spotlights"), ("exclude", "stop including Spotlights")):
+        sp = spot_sub.add_parser(action, help=helptext)
         sp.add_argument("name")
         sp.add_argument("other", nargs="+")
     cfg = sub.add_parser("config", help="show or change settings in config.toml")

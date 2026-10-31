@@ -38,11 +38,11 @@ Spotlight commands ingest first, call the same `QueryService` operations as the 
 | `ownership.py` | ADR-0001 owner rule |
 | `pricing.py` | dated price table, `price_request` |
 | `store.py` | SQLite schema + `connect` |
+| `findings/` | Drains and Opportunities, with their thresholds |
+| `spotlights.py` | Spotlight logic (pure): keys, membership, Included spotlights, picker ranking |
 | `query.py` | `QueryService`, the only source of numbers for web and CLI |
 | `web.py` / `templates/` / `static/` | Flask adapter (`create_app`) |
-| `cli.py` | argparse adapter (`main`) |
-
-Not yet created, add under these names: `findings.py`, `spotlights.py`.
+| `cli.py` | argparse adapter (`main`), including the `spotlight` group |
 
 **Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
 

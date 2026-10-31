@@ -202,7 +202,8 @@ def test_config_get_and_list_show_the_detected_value_and_source(mac, env):
     folder = _desktop_folder(env)
     folder.mkdir(parents=True)
     code, out, _ = run(["config", "get", "desktop_session_stores"], env)
-    assert code == 0 and str(folder) in out
+    assert code == 0 and str(folder) in out and "default (detected)" in out
+    assert "detected" not in run(["config", "get", "port"], env)[1]
     line = next(l for l in run(["config"], env)[1].splitlines() if l.startswith("desktop_session_stores"))
     assert str(folder) in line and "source: default (detected)" in line
 
