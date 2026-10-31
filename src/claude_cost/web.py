@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from flask import Flask, Response, abort, g, redirect, render_template, request, url_for
+from markupsafe import Markup, escape
 
 from . import explore
 from .cache import COLD
@@ -13,6 +14,7 @@ from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import COMPARISON_MODES, PERIOD_MODES, QueryService
 from .spotlights import SpotlightError
+from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
@@ -25,6 +27,7 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
+    app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory
 
     def service_factory() -> QueryService:
@@ -37,6 +40,30 @@ def create_app(service_factory: Callable[[], QueryService],
         for svc in g.pop("services", []):
             svc.close()
 
+    def helper_service() -> QueryService:
+        """One service per request for the label helpers, so they share a single rollup."""
+        if "helper_service" not in g:
+            g.helper_service = service_factory()
+        return g.helper_service
+
+    @app.template_global()
+    def session_label(session_id: str, link: bool = True) -> Markup:
+        """A Session by its label, the id on hover; linked to its Session page unless `link` is off."""
+        if "session_labels" not in g:
+            g.session_labels = helper_service().session_labels()
+        label, sid = escape(g.session_labels.get(session_id, session_id)), escape(session_id)
+        if not link:
+            return Markup(f'<span class="id" title="{sid}">{label}</span>')
+        return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id))}" '
+                      f'class="id" title="{sid}">{label}</a>')
+
+    @app.template_global()
+    def project_name(key: str) -> str:
+        """A project by its display name, the key when it has none."""
+        if "project_names" not in g:
+            g.project_names = helper_service().project_names()
+        return g.project_names.get(key, key)
+
     @app.post("/refresh")
     def force_refresh():
         if refresh:
@@ -45,7 +72,7 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.get("/")
     def dashboard():
-        service = service_factory()
+        service = helper_service()
         mode = request.args.get("period", "last7")
         if mode not in PERIOD_MODES:
             abort(400, f"period must be one of {', '.join(PERIOD_MODES)}")
@@ -55,7 +82,10 @@ def create_app(service_factory: Callable[[], QueryService],
             last = service.last_ingest_epoch()
             if last is None or now().timestamp() - last > service.stale_after_seconds():
                 refresh()
-                service = service_factory()
+                g.pop("helper_service", None)
+                g.pop("session_labels", None)
+                g.pop("project_names", None)
+                service = helper_service()
         today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
         return render_template(
@@ -125,7 +155,8 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/spotlights")
     def spotlight_list():
         service = service_factory()
-        return render_template("spotlights.html", spotlights=service.spotlights())
+        return render_template("spotlights.html", spotlights=service.spotlights(),
+                               auto_enabled=service.auto_spotlights_enabled())
 
     @app.post("/spotlights")
     def spotlight_create():
@@ -225,7 +256,8 @@ def create_app(service_factory: Callable[[], QueryService],
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share,
             chart_data={"label": result.label,
-                        "labels": [r.value for r in result.rows[:CHART_ROWS]],
+                        "labels": [project_name(r.value) if result.group == "project" else r.value
+                                   for r in result.rows[:CHART_ROWS]],
                         "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
 
     @app.get("/explore.csv")
@@ -238,7 +270,8 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.get("/explore/requests")
     def explore_requests():
         spec = explore_spec()
-        reqs = explore_service().explore_requests(spec)
+        service = explore_service()
+        reqs = service.explore_requests(spec)
         return render_template(
             "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
             requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
@@ -259,6 +292,9 @@ def create_app(service_factory: Callable[[], QueryService],
                  "threshold": [p.threshold for p in timeline.points],
                  "over": [i for i, p in enumerate(timeline.points)
                           if p.threshold is not None and p.context_tokens > p.threshold],
+                 "compactions": [{"index": c.before_index, "trigger": c.trigger,
+                                  "pre": c.pre_tokens, "post": c.post_tokens, "late": c.late}
+                                 for c in timeline.compactions],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,

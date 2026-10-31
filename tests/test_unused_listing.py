@@ -36,7 +36,7 @@ def test_unused_skill_avoidable_is_its_listing_read_cost(root, service_for):
     assert f.kind == "drain"
     # 10,000 tokens read by the two requests after the one that wrote it: 2 x 10K x $0.20/M
     assert f.avoidable == pytest.approx(0.004)
-    assert "big" in f.detail
+    assert f.table.rows[0][0] == "big"
 
 
 def test_used_here_unused_there(root, service_for):
@@ -47,7 +47,8 @@ def test_used_here_unused_there(root, service_for):
     f = _by_id(service_for(root).findings())["unused-listing"]
     assert [s.session_id for s in f.sessions] == ["b1"]
     assert f.avoidable == pytest.approx(0.004)
-    assert "tdd in proj-b" in f.detail and "1 in other projects" in f.detail
+    (row,) = f.table.rows
+    assert row[0] == "tdd" and row[2].items == ("proj-b: $0.00, 1 session",) and row[3] == "1"
 
 
 def test_used_in_another_session_of_the_project_is_not_unused(root, service_for):
@@ -65,7 +66,7 @@ def test_unused_mcp_server_matched_by_tool_calls_grouped_by_server(root, service
         tool_use_line("2026-10-30T10:06:00Z", "t1", "mcp__claude_ai_Figma__get_design"),
     ])
     f = _by_id(service_for(root).findings())["unused-listing"]
-    assert "mdn" in f.detail and "Figma" not in f.detail
+    assert [r[0] for r in f.table.rows] == ["mdn"]
     # 2 reads x ~1,002 tokens x $0.20/M
     assert f.avoidable == pytest.approx(2 * 1002 * 0.2 / 1e6, rel=0.01)
 
@@ -99,7 +100,17 @@ def test_drains_command_lists_unused_listing(root, configure):
     _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
     out = io.StringIO()
     assert cli.main(["drains"], env=configure(root), now=NOW, out=out) == 0
-    assert "Unused listing" in out.getvalue() and "skill big in p" in out.getvalue()
+    assert "Unused listing" in out.getvalue()
+
+
+def test_drains_command_names_the_unused_listings(root, configure):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))]
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing)
+    out = io.StringIO()
+    cli.main(["drains"], env=configure(root), now=NOW, out=out)
+    line = next(l for l in out.getvalue().splitlines() if "big" in l)
+    assert "skill" in line and "2 projects" in line and "$" in line
 
 
 def test_a_removed_listing_stops_counting_from_the_removal(root, service_for):
@@ -124,3 +135,56 @@ def test_skill_used_via_attribution_skill_is_not_unused(root, service_for):
     listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000)), json.dumps(rec)]
     _session(root, "p", "s1", listing)
     assert _by_id(service_for(root).findings())["unused-listing"].requests == ()
+
+
+def test_listing_unused_in_two_projects_is_one_row(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing)
+    _session(root, "proj-c", "c1", listing + [use])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    (row,) = f.table.rows
+    assert row[:2] == ("tdd", "skill")
+    assert row[2].summary == "2 projects" and row[2].items == ("proj-a: $0.00, 1 session", "proj-b: $0.00, 1 session")
+    assert row[3] == "1"
+    assert f.avoidable == pytest.approx(0.008)  # unchanged: per (project, listing)
+    assert row[4] == "$0.01"
+
+
+def test_used_elsewhere_counts_invocations_under_the_unprefixed_skill_name(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("plug:tdd", 10_000))]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing + [use, use.replace("t1", "t2")])
+    (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
+    assert row[0] == "plug:tdd" and row[3] == "2"
+
+
+def test_projects_cell_lists_each_projects_cost_and_session_count(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 1_000_000))]
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-a", "a2", listing)
+    _session(root, "proj-b", "b1", listing)
+    (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
+    assert row[2].items == ("proj-a: $0.80, 2 sessions", "proj-b: $0.40, 1 session")
+
+
+def test_detail_page_shows_table_not_run_on_text(root, configure):
+    from claude_cost import ingest, store
+    from claude_cost.query import QueryService
+    from claude_cost.web import create_app
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    _session(root, "proj-a", "a1", listing)
+    _session(root, "proj-b", "b1", listing)
+    cfg = cli.load_config(configure(root))
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    client = create_app(factory, lambda: NOW).test_client()
+    page = client.get("/findings/unused-listing").get_data(as_text=True)
+    assert 'id="detail"' in page and "2 projects" in page and "<details>" in page
+    assert ";" not in page.split('id="detail"')[1].split("</table>")[0]
+    assert "sessions listed" not in client.get("/findings").get_data(as_text=True)

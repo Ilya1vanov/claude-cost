@@ -3,6 +3,7 @@
 {% block content %}
   <div class="page-head"><h1>Spotlights</h1></div>
   <p class="callout">A Session can be in several Spotlights, so these totals overlap: never add them up.</p>
+  {% if not auto_enabled %}<p class="note" id="auto-spotlights-hint">Auto-spotlights are off: set <code>spotlight_key_pattern</code> (e.g. <code>PROJ-\d+</code>) to create one per ticket key.</p>{% endif %}
   <form method="get" action="{{ url_for('spotlight_compare') }}" class="card">
     <div class="table-wrap"><table id="spotlight-table">
       <tr><th>Compare</th><th>Spotlight</th><th>Kind</th><th class="num">Lifetime</th><th class="num">Sessions</th><th>First activity</th><th>Last activity</th></tr>

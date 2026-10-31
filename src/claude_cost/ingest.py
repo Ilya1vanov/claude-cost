@@ -100,6 +100,7 @@ class Parsed:
     relocated: bool = False
     links: set[str] = field(default_factory=set)  # other session ids of the same conversation
     compactions: list[tuple] = field(default_factory=list)  # (uuid, ts, trigger, pre, post)
+    turns: list[tuple] = field(default_factory=list)  # (uuid, ts): prompts the user typed
     listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
     removals: list[tuple] = field(default_factory=list)  # (kind, name, ts)
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
@@ -121,6 +122,45 @@ def _prompt_text(rec: dict) -> str | None:
     if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
         return content[:300]
     return None
+
+
+def _typed_text(text: object) -> bool:
+    """Text a person typed: plain, or a slash command; not an injected `<...>` wrapper."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    text = text.lstrip()
+    if text.startswith("[Request interrupted by user"):  # written by Claude Code, not typed
+        return False
+    return not text.startswith("<") or text.startswith(("<command-name>", "<command-message>"))
+
+
+def _turn(rec: dict) -> tuple[str, float] | None:
+    """(uuid, ts) when the record is a prompt the user typed: a `user` record or a
+    `queued_command` attachment (sent while Claude was working). Tool results, compaction
+    summaries, hook/system injections, task notifications and Subagent messages are not."""
+    kind = rec.get("type")
+    if rec.get("isMeta") or rec.get("isCompactSummary") or rec.get("isSidechain") \
+            or "forkedFrom" in rec:
+        return None
+    if kind == "user":
+        text = (rec.get("message") or {}).get("content")
+        if isinstance(text, list):  # blocks: any typed text counts, ignoring images; tool results have none
+            text = next((t for t in (b.get("text") for b in text
+                                     if isinstance(b, dict) and b.get("type") == "text")
+                         if _typed_text(t)), None)
+    elif kind == "attachment" and (rec.get("attachment") or {}).get("type") == "queued_command":
+        text = rec["attachment"].get("prompt")
+    else:
+        return None
+    origin = rec.get("origin") or (rec.get("attachment") or {}).get("origin")
+    if isinstance(origin, dict) and origin.get("kind") != "human":
+        return None
+    if not _typed_text(text) or not isinstance(rec.get("uuid"), str):
+        return None
+    try:
+        return rec["uuid"], _parse_ts(rec["timestamp"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _scan_meta(rec: dict, parsed: Parsed) -> None:
@@ -188,6 +228,9 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             except (KeyError, TypeError, ValueError):
                 pass
             continue
+        turn = _turn(rec)
+        if turn:
+            parsed.turns.append(turn)
         if kind == "attachment":
             att = rec.get("attachment")
             if isinstance(att, dict):
@@ -520,8 +563,23 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
             and not conn.execute("SELECT 1 FROM meta WHERE key = 'explore_dims'").fetchone()):
         rebuild = True  # a store from before the Explore attributes: re-read once to fill them
+    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
+            and not conn.execute("SELECT 1 FROM meta WHERE key = 'turns'").fetchone()):
+        rebuild = True  # a store from before Turns: re-read once to record them
     changed = rebuild
     with conn:
+        if not conn.execute("SELECT 1 FROM meta WHERE key = 'turns_from'").fetchone():
+            # Turn coverage: Turns are known from this epoch on. A fresh store sees every
+            # transcript (0); a store from before Turns only has what the transcripts that
+            # still exist hold, so coverage starts at the earliest of them.
+            from_ts = 0.0
+            if conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone() \
+                    and not conn.execute("SELECT 1 FROM meta WHERE key = 'turns'").fetchone():
+                existing = {str(t[0]) for root in roots for t in _transcripts(root)}
+                firsts = [r[1] for r in conn.execute("SELECT path, first_ts_epoch FROM ingest_files")
+                          if r[0] in existing and r[1] is not None]
+                from_ts = min(firsts, default=now.timestamp())
+            conn.execute("INSERT INTO meta VALUES ('turns_from', ?)", (str(from_ts),))
         if rebuild:
             # Forget what we read from files that still exist; copies from vanished
             # transcripts are history and stay. Requests are recomputed below.
@@ -579,6 +637,9 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                      "VALUES (?,?,?,?,?,?)",
                                      [(u, stem, ts, trig, pre, post)
                                       for u, ts, trig, pre, post in parsed.compactions])
+                if sub is None:  # Turns: main transcripts only, deduped by record uuid
+                    conn.executemany("INSERT OR IGNORE INTO turns VALUES (?,?,?)",
+                                     [(u, stem, ts) for u, ts in parsed.turns])
                 agent = sub["agent_id"] if sub is not None else ""
                 conn.executemany("INSERT OR IGNORE INTO listings VALUES (?,?,?,?,?,?,?)",
                                  [(stem, agent, project, k, n, ts, tok)
@@ -610,5 +671,6 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
     reprice(conn, price_table)
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]

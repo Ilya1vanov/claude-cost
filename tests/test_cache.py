@@ -130,5 +130,5 @@ def test_dashboard_shows_cache_card(root, configure):
         return QueryService(conn, cfg.timezone)
     html = create_app(factory, lambda: NOW).test_client().get("/").get_data(as_text=True)
     assert 'id="cache-card"' in html
-    for label in ("Hit ratio", "Cold writes", "Warm writes", "5m writes", "1h writes", "Rebuilds"):
+    for label in ("Hit ratio", "Cold writes", "Warm writes", "5m writes", "1h writes"):
         assert label in html

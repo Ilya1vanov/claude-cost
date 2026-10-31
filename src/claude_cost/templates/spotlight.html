@@ -7,6 +7,7 @@
   <div class="page-head">
     <div>
       <h1>Spotlight: {{ s.name }}</h1>
+      {% if s.kind != "auto" %}<form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>{% endif %}
       <p class="sub" id="spotlight-total">Lifetime: <strong>${{ "%.2f"|format(s.total) }}</strong> across {{ s.sessions }} Sessions and {{ s.requests }} requests
         ({{ {"auto": "Auto-spotlight for this key", "rule": "rule", "pinned": "pinned Sessions"}[s.kind] }}{% if s.rule and s.kind == "rule" %}: <code>{{ s.rule }}</code>{% endif %}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
@@ -16,6 +17,7 @@
     <form method="post" action="{{ url_for('spotlight_rule', name=s.name) }}" class="form-row">
       <label>Rule <input name="rule" value="{{ s.rule }}"></label> <button type="submit" class="ghost">Save rule</button>
     </form>
+    <form method="post" action="{{ url_for('spotlight_rule', name=s.name) }}" class="form-row"><input type="hidden" name="rule" value=""><button type="submit" class="ghost">Remove rule</button></form>
     {% endif %}
   </div>
 
@@ -36,8 +38,8 @@
     <div class="table-wrap"><table id="spotlight-days">
       <tr><th>Day</th><th class="num">Total</th><th>By Session</th><th>By Subagent</th></tr>
       {% for x in d.days %}<tr><td class="nowrap">{{ x.day }}</td><td class="num">${{ "%.2f"|format(x.cost) }}</td>
-        <td>{% for k, v in x.sessions.items() %}{{ ui.sid(k) }}: ${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td>
-        <td>{% for k, v in x.subagents.items() %}{% set sa = k.split("/", 1) %}{{ ui.sid(sa[0]) }}/{{ ui.sid(sa[-1]) }}:${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
+        <td>{% for k, v in x.sessions.items() %}{{ session_label(k) }}: ${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td>
+        <td>{% for k, v in x.subagents.items() %}{% set sa = k.split("/", 1) %}{{ session_label(sa[0]) }}/{{ ui.sid(sa[-1]) }}:${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
       {% else %}<tr><td colspan="4" class="empty">No spend</td></tr>{% endfor %}
     </table></div>
   </section>
@@ -46,7 +48,7 @@
     <h2>Sessions</h2>
     <div class="table-wrap"><table id="spotlight-sessions">
       <tr><th>Session</th><th class="num">Cost</th><th class="num">of which Subagents</th><th>Link</th><th>Also in</th><th></th></tr>
-      {% for x in d.sessions %}<tr><td>{{ x.label }} <small>{{ ui.sid(x.session_id) }}</small></td>
+      {% for x in d.sessions %}<tr><td>{{ session_label(x.session_id) }}</td>
         <td class="num">${{ "%.2f"|format(x.cost) }}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
         <td>{% if x.link_kind in ("side", "fork") %}<span class="badge">{{ {"side": "Side session", "fork": "Fork"}[x.link_kind] }}</span>{% endif %}</td>
         <td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>
@@ -60,7 +62,7 @@
     <h2>Subagents</h2>
     <div class="table-wrap"><table id="spotlight-subagents">
       <tr><th>Session</th><th>Subagent</th><th>Subagent type</th><th class="num">Cost</th></tr>
-      {% for a in d.subagents %}<tr><td>{{ ui.sid(a.session_id) }}</td><td>{{ ui.sid(a.agent_id) }}{% if a.description %} <small>{{ a.description }}</small>{% endif %}</td><td>{{ a.agent_type or "" }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
+      {% for a in d.subagents %}<tr><td>{{ session_label(a.session_id) }}</td><td>{{ ui.sid(a.agent_id) }}{% if a.description %} <small>{{ a.description }}</small>{% endif %}</td><td>{{ a.agent_type or "" }}</td><td class="num">${{ "%.2f"|format(a.cost) }}</td></tr>{% endfor %}
     </table></div>
   </section>
   {% endif %}
@@ -70,7 +72,7 @@
     <h2>Related, excluded</h2>
     <p class="note">Forks of Sessions above that neither match nor are pinned; their cost is not in the total.</p>
     <div class="table-wrap"><table id="spotlight-related">
-      {% for r in d.related %}<tr><td>{{ r.label }} <small>{{ ui.sid(r.session_id) }}</small></td><td>fork of {{ ui.sid(r.parent_id) }}</td><td class="num">${{ "%.2f"|format(r.cost) }}</td>
+      {% for r in d.related %}<tr><td>{{ session_label(r.session_id) }}</td><td>fork of {{ session_label(r.parent_id) }}</td><td class="num">${{ "%.2f"|format(r.cost) }}</td>
         <td class="num"><form method="post" action="{{ url_for('spotlight_pin', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ r.session_id }}"><button type="submit" class="ghost small">Pin</button></form></td></tr>
       {% endfor %}
     </table></div>
@@ -84,9 +86,6 @@
       <button type="submit">Pin</button>
     </form>
   </section>
-  {% if s.kind != "auto" %}
-  <form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}"><button type="submit" class="danger">Delete Spotlight</button></form>
-  {% endif %}
 {% endblock %}
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
