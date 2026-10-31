@@ -1166,14 +1166,17 @@ class QueryService:
                                (name, name))
 
     def add_session(self, name: str, session_id: str) -> None:
-        """Add a Picked session to a Spotlight: an Auto-spotlight of that name, else a
+        self.add_sessions(name, [session_id])
+
+    def add_sessions(self, name: str, session_ids: Iterable[str]) -> None:
+        """Add Picked sessions to a Spotlight: an Auto-spotlight of that name, else a
         user-defined one (created if it does not exist yet)."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
         is_auto = any(name in ks for ks in self.session_keys().values())
         with self._conn:
-            self._insert_pins(name, [session_id], create=not is_auto)
+            self._insert_pins(name, session_ids, create=not is_auto)
 
     def remove_session(self, name: str, session_id: str) -> None:
         """Remove a Picked session; Side sessions that joined through it leave with it.

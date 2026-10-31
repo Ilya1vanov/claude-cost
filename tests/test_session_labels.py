@@ -60,11 +60,11 @@ def test_pages_show_each_session_as_linked_label_with_id_on_hover(setup, path):
     assert _link("s-bare", "s-bare") in page
 
 
-def test_spotlight_by_session_and_subagents_use_labels(setup):
+def test_spotlight_sessions_and_days_use_labels(setup):
     _, client = setup
     page = client.get("/spotlights/S").get_data(as_text=True)
     assert _link("s-titled", "Fix login bug") in _table(page, "spotlight-days")
-    assert _link("s-prompt", PROMPT_LABEL) in _table(page, "spotlight-subagents")
+    assert _link("s-prompt", PROMPT_LABEL) in _table(page, "spotlight-sessions")
 
 
 def test_finding_detail_tables_use_labels(setup):
