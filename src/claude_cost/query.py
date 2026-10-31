@@ -914,20 +914,36 @@ class QueryService:
         out = [self._summary(d, member[d.name].members, rows) for d in defs]
         return sorted(out, key=lambda s: (-s.total, s.name))
 
+    def _session_aggregates(self, lo: float, hi: float) -> dict[str, tuple]:
+        """Per Session: (lifetime cost, Request count, first ts, last ts, cost inside [lo, hi))."""
+        return {r["sid"]: (r["cost"], r["n"], r["first"], r["last"], r["period_cost"])
+                for r in self._conn.execute(
+                    f"SELECT {SESSION_ID_SQL} AS sid, SUM({COST_SQL}) AS cost, COUNT(*) AS n, "
+                    "MIN(r.ts_epoch) AS first, MAX(r.ts_epoch) AS last, "
+                    f"SUM(CASE WHEN r.ts_epoch >= ? AND r.ts_epoch < ? THEN {COST_SQL} ELSE 0 END) "
+                    "AS period_cost "
+                    f"FROM requests r {SESSION_JOIN} "
+                    "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+                    "GROUP BY sid", (lo, hi))}
+
     def top_spotlights(self, mode: str, now: datetime, include_today: bool = True,
                        top_n: int = 10) -> list[SpotlightRank]:
         """Spotlights ranked by spend inside the Period (same periods as period_comparison)."""
         cur, _, _ = resolve_periods(mode, self.today(now), include_today)
         lo, hi = self._bounds(cur)
         _, defs, member = self._spotlight_state()
-        rows = self._request_rows()
+        agg = self._session_aggregates(lo, hi)
         ranked = []
         for d in defs:
             members = member[d.name].members
-            period_cost = sum(r["cost"] for r in rows
-                              if r["sid"] in members and lo <= r["ts"] < hi)
+            mine = [agg[sid] for sid in members if sid in agg]
+            period_cost = sum(a[4] for a in mine)
             if period_cost > 0:
-                ranked.append(SpotlightRank(self._summary(d, members, rows), period_cost))
+                total, n = sum(a[0] for a in mine), sum(a[1] for a in mine)
+                first = self._local_day(min(a[2] for a in mine)) if mine else None
+                last = self._local_day(max(a[3] for a in mine)) if mine else None
+                ranked.append(SpotlightRank(SpotlightSummary(
+                    d.name, d.kind, d.rule, total, n, len(members), first, last), period_cost))
         ranked.sort(key=lambda x: (-x.period_cost, x.summary.name))
         return ranked[:top_n]
 
