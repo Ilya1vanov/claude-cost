@@ -205,6 +205,21 @@ def test_top_spotlights_rank_by_period_spend_with_lifetime(root, service_for):
     assert [t.summary.name for t in svc.top_spotlights("last7", NOW, top_n=1)] == ["PROJ-2"]
 
 
+def test_top_spotlights_period_cost_is_less_than_lifetime_when_spend_spans_the_period_edge(
+        root, service_for):
+    from conftest import NOW
+    root.write_transcript("p", "a", [req("m1", "2026-09-10T01:00:00Z", output=3 * M),
+                                     req("m2", "2026-10-29T01:00:00Z", output=M)], title="PROJ-1")
+    root.write_transcript("p", "b", [req("m3", "2026-10-05T01:00:00Z", output=2 * M),
+                                     req("m4", "2026-10-30T01:00:00Z", output=M)], title="PROJ-1 again")
+    (top,) = service_for(root, key_pattern=KEY).top_spotlights("last7", NOW)
+    assert top.period_cost == pytest.approx(40.0)  # m2 and m4 only
+    assert top.summary.total == pytest.approx(140.0)  # lifetime: all four Requests
+    assert top.summary.requests == 4
+    assert (top.summary.first_activity, top.summary.last_activity) == (
+        date(2026, 9, 10), date(2026, 10, 30))
+
+
 def test_comparison_of_several_spotlights(root, service_for):
     root.write_transcript("p", "a", [req("m1", "2026-10-29T01:00:00Z", output=M)], title="PROJ-1")
     root.write_transcript("p", "b", [req("m2", "2026-10-29T01:00:00Z", output=2 * M)], title="PROJ-2")

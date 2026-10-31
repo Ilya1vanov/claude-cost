@@ -206,7 +206,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
            f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
            "st.gap, COALESCE(st.first_context, 0) AS first_context, "
-           "sf.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
+           "sv.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
            f"FROM requests r {SESSION_JOIN} "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
            "LEFT JOIN request_stream st ON st.message_id = r.message_id "

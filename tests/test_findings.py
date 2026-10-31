@@ -281,3 +281,52 @@ def test_pre_change_store_gets_stream_facts_at_the_next_ingest(root, tmp_path, c
     ingest.ingest(conn, [root.path])
     assert len(classify_calls) == 2
     assert conn.execute("SELECT COUNT(*) FROM request_stream").fetchone()[0] == 2
+
+
+def test_a_requests_agent_id_and_stream_facts_come_from_the_same_stream(root, service_for):
+    from claude_cost import findings as findings_mod
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", input=1_000),
+                                      req("m2", "2026-10-30T10:01:00Z", input=2_000)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("a1-1", "2026-10-30T10:00:30Z", input=50_000),
+                                                     req("a1-2", "2026-10-30T10:02:00Z", input=60_000)])
+    svc = service_for(root)
+    with svc._conn:  # the Request's Stream is the one cache classification stored: its surface
+        svc._conn.execute("DELETE FROM subagent_files")
+    rows = {r.message_id: r for r in findings_mod.load_rows(svc._conn, None, None, None)}
+    assert rows["a1-1"].agent_id == "a1" and rows["a1-1"].gap is None
+    assert rows["a1-1"].stream_first_context == rows["a1-2"].stream_first_context == 50_000
+    assert rows["a1-2"].gap == pytest.approx(90.0)
+    assert rows["m2"].agent_id is None and rows["m2"].stream_first_context == 1_000
+
+
+def test_store_missing_the_median_baseline_gets_it_at_the_next_ingest(root, tmp_path, classify_calls):
+    from claude_cost import cache
+    _cold_session(root)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (cache.MEDIAN_FIRST_META,))
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 2
+    assert cache.median_first_context(conn) == 20_000
+
+
+def test_findings_on_a_store_from_before_the_change_work_after_the_cli_ingests(root, configure, tmp_path):
+    """The CLI ingests (creating the new tables and indexes) before it opens the store for reading."""
+    _cold_session(root)
+    env = configure(root)
+    conn = store.connect(tmp_path / "data" / "store.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("DROP TABLE request_stream")
+        conn.execute("DROP INDEX tool_uses_ts")
+        conn.execute("DROP INDEX session_links_sid")
+        conn.execute("DELETE FROM meta WHERE key = 'median_first_context'")
+    conn.close()
+    out = io.StringIO()
+    assert cli.main(["drains"], env=env, now=NOW, out=out, err=io.StringIO()) == 0
+    assert "Cold resume: attributed $1.20, avoidable $1.04" in out.getvalue()
+    check = store.connect(tmp_path / "data" / "store.sqlite", schema=False)
+    assert check.execute("SELECT COUNT(*) FROM request_stream").fetchone()[0] == 2
+    assert {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='index'")} >= {
+        "tool_uses_ts", "session_links_sid"}

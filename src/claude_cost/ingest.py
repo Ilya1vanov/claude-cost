@@ -677,7 +677,9 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             _regroup_sessions(conn)
         if (changed or desktop_changed
                 or not conn.execute("SELECT 1 FROM request_cache LIMIT 1").fetchone()
-                or not conn.execute("SELECT 1 FROM request_stream LIMIT 1").fetchone()):
+                or not conn.execute("SELECT 1 FROM request_stream LIMIT 1").fetchone()
+                or not conn.execute("SELECT 1 FROM meta WHERE key = ?",
+                                    (cache.MEDIAN_FIRST_META,)).fetchone()):
             cache.classify_all(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))

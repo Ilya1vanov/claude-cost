@@ -2,11 +2,10 @@
 that was never invoked in that project over the period. Avoidable = its full read cost."""
 from __future__ import annotations
 
+import json
 from bisect import bisect_left
 from collections import defaultdict
-from functools import lru_cache
 from itertools import accumulate
-import json
 
 from .. import pricing
 from ..projects import project_display_names
@@ -19,15 +18,14 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
-@lru_cache(maxsize=None)
 def _suffixes(name: str) -> frozenset[str]:
     """What follows each ':' in `name`: a skill may be invoked without its plugin prefix, and
     the prefix itself may contain ':'."""
     return frozenset(name[i + 1:] for i, c in enumerate(name) if c == ":")
 
 
-def _used(listing_name: str, kind: str, used: set[str]) -> bool:
-    return listing_name in used or (kind == "skill" and not used.isdisjoint(_suffixes(listing_name)))
+def _used(listing_name: str, kind: str, used: set[str], suffixes=_suffixes) -> bool:
+    return listing_name in used or (kind == "skill" and not used.isdisjoint(suffixes(listing_name)))
 
 
 def _read_rate(ctx: FindingContext, r) -> float:
@@ -71,11 +69,16 @@ def detect(ctx: FindingContext) -> Detection:
     if ctx.conn is None or not period:
         return Detection([])
     start = min(r.ts for r in period)
-    agent_of = {x["message_id"]: x["agent_id"] or "" for x in ctx.conn.execute(
-        "SELECT message_id, agent_id FROM request_surface")}
     by_stream: dict[tuple[str, str], list] = defaultdict(list)  # (session, agent) -> requests
     for r in period:
-        by_stream[(r.session_id, agent_of.get(r.message_id, ""))].append(r)
+        by_stream[(r.session_id, r.agent_id or "")].append(r)
+    suffix_memo: dict[str, frozenset[str]] = {}  # per run: each Listing name is split once
+
+    def suffixes(name: str) -> frozenset[str]:
+        if name not in suffix_memo:
+            suffix_memo[name] = _suffixes(name)
+        return suffix_memo[name]
+
     # Listings and removals are read for the active Streams only, selected by Stream and never
     # by time: a Stream's earliest Listing and its removals can predate the Period.
     active = json.dumps(sorted({sid for sid, _ in by_stream}))
@@ -113,14 +116,14 @@ def detect(ctx: FindingContext) -> Detection:
         """Invocations of the listing, matched like `_used`, in every project."""
         pools = [uses[kind]] + ([uses["slash"]] if kind == "skill" else [])  # slash commands too
         return sum(pool.get(m, 0) for pool in pools
-                   for m in (name, *(_suffixes(name) if kind == "skill" else ())))
+                   for m in (name, *(suffixes(name) if kind == "skill" else ())))
     streams: dict[tuple[str, str], _Stream] = {}
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
         reqs = by_stream.get((sid, agent))
         if not reqs:
             continue  # session not active in the period
-        if _used(name, kind, names_used[(project, kind)]):
+        if _used(name, kind, names_used[(project, kind)], suffixes):
             continue
         stream = streams.get((sid, agent))
         if stream is None:  # period rows are oldest first, so each stream's requests already are
