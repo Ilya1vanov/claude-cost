@@ -157,6 +157,14 @@ CREATE TABLE IF NOT EXISTS spotlight_pins (
   session_id TEXT NOT NULL,
   PRIMARY KEY (spotlight, session_id)
 );
+-- Include edges (ticket #56): `spotlight` includes the Spotlight named `included`, which may be
+-- an Auto-spotlight (resolved by name at query time). User data like the pins; an edge whose
+-- end no longer exists is ignored.
+CREATE TABLE IF NOT EXISTS spotlight_includes (
+  spotlight TEXT NOT NULL,
+  included TEXT NOT NULL,
+  PRIMARY KEY (spotlight, included)
+);
 -- compact_boundary records of main transcripts (ticket #12), deduped by record uuid (resume
 -- copies repeat them); `stem` is the transcript that held it first
 CREATE TABLE IF NOT EXISTS compactions (

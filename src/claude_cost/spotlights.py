@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Iterable
 
 # The order in which fields are searched for keys; keys are collected from all of them.
 FIELDS = ("title", "branch", "worktree", "prompt")
@@ -74,6 +75,7 @@ class Definition:
     kind: str                       # "picked" | "auto"
     key: str = ""                   # the key of an Auto-spotlight
     picked: frozenset[str] = field(default_factory=frozenset)  # logical Session ids
+    includes: frozenset[str] = frozenset()  # names of included Spotlights that exist
 
 
 @dataclass(frozen=True)
@@ -81,20 +83,32 @@ class Membership:
     key_matched: frozenset[str]  # Sessions of an Auto-spotlight that carry its key
     members: frozenset[str]      # Session ids counted in the Spotlight
     related: frozenset[str]      # Forks of members that are not members ("related, excluded")
+    via: dict[str, str] = field(default_factory=dict)  # Session -> the included Spotlight that brought it
 
 
-def resolve(defn: Definition, sessions: dict[str, SessionInfo],
-            keys: dict[str, list[str]]) -> Membership:
+def direct_members(defn: Definition, sessions: dict[str, SessionInfo],
+                   keys: dict[str, list[str]]) -> tuple[frozenset[str], frozenset[str]]:
+    """(Key matches, direct members) of one Spotlight, ignoring what it includes."""
+    key_matched = frozenset(sid for sid in sessions
+                            if defn.kind == "auto" and defn.key in keys.get(sid, ()))
+    return key_matched, key_matched | {sid for sid in sessions if sid in defn.picked}
+
+
+def resolve(defn: Definition, sessions: dict[str, SessionInfo], keys: dict[str, list[str]],
+            included: Iterable[Definition] = ()) -> Membership:
     """The Sessions of a Spotlight.
 
-    Direct members: Picked sessions and, for an Auto-spotlight, Sessions carrying the key.
-    A direct member is in, whatever it is. Beyond that, Side sessions of a member are in
-    (repeatedly, so Side sessions of Side sessions are too). Forks of members that are not
-    direct members are related, excluded.
+    Direct members: Picked sessions, for an Auto-spotlight Sessions carrying the key, and the
+    direct members of each Included spotlight (each Session once). A direct member is in,
+    whatever it is. Beyond that, Side sessions of a member are in (repeatedly, so Side sessions
+    of Side sessions are too). Forks of members that are not direct members are related, excluded.
     """
-    key_matched = {sid for sid in sessions
-                   if defn.kind == "auto" and defn.key in keys.get(sid, ())}
-    direct = key_matched | {sid for sid in sessions if sid in defn.picked}
+    key_matched, own = direct_members(defn, sessions, keys)
+    via: dict[str, str] = {}
+    for inc in sorted(included, key=lambda d: d.name):
+        for sid in direct_members(inc, sessions, keys)[1] - own:
+            via.setdefault(sid, inc.name)
+    direct = own | via.keys()
     members = set(direct)
     while True:
         grown = {sid for sid, info in sessions.items()
@@ -104,7 +118,7 @@ def resolve(defn: Definition, sessions: dict[str, SessionInfo],
         members |= grown
     related = {sid for sid, info in sessions.items()
                if sid not in members and info.kind == "fork" and info.parent in members}
-    return Membership(frozenset(key_matched), frozenset(members), frozenset(related))
+    return Membership(key_matched, frozenset(members), frozenset(related), via)
 
 
 def match_score(query: str, text: str) -> int | None:

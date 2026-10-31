@@ -169,7 +169,8 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_create():
         name = request.form.get("name", "")
         try:
-            service_factory().create_spotlight(name, request.form.getlist("session"))
+            service_factory().create_spotlight(
+                name, request.form.getlist("session"), request.form.getlist("include"))
         except SpotlightError as e:
             abort(400, str(e))
         return redirect(url_for("spotlight_page", name=name.strip()))
@@ -201,7 +202,8 @@ def create_app(service_factory: Callable[[], QueryService],
         chart = {"labels": [d.day.isoformat() for d in detail.days],
                  "series": [{"label": c, "data": [round(d.components[c], 4) for d in detail.days]}
                             for c in detail.components]}
-        return render_template("spotlight.html", d=detail, chart_data=chart)
+        return render_template("spotlight.html", d=detail, chart_data=chart,
+                               includable=service.includable_spotlights(name))
 
     @app.get("/api/session-search")
     def session_search():
@@ -226,6 +228,20 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.post("/spotlights/<path:name>/remove")
     def spotlight_remove(name):
         return _edit(name, lambda s: s.remove_session(name, request.form.get("session", "")))
+
+    @app.post("/spotlights/<path:name>/include")
+    def spotlight_include(name):
+        def action(service):
+            for other in request.form.getlist("spotlight"):
+                service.include_spotlight(name, other)
+        return _edit(name, action)
+
+    @app.post("/spotlights/<path:name>/exclude")
+    def spotlight_exclude(name):
+        def action(service):
+            for other in request.form.getlist("spotlight"):
+                service.exclude_spotlight(name, other)
+        return _edit(name, action)
 
     @app.post("/spotlights/<path:name>/delete")
     def spotlight_delete(name):

@@ -77,6 +77,7 @@ class SpotlightSession:
     picked: bool  # a Picked session, also when it joined as Key match
     key_matched: bool  # an Auto-spotlight's Key match: shown as a fixed chip
     removable: bool  # picked and not Key match: the Remove control applies
+    via: str | None = None  # the included Spotlight that brought it in, when it did
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,16 @@ class SpotlightSummary:
     sessions: int
     first_activity: date | None
     last_activity: date | None
+    includes: int = 0  # how many Spotlights it includes
+
+
+@dataclass(frozen=True)
+class SpotlightIncluded:
+    """An Included spotlight as its includer's page lists it."""
+    name: str
+    kind: str  # "picked" | "auto"
+    cost: float  # that Spotlight's own total
+    sessions: int
 
 
 class _SessionAggregate(NamedTuple):
@@ -160,6 +171,7 @@ class SpotlightDetail:
     days: tuple[SpotlightDay, ...]  # lifetime, first to last activity, days without spend included
     components: dict[str, float]  # lifetime cost per Cost component
     picked: tuple[str, ...]
+    included: tuple[SpotlightIncluded, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -897,18 +909,28 @@ class QueryService:
         picked: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT spotlight, session_id FROM spotlight_pins"):
             picked.setdefault(r["spotlight"], set()).add(self.graph.session_of(r["session_id"]))
-        defs = [spotlights.Definition(r["name"], "picked", "", frozenset(picked.get(r["name"], ())))
-                for r in self._conn.execute("SELECT name FROM spotlights ORDER BY name")]
-        taken = {d.name for d in defs}
-        found = sorted({k for ks in keys.values() for k in ks} - taken)
-        return defs + [spotlights.Definition(k, "auto", k, frozenset(picked.get(k, ()))) for k in found]
+        edges: dict[str, set[str]] = {}
+        for r in self._conn.execute("SELECT spotlight, included FROM spotlight_includes"):
+            edges.setdefault(r["spotlight"], set()).add(r["included"])
+        names = [r["name"] for r in self._conn.execute("SELECT name FROM spotlights ORDER BY name")]
+        found = sorted({k for ks in keys.values() for k in ks} - set(names))
+        exist = set(names) | set(found)  # an edge to a missing Spotlight is ignored
+
+        def inc(n: str) -> frozenset[str]:
+            return frozenset(edges.get(n, set()) & exist - {n})
+        return ([spotlights.Definition(n, "picked", "", frozenset(picked.get(n, ())), inc(n))
+                 for n in names]
+                + [spotlights.Definition(k, "auto", k, frozenset(picked.get(k, ())), inc(k))
+                   for k in found])
 
     def _spotlight_state(self):
         infos = self._session_infos()
         pat = self._key_regex()
         keys = {sid: spotlights.detect_keys(info, pat) for sid, info in infos.items()}
         defs = self._definitions(infos, keys)
-        return infos, defs, {d.name: spotlights.resolve(d, infos, keys) for d in defs}
+        by_name = {d.name: d for d in defs}
+        return infos, defs, {d.name: spotlights.resolve(d, infos, keys, [by_name[n] for n in d.includes])
+                             for d in defs}
 
     def _request_rows(self) -> list:
         return self._conn.execute(
@@ -923,7 +945,7 @@ class QueryService:
         return SpotlightSummary(
             defn.name, defn.kind, total, requests, sessions,
             self._local_day(first_ts) if first_ts is not None else None,
-            self._local_day(last_ts) if last_ts is not None else None)
+            self._local_day(last_ts) if last_ts is not None else None, len(defn.includes))
 
     def _summary(self, defn, members: frozenset[str], rows: list) -> SpotlightSummary:
         mine = [r for r in rows if r["sid"] in members]
@@ -985,13 +1007,16 @@ class QueryService:
         for other, m in member.items():
             if other != name:
                 for sid in m.members & ms.members:
+                    if other in defn.includes:
+                        continue
                     in_other.setdefault(sid, []).append(other)
         by = {s.session_id: s for s in self.session_summaries()}
         sessions = tuple(sorted(
             (SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
                               by[sid].requests, self._joined_as(sid, infos, ms, defn),
                               tuple(sorted(in_other.get(sid, ()))), sid in defn.picked,
-                              sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched)
+                              sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched,
+                              ms.via.get(sid))
              for sid in ms.members if sid in by), key=lambda x: (-x.cost, x.session_id)))
         related = tuple(sorted(
             (SpotlightRelated(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
@@ -1035,8 +1060,11 @@ class QueryService:
                 SpotlightDay(day, (c := days.get(day, blank)).cost, c.by_session, day_subagent(c.by_run),
                              c.components)
                 for day in (first + timedelta(n) for n in range((last - first).days + 1)))
+        included = tuple(
+            SpotlightIncluded(n, d.kind, (s := self._summary(d, member[n].members, rows)).total, s.sessions)
+            for n in sorted(defn.includes) for d in defs if d.name == n)
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
-                               tuple(sorted(defn.picked)))
+                               tuple(sorted(defn.picked)), included)
 
     def spotlight_comparison(self, names: list[str]) -> list[SpotlightDetail]:
         """Two or more Spotlights side by side, each in full (never summed). KeyError if unknown."""
@@ -1056,6 +1084,8 @@ class QueryService:
             return "Fork"
         if sid in defn.picked:
             return "Picked"
+        if sid in ms.via:
+            return f"Included spotlight {ms.via[sid]}"
         parent = infos[info.parent].label if info.parent in infos else ""
         return f"Side session of {parent}"
 
@@ -1069,18 +1099,71 @@ class QueryService:
         self._conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
                                [(name, self.graph.session_of(s)) for s in session_ids])
 
-    def create_spotlight(self, name: str, session_ids: Iterable[str] = ()) -> None:
-        """Create a Spotlight (empty with just a name) and add Picked sessions to it."""
+    def _check_include(self, name: str, other: str, defs: list, creating: bool = False) -> None:
+        """Raise SpotlightError unless `name` may include `other`: one level of nesting, an
+        Auto-spotlight cannot include, nothing includes itself. `creating`: `name` is being made
+        as a user-defined Spotlight, so it need not exist yet."""
+        by = {d.name: d for d in defs}
+        if other not in by:
+            raise spotlights.SpotlightError(f"no Spotlight named {other!r}")
+        if other == name:
+            raise spotlights.SpotlightError("a Spotlight cannot include itself")
+        if not creating:
+            if name not in by:
+                raise spotlights.SpotlightError(f"no Spotlight named {name!r}")
+            if by[name].kind == "auto":
+                raise spotlights.SpotlightError("an Auto-spotlight cannot include other Spotlights")
+        if by[other].includes:
+            raise spotlights.SpotlightError(
+                f"{other!r} includes other Spotlights, so it cannot be included")
+        includer = next((d.name for d in defs if name in d.includes), None)
+        if includer:
+            raise spotlights.SpotlightError(
+                f"{name!r} is included in {includer!r}, so it cannot include other Spotlights")
+
+    def create_spotlight(self, name: str, session_ids: Iterable[str] = (),
+                         includes: Iterable[str] = ()) -> None:
+        """Create a Spotlight (empty with just a name), add Picked sessions and Included
+        spotlights to it. Nothing is saved when an include breaks a nesting rule."""
         name = name.strip()
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
+        includes = list(dict.fromkeys(includes))
+        if includes:
+            defs = self._spotlight_state()[1]
+            for other in includes:
+                self._check_include(name, other, defs, creating=True)
         with self._conn:
             self._insert_pins(name, session_ids, create=True)
+            self._conn.executemany("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)",
+                                   [(name, o) for o in includes])
+
+    def include_spotlight(self, name: str, other: str) -> None:
+        """Make Spotlight `name` include Spotlight `other` (see the nesting rules in _check_include)."""
+        self._check_include(name, other, self._spotlight_state()[1])
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)", (name, other))
+
+    def exclude_spotlight(self, name: str, other: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM spotlight_includes WHERE spotlight = ? AND included = ?",
+                               (name, other))
+
+    def includable_spotlights(self, name: str) -> list[str]:
+        """Spotlights `name` may still include, by name; none when `name` may not include at all."""
+        defs = self._spotlight_state()[1]
+        me = next((d for d in defs if d.name == name), None)
+        if me is None or me.kind == "auto" or any(name in d.includes for d in defs):
+            return []
+        return sorted(d.name for d in defs
+                      if d.name != name and not d.includes and d.name not in me.includes)
 
     def delete_spotlight(self, name: str) -> None:
         with self._conn:
             self._conn.execute("DELETE FROM spotlights WHERE name = ?", (name,))
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ?", (name,))
+            self._conn.execute("DELETE FROM spotlight_includes WHERE spotlight = ? OR included = ?",
+                               (name, name))
 
     def add_session(self, name: str, session_id: str) -> None:
         """Add a Picked session to a Spotlight: an Auto-spotlight of that name, else a
