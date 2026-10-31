@@ -303,3 +303,20 @@ def test_detector_loads_the_session_graph_when_given_a_conn_without_one(root, se
                                       {}, findings_mod.all_thresholds(), svc._table, svc._conn,
                                       median_first_context=0.0)
     assert unused_listing.detect(ctx).covered
+
+
+def test_listing_in_one_transcript_is_charged_for_period_requests_in_the_sessions_other_transcript(
+        root, desktop, service_for):
+    root.write_transcript("p", "a-old", [req("o1", "2026-10-20T09:00:00Z", write_1h=1000)],
+                          extra_lines=[skill_listing_line("2026-10-20T08:59:00Z", _skill("big", 10_000))])
+    root.write_transcript("p", "b-new", [
+        req("n1", "2026-10-30T10:00:00Z", cache_read=1_000_000),
+        req("n2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+    ])
+    desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
+    since = __import__("datetime").date(2026, 10, 30)
+    f = _by_id(service_for(root, desktop=desktop).findings(since))["unused-listing"]
+    assert [s.session_id for s in f.sessions] == ["a-old"]
+    assert {r.message_id for r in f.requests} <= {"n1", "n2"} and f.requests  # which one is #44
+    assert f.avoidable > 0
+    assert f.table.rows[0][0] == "big"

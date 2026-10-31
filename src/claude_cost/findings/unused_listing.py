@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from bisect import bisect_left
 from collections import defaultdict
+from functools import lru_cache
 from itertools import accumulate
 
 from .. import pricing
@@ -18,14 +19,15 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
+@lru_cache(maxsize=4096)  # a Listing name is split once, however many times it is matched
 def _suffixes(name: str) -> frozenset[str]:
     """What follows each ':' in `name`: a skill may be invoked without its plugin prefix, and
     the prefix itself may contain ':'."""
     return frozenset(name[i + 1:] for i, c in enumerate(name) if c == ":")
 
 
-def _used(listing_name: str, kind: str, used: set[str], suffixes=_suffixes) -> bool:
-    return listing_name in used or (kind == "skill" and not used.isdisjoint(suffixes(listing_name)))
+def _used(listing_name: str, kind: str, used: set[str]) -> bool:
+    return listing_name in used or (kind == "skill" and not used.isdisjoint(_suffixes(listing_name)))
 
 
 def _read_rate(ctx: FindingContext, r) -> float:
@@ -72,28 +74,21 @@ def detect(ctx: FindingContext) -> Detection:
     by_stream: dict[tuple[str, str], list] = defaultdict(list)  # (session, agent) -> requests
     for r in period:
         by_stream[(r.session_id, r.agent_id or "")].append(r)
-    suffix_memo: dict[str, frozenset[str]] = {}  # per run: each Listing name is split once
-
-    def suffixes(name: str) -> frozenset[str]:
-        if name not in suffix_memo:
-            suffix_memo[name] = _suffixes(name)
-        return suffix_memo[name]
-
     # Listings and removals are read for the active Streams only, selected by Stream and never
     # by time: a Stream's earliest Listing and its removals can predate the Period.
     stems = json.dumps(sorted({t for sid, _ in by_stream for t in ctx.graph.transcripts(sid)}))
     names_used: dict[tuple[str, str], set[str]] = defaultdict(set)  # (project, kind) -> names
     uses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # kind -> name -> uses
-    for x in ctx.conn.execute("SELECT project, kind, name FROM tool_uses WHERE ts_epoch >= ?",
-                              (start,)):
+    for x in ctx.conn.execute("SELECT project, kind, name, COUNT(*) AS n FROM tool_uses "
+                              "WHERE ts_epoch >= ? GROUP BY project, kind, name", (start,)):
         names_used[(x["project"], x["kind"])].add(x["name"])
-        uses[x["kind"]][x["name"]] += 1
-    for x in ctx.conn.execute("SELECT r.project, s.skill FROM request_skills s "
+        uses[x["kind"]][x["name"]] += x["n"]
+    for x in ctx.conn.execute("SELECT r.project, s.skill, COUNT(*) AS n FROM request_skills s "
                               "JOIN requests r ON r.message_id = s.message_id "
-                              "WHERE r.ts_epoch >= ?", (start,)):
+                              "WHERE r.ts_epoch >= ? GROUP BY r.project, s.skill", (start,)):
         # slash commands and attributionSkill count as uses too
         names_used[(x["project"], "skill")].add(x["skill"])
-        uses["slash"][x["skill"]] += 1
+        uses["slash"][x["skill"]] += x["n"]
     # earliest Listing per (project, session, agent, kind, name); resume copies repeat them
     listed: dict[tuple, tuple[float, int]] = {}
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
@@ -111,14 +106,14 @@ def detect(ctx: FindingContext) -> Detection:
         """Invocations of the listing, matched like `_used`, in every project."""
         pools = [uses[kind]] + ([uses["slash"]] if kind == "skill" else [])  # slash commands too
         return sum(pool.get(m, 0) for pool in pools
-                   for m in (name, *(suffixes(name) if kind == "skill" else ())))
+                   for m in (name, *(_suffixes(name) if kind == "skill" else ())))
     streams: dict[tuple[str, str], _Stream] = {}
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
         reqs = by_stream.get((sid, agent))
         if not reqs:
             continue  # session not active in the period
-        if _used(name, kind, names_used[(project, kind)], suffixes):
+        if _used(name, kind, names_used[(project, kind)]):
             continue
         stream = streams.get((sid, agent))
         if stream is None:  # period rows are oldest first, so each stream's requests already are
@@ -132,7 +127,9 @@ def detect(ctx: FindingContext) -> Detection:
         it["sessions"].add(sid)
         it["cost"] += cost
     covered = [c for st in streams.values() for c in st.covered()]
-    names = project_display_names(ctx.conn)
+    if not items:
+        return Detection(covered)
+    names = project_display_names(ctx.conn)  # needs every project: a name is told apart from its namesakes
     by_listing: dict[tuple[str, str], list] = defaultdict(list)  # (kind, name) -> [(project, item)]
     for (project, kind, name), i in items.items():
         by_listing[(kind, name)].append((names.get(project, project), i))
@@ -148,8 +145,6 @@ def detect(ctx: FindingContext) -> Detection:
     if rest := ranked[TOP:]:
         rows.append((_count(len(rest), "more listing"), "", "", "",
                      f"${sum(i['cost'] for _, pp in rest for _, i in pp):.2f}"))
-    if not rows:
-        return Detection(covered)
     projects = {p for p, _, _ in items}
     table = DetailTable(("Listing", "Kind", "Unused in", "Used elsewhere", "Avoidable"), tuple(rows))
     return Detection(covered, f"{_count(len(by_listing), 'unused listing')} in "

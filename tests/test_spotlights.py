@@ -256,3 +256,32 @@ def test_fork_does_not_inherit_keys_from_copied_history_records(root, service_fo
     d = service_for(root, key_pattern=KEY).spotlight("PROJ-12")
     assert [s.session_id for s in d.sessions] == ["s1"]
     assert [r.session_id for r in d.related] == ["s9"]
+
+
+def test_member_session_idle_in_the_period_counts_in_lifetime_figures_but_adds_no_period_spend(
+        root, service_for):
+    from conftest import NOW
+    root.write_transcript("p", "a", [req("m1", "2026-10-29T01:00:00Z", output=M)])
+    root.write_transcript("p", "idle", [req("m2", "2026-09-01T01:00:00Z", output=2 * M)])
+    svc = service_for(root)
+    svc.pin_session("work", "a")
+    svc.pin_session("work", "idle")
+    (top,) = svc.top_spotlights("last7", NOW)
+    assert top.summary.name == "work" and top.period_cost == pytest.approx(20.0)
+    assert (top.summary.sessions, top.summary.requests) == (2, 2)
+    assert top.summary.total == pytest.approx(60.0)
+    assert top.summary.first_activity == date(2026, 9, 1)
+
+
+def test_spotlight_with_no_spend_in_the_period_is_left_out_of_the_ranking_only(root, service_for):
+    from conftest import NOW
+    root.write_transcript("p", "old", [req("m1", "2026-09-01T01:00:00Z", output=M)])
+    root.write_transcript("p", "new", [req("m2", "2026-10-29T01:00:00Z", output=2 * M)])
+    root.write_transcript("p", "quiet", [], prompt="talked, never called the model")
+    svc = service_for(root)
+    svc.pin_session("past", "old")
+    svc.pin_session("present", "new")
+    svc.pin_session("empty", "quiet")  # no Requests at all
+    assert [t.summary.name for t in svc.top_spotlights("last7", NOW)] == ["present"]
+    assert {s.name: s.total for s in svc.spotlights()} == {
+        "past": pytest.approx(20.0), "present": pytest.approx(40.0), "empty": 0}

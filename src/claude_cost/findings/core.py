@@ -7,6 +7,7 @@ at $0, a lower bound) and the Sessions and Requests it covers. See conventions.m
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
@@ -211,23 +212,28 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
            f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
            "st.gap, COALESCE(st.first_context, 0) AS first_context, "
-           "sv.agent_id AS agent_id, sf.agent_type AS agent_type, COALESCE(sf.is_fork, 0) AS is_fork "
+           "sv.agent_id AS agent_id "
            f"FROM requests r {SESSION_JOIN} "
            "LEFT JOIN request_cache c ON c.message_id = r.message_id "
            "LEFT JOIN request_stream st ON st.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
            "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "
-           "LEFT JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
-           "FROM subagent_files GROUP BY agent_id) sf ON sf.agent_id = sv.agent_id "
            + ("WHERE " + " AND ".join(where) + " " if where else "")
            + "ORDER BY r.ts_epoch, r.message_id")
+    found = conn.execute(sql, args).fetchall()
+    agents = json.dumps(sorted({x["agent_id"] for x in found if x["agent_id"]}))
+    kinds = {a["agent_id"]: a for a in conn.execute(  # only the Period's Subagents
+        "SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
+        "FROM subagent_files WHERE agent_id IN (SELECT value FROM json_each(?)) GROUP BY agent_id",
+        (agents,))}
     return [RequestRow(
         x["message_id"], x["sid"], x["project"], x["ts_epoch"], local_day(x["ts_epoch"], tz),
         x["model"], x["input_tokens"], x["output_tokens"], x["cache_read_tokens"],
         x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
         x["inference_geo"] or None, x["gap"], x["first_context"],
-        x["agent_id"], x["agent_type"], bool(x["is_fork"]))
-        for x in conn.execute(sql, args)]
+        x["agent_id"], kinds[x["agent_id"]]["agent_type"] if x["agent_id"] in kinds else None,
+        bool(x["agent_id"] in kinds and kinds[x["agent_id"]]["is_fork"]))
+        for x in found]
 
 
 def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow]) -> Finding:
