@@ -190,6 +190,26 @@ def test_detail_page_shows_table_not_run_on_text(root, configure):
     assert "sessions listed" not in client.get("/findings").get_data(as_text=True)
 
 
+def test_per_request_amounts_with_overlapping_listings_models_and_removal(root, service_for):
+    """Each request is charged every unused Listing it read, at its own model's read price."""
+    srv = {"srv": "x" * 36_000}   # ~10,002 tokens with the "## srv" header
+    root.write_transcript("p", "s1", [
+        req("r1", "2026-10-30T10:00:00Z", write_1h=1000),                      # writes A
+        req("r2", "2026-10-30T10:05:00Z", cache_read=1000),                    # A
+        req("r3", "2026-10-30T10:07:00Z", model="claude-sonnet-5-5", cache_read=1000),  # A; writes srv
+        req("r4", "2026-10-30T10:10:00Z", speed="fast", cache_read=1000),      # A + srv
+        req("r5", "2026-10-30T10:15:00Z", cache_read=1000),                    # A (srv removed)
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000)),
+                    mcp_listing_line("2026-10-30T10:06:00Z", srv),
+                    mcp_listing_line("2026-10-30T10:12:00Z", {}, uuid="rm", removed=("srv",))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    got = {r.message_id: r.avoidable for r in f.requests}
+    # read per M: opus-5-5 $0.20, sonnet-5-5 $0.10, fast opus-5-5 x2 = $0.40
+    assert got == {"r2": pytest.approx(0.002), "r3": pytest.approx(0.001),
+                   "r4": pytest.approx((10_000 + 10_002) * 0.40 / 1e6, rel=1e-3),
+                   "r5": pytest.approx(0.002)}
+
+
 def test_used_elsewhere_counts_slash_command_uses(root, service_for):
     import json
     from helpers import assistant_lines

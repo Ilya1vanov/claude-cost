@@ -2,7 +2,9 @@
 that was never invoked in that project over the period. Avoidable = its full read cost."""
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import defaultdict
+from itertools import accumulate
 
 from .. import pricing
 from ..projects import project_display_names
@@ -22,11 +24,40 @@ def _used(listing_name: str, kind: str, used: set[str]) -> bool:
     return kind == "skill" and any(listing_name.endswith(f":{u}") for u in used)
 
 
-def _read_price(ctx: FindingContext, r, tokens: int) -> float:
-    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=tokens, write_5m=0,
+def _read_rate(ctx: FindingContext, r) -> float:
+    """Cache read $ per token for request `r`, below any prompt-size tier."""
+    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=1, write_5m=0,
                               write_1h=0, speed=r.speed, inference_geo=r.inference_geo,
                               table=ctx.price_table)
     return c.cache_read if c else 0.0
+
+
+class _Stream:
+    """One (session, agent) stream's period requests, oldest first, with each request's read
+    rate and the unused Listing tokens it reads (kept as a difference array)."""
+
+    def __init__(self, ctx: FindingContext, reqs: list):
+        self.reqs = reqs
+        self.ts = [r.ts for r in reqs]
+        self.rates = [_read_rate(ctx, r) for r in reqs]
+        self.delta = [0] * (len(reqs) + 1)
+
+    def charge(self, ts: float, gone: float | None, tokens: int) -> float | None:
+        """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
+        the cache: those after the one that wrote it, before the removal. Returns its $, or
+        None when no request read it."""
+        lo = bisect_left(self.ts, ts) + 1
+        hi = len(self.reqs) if gone is None else bisect_left(self.ts, gone)
+        if lo >= hi:
+            return None
+        self.delta[lo] += tokens
+        self.delta[hi] -= tokens
+        # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
+        return tokens * sum(self.rates[lo:hi])
+
+    def covered(self) -> list[Covered]:
+        return [Covered(r.message_id, tokens * rate)
+                for r, rate, tokens in zip(self.reqs, self.rates, accumulate(self.delta)) if tokens]
 
 
 def detect(ctx: FindingContext) -> Detection:
@@ -70,33 +101,33 @@ def detect(ctx: FindingContext) -> Detection:
         if kind == "skill":  # slash commands count as uses too
             n += sum(c for s, c in slash.items() if _used(name, kind, {s}))
         return n
-    avoidable: dict[str, float] = defaultdict(float)
+    used_names: dict[tuple[str, str], set[str]] = {}  # (project, kind) -> names used there
+    streams: dict[tuple[str, str], _Stream] = {}
     items: dict[tuple, dict] = {}
     for (project, sid, agent, kind, name), (ts, tokens) in listed.items():
         reqs = by_stream.get((sid, agent))
         if not reqs:
             continue  # session not active in the period
-        u = {k.split(":", 1)[1] for k in used[project] if k.startswith(kind + ":")}
-        if kind == "skill":
-            u |= attributed[project]
+        u = used_names.get((project, kind))
+        if u is None:
+            u = {k.split(":", 1)[1] for k in used[project] if k.startswith(kind + ":")}
+            if kind == "skill":
+                u |= attributed[project]
+            used_names[(project, kind)] = u
         if _used(name, kind, u):
             continue
-        # requests after the one that wrote the Listing read it from the cache
-        later = [r for r in sorted(reqs, key=lambda r: (r.ts, r.message_id)) if r.ts >= ts][1:]
+        stream = streams.get((sid, agent))
+        if stream is None:  # period rows are oldest first, so each stream's requests already are
+            stream = streams[(sid, agent)] = _Stream(ctx, reqs)
+        # a removed Listing is no longer read from that point
         gone = min((t for t in removed.get((sid, agent, kind, name), ()) if t > ts), default=None)
-        if gone is not None:  # a removed Listing is no longer read from that point
-            later = [r for r in later if r.ts < gone]
-        if not later:
+        cost = stream.charge(ts, gone, tokens)
+        if cost is None:
             continue  # never read again, so it cost nothing
-        cost = 0.0
-        for r in later:
-            c = _read_price(ctx, r, tokens)
-            avoidable[r.message_id] += c
-            cost += c
         it = items.setdefault((project, kind, name), {"sessions": set(), "cost": 0.0})
         it["sessions"].add(sid)
         it["cost"] += cost
-    covered = [Covered(mid, a) for mid, a in avoidable.items()]
+    covered = [c for st in streams.values() for c in st.covered()]
     names = project_display_names(ctx.conn)
     by_listing: dict[tuple[str, str], list] = defaultdict(list)  # (kind, name) -> [(project, item)]
     for (project, kind, name), i in items.items():

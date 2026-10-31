@@ -106,3 +106,13 @@ def test_price_table_in_effect_marks_overrides(root, service_for):
     assert rows["claude-opus-5-5"].cache_read == pytest.approx(0.1)  # default 0.1x input
     assert rows["claude-sonnet-5-5"].source == "default"
     assert rows["claude-haiku-5-5"].tier_note
+
+
+def test_lookups_stay_per_table():
+    default = pricing.build_table(None)
+    override = pricing.build_table({"claude-opus-5-5": {"input": 1, "output": 3}})
+    for _ in range(2):  # repeated lookups give the same answers
+        assert pricing.find_price("claude-opus-5-5", DAY, default).input == 4
+        assert pricing.find_price("claude-opus-5-5", DAY, override).input == 1
+        assert pricing.find_price("claude-opus-5-5", DAY).input == 4
+        assert pricing.find_price("claude-opus-5-5", DAY, {}) is None
