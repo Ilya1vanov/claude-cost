@@ -180,7 +180,7 @@ def test_spotlight_page_data_lifetime_days_by_session_subagent_component(root, s
     assert [x.day for x in d.days] == [date(2026, 10, 29)]
     day = d.days[0]
     assert day.cost == pytest.approx(40.0)
-    assert day.sessions == {"s1": pytest.approx(40.0)} and day.subagents == {"s1/a1": pytest.approx(20.0)}
+    assert day.sessions == {"s1": pytest.approx(40.0)} and day.subagent.total == pytest.approx(20.0)
     assert day.components["output"] == pytest.approx(40.0)
     root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=M),
                                       req("m6", "2026-10-31T01:00:00Z", output=M)],
@@ -285,3 +285,34 @@ def test_spotlight_with_no_spend_in_the_period_is_left_out_of_the_ranking_only(r
     assert [t.summary.name for t in svc.top_spotlights("last7", NOW)] == ["present"]
     assert {s.name: s.total for s in svc.spotlights()} == {
         "past": pytest.approx(20.0), "present": pytest.approx(40.0), "empty": 0}
+
+
+def _sub_day(root, service_for, subs):
+    """One Session with a Subagent run per (agent id, type, output tokens) on one day."""
+    root.write_transcript("p", "s1", [req("m0", "2026-10-29T01:00:00Z", output=M)], branch="proj-1")
+    for i, (aid, typ, out) in enumerate(subs):
+        root.write_subagent_transcript("p", "s1", aid, [req(f"x{i}", "2026-10-29T02:00:00Z", output=out)],
+                                       meta={"agentType": typ} if typ else None)
+    return service_for(root, key_pattern=KEY).spotlight("PROJ-1").days[0].subagent
+
+
+def test_day_subagent_summary_total_runs_and_mostly(root, service_for):
+    sub = _sub_day(root, service_for, [("a1", "Explore", M), ("a2", "general-purpose", 2 * M),
+                                       ("a3", "Explore", M // 2)])
+    assert sub.total == pytest.approx(70.0) and sub.runs == 3
+    assert sub.top_type == "general-purpose" and not sub.all_same  # most cost, though fewest runs
+
+
+def test_day_subagent_summary_all_same_type(root, service_for):
+    sub = _sub_day(root, service_for, [("a1", "Explore", M), ("a2", "Explore", M)])
+    assert (sub.runs, sub.top_type, sub.all_same) == (2, "Explore", True)
+
+
+def test_day_subagent_summary_unknown_type(root, service_for):
+    sub = _sub_day(root, service_for, [("a1", None, M)])
+    assert (sub.runs, sub.top_type, sub.all_same) == (1, "unknown", True)
+
+
+def test_day_without_subagent_spend_has_no_summary(root, service_for):
+    root.write_transcript("p", "s1", [req("m0", "2026-10-29T01:00:00Z", output=M)], branch="proj-1")
+    assert service_for(root, key_pattern=KEY).spotlight("PROJ-1").days[0].subagent is None
