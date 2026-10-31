@@ -18,6 +18,8 @@ TOOLTIPS = {
               "while Claude was working. Tool results, compaction summaries, hook output and "
               "Subagent messages are not Turns."),
     "requests": "Billed API calls in the period, each counted once however many transcripts hold a copy.",
+    "subagents": ("Subagent runs that made at least one request in the period, nested ones included. "
+                  "Their requests and cost are already part of Requests and the Session's cost."),
     "per turn": ("The component's cost divided by the Turns in the period. A flat cost per Turn "
                  "with a falling total means less usage, not savings."),
     "input": "The uncached input tokens of requests, at the list price.",

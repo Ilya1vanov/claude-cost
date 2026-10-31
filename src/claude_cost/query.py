@@ -278,10 +278,12 @@ class ComponentSpend:
 
 @dataclass(frozen=True)
 class Usage:
-    """What a Period used: Sessions with spend, Turns the user typed, Requests billed."""
+    """What a Period used: Sessions with spend, Turns the user typed, Requests billed and the
+    Subagent runs among them."""
     sessions: int
     turns: int | None  # None when the period starts before Turn coverage (pruned transcripts)
     requests: int
+    subagents: int = 0  # distinct Subagent runs with requests, nested ones included
 
 
 @dataclass(frozen=True)
@@ -647,13 +649,14 @@ class QueryService:
     def _usage(self, p: Period) -> Usage:
         lo, hi = self._bounds(p)
         row = self._conn.execute(
-            f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n "
-            f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
+            f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n, "
+            "COUNT(DISTINCT CASE WHEN a.agent_id IS NOT NULL THEN r.session_id || '/' || a.agent_id END) AS sub "
+            f"FROM requests r LEFT JOIN request_surface a ON a.message_id = r.message_id {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
             (lo, hi)).fetchone()
         cov = self._conn.execute("SELECT value FROM meta WHERE key = 'turns_from'").fetchone()
         turns = None if cov and lo < float(cov["value"]) else self._conn.execute(
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
-        return Usage(row["s"], turns, row["n"])
+        return Usage(row["s"], turns, row["n"], row["sub"])
 
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""

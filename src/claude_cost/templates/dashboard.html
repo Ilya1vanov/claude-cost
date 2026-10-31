@@ -62,7 +62,7 @@
   <section class="card" id="usage-strip">
     <h2>Usage</h2>
     <div class="kpis">
-      {% for label, key, a, b in (("Sessions", "sessions", uc.sessions, ub.sessions), ("Turns", "turns", uc.turns, ub.turns), ("Requests", "requests", uc.requests, ub.requests)) %}
+      {% for label, key, a, b in (("Sessions", "sessions", uc.sessions, ub.sessions), ("Turns", "turns", uc.turns, ub.turns), ("Requests", "requests", uc.requests, ub.requests), ("Subagents", "subagents", uc.subagents, ub.subagents)) %}
       <div class="kpi">
         <div class="label">{{ label }} {{ ui.info(key) }}</div>
         <div class="value">{{ "n/a" if a is none else a }}</div>
