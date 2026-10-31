@@ -32,8 +32,8 @@
     <div class="table-wrap"><table id="spotlight-days">
       <tr><th>Day</th><th class="num">Total</th><th>By Session</th><th>By Subagent</th></tr>
       {% for x in d.days %}<tr><td class="nowrap">{{ x.day }}</td><td class="num">${{ "%.2f"|format(x.cost) }}</td>
-        <td>{% for k, v in x.sessions.items() %}{{ session_label(k) }}: ${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td>
-        <td>{% for k, v in x.subagents.items() %}{% set sa = k.split("/", 1) %}{{ session_label(sa[0]) }}/{{ ui.sid(sa[-1]) }}:${{ "%.2f"|format(v) }}{{ ", " if not loop.last }}{% endfor %}</td></tr>
+        <td>{% for k, v in x.sessions.items()|sort(attribute=1, reverse=true) %}<div>{{ session_label(k) }}: ${{ "%.2f"|format(v) }}</div>{% endfor %}</td>
+        <td>{% if x.subagent %}${{ "%.2f"|format(x.subagent.total) }} · {{ x.subagent.runs }} run{{ "s" if x.subagent.runs != 1 }} · {{ "all" if x.subagent.all_same else "mostly" }} {{ x.subagent.top_type }}{% endif %}</td></tr>
       {% else %}<tr><td colspan="4" class="empty">No spend</td></tr>{% endfor %}
     </table></div>
   </section>
