@@ -55,8 +55,11 @@ class _Stream:
         the cache: those after the one that wrote it (the first at or after `ts`, possibly before
         the Period), before the removal. Returns its $, or None when no request read it."""
         lo = bisect_left(self.ts, ts)
-        if lo or self.prev_ts is None or self.prev_ts < ts:  # the writer is a Period Request: skip it
-            lo += 1
+        # a Period Request precedes the Listing, or no Request between the Listing and the
+        # Period does: either way the writer is self.reqs[lo]
+        writer_in_period = lo > 0 or self.prev_ts is None or self.prev_ts < ts
+        if writer_in_period:
+            lo += 1  # skip the writer
         hi = len(self.reqs) if gone is None else bisect_left(self.ts, gone)
         if lo >= hi:
             return None
