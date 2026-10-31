@@ -90,11 +90,15 @@ def format_compact(analysis) -> str:
         payback = "n/a" if m.payback_requests is None else f"{m.payback_requests:,.0f} requests"
         lines.append(f"{label}: Compact threshold {m.threshold:,} tokens ({m.source}), "
                      f"{m.sample_size} compactions, p75 compaction ${m.compaction_cost:.2f}, "
-                     f"payback {payback}")
+                     f"payback {payback}, autoCompactWindow {m.autocompact_window:,}"
+                     + (f" ({m.window_note})" if m.window_note else ""))
         if m.model is None or m.source == "model":
             lines.append("  cost vs threshold: " + ", ".join(
                 f"{c.threshold // 1000}K=${c.cost:.2f}" for c in m.curve) +
                 f" (observed ${m.actual_cost:.2f})")
+    lines.append(f"Claude Code settings (autocompact fires {analysis.AUTOCOMPACT_OFFSET:,} "
+                 "tokens before the window):")
+    lines.append(analysis.model_settings_json())
     return "\n".join(lines)
 
 
