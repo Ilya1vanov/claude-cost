@@ -9,7 +9,7 @@
       <tr><th>Compare</th><th>Spotlight</th><th>Kind</th><th class="num">Lifetime</th><th class="num">Sessions</th><th>First activity</th><th>Last activity</th></tr>
       {% for s in spotlights %}<tr><td><input type="checkbox" name="s" value="{{ s.name }}"></td>
         <td><a href="{{ url_for('spotlight_page', name=s.name) }}">{{ s.name }}</a></td>
-        <td><span class="badge">{{ {"auto": "Auto-spotlight", "rule": "rule", "pinned": "pinned"}[s.kind] }}</span></td>
+        <td><span class="badge">{{ {"auto": "Auto-spotlight", "picked": "Picked"}[s.kind] }}</span></td>
         <td class="num">${{ "%.2f"|format(s.total) }}</td><td class="num">{{ s.sessions }}</td>
         <td>{{ s.first_activity or "" }}</td><td>{{ s.last_activity or "" }}</td></tr>
       {% else %}<tr><td colspan="7" class="empty">No Spotlights yet</td></tr>{% endfor %}
@@ -20,7 +20,6 @@
     <h2>New Spotlight</h2>
     <form method="post" action="{{ url_for('spotlight_create') }}">
       <label class="field"><span>Name</span><input name="name" required></label>
-      <label class="field"><span>Rule (regular expression over title, git branch, worktree path and first prompt; empty = pinned Sessions only)</span><input name="rule"></label>
       <button type="submit">Create</button>
     </form>
   </section>

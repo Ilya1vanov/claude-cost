@@ -149,7 +149,7 @@ def _spotlight_client(env):
     return create_app(factory, lambda: NOW).test_client()
 
 
-def test_spotlight_pages_edit_pins_and_compare(root, configure):
+def test_spotlight_pages_edit_picked_sessions_and_compare(root, configure):
     root.write_transcript("p", "s1", [req("m1", "2026-10-29T01:00:00Z", output=1_000_000)], title="PROJ-7 login")
     root.write_transcript("p", "s2", [req("m2", "2026-10-29T01:00:00Z", output=2_000_000)], title="PROJ-8 cart")
     root.write_transcript("p", "s3", [req("m3", "2026-10-29T01:00:00Z", output=1_000_000)], prompt="loose")
@@ -161,17 +161,17 @@ def test_spotlight_pages_edit_pins_and_compare(root, configure):
     html = page.get_data(as_text=True)
     assert page.status_code == 200 and 'id="spotlight-chart"' in html and "$20.00" in html
     assert "/static/spotlight.js" in html and client.get("/static/spotlight.js").status_code == 200
-    # pin a Session in the web UI, then unpin it
-    assert client.post("/spotlights/PROJ-7/pin", data={"session": "s3"}).status_code == 302
+    # add a Picked session in the web UI, then remove it
+    assert client.post("/spotlights/PROJ-7/add", data={"session": "s3"}).status_code == 302
     def sessions_table():
         return client.get("/spotlights/PROJ-7").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]
     assert "loose" in sessions_table()
-    client.post("/spotlights/PROJ-7/unpin", data={"session": "s3"})
+    client.post("/spotlights/PROJ-7/remove", data={"session": "s3"})
     assert "loose" not in sessions_table()
-    # create a rule Spotlight, reject a bad rule, delete it
-    assert client.post("/spotlights", data={"name": "carts", "rule": "cart"}).status_code == 302
-    assert "PROJ-8" in client.get("/spotlights/carts").get_data(as_text=True)
-    assert client.post("/spotlights", data={"name": "bad", "rule": "("}).status_code == 400
+    # create a Spotlight with a Picked session, reject a blank name, delete it
+    assert client.post("/spotlights", data={"name": "carts", "session": ["s2"]}).status_code == 302
+    assert "cart" in client.get("/spotlights/carts").get_data(as_text=True)
+    assert client.post("/spotlights", data={"name": " "}).status_code == 400
     client.post("/spotlights/carts/delete")
     assert client.get("/spotlights/carts").status_code == 404
     cmp = client.get("/spotlights/compare?s=PROJ-7&s=PROJ-8")

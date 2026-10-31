@@ -30,9 +30,7 @@ def setup(root, configure):
         ingest.ingest(conn, cfg.data_roots)
         return QueryService(conn, cfg.timezone)
     svc = factory()
-    svc.save_spotlight("S", "")
-    for sid in ("s-titled", "s-prompt", "s-bare"):
-        svc.pin_session("S", sid)
+    svc.create_spotlight("S", ["s-titled", "s-prompt", "s-bare"])
     return svc, create_app(factory, lambda: NOW).test_client()
 
 
