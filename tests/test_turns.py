@@ -140,7 +140,7 @@ def test_dashboard_shows_usage_strip_above_cost_components_with_per_turn_columns
         prompt_line("u1", D + "09:00:00Z"), prompt_line("u2", D + "09:30:00Z")])
     html = _dashboard(root, configure)
     strip = re.search(r'id="usage-strip".*?</section>', html, re.S).group(0)
-    for label in ("Sessions", "Turns", "Requests"):
+    for label in ("Sessions", "Turns", "Requests", "Subagents"):
         assert label in strip
     assert 'class="info" title="' in strip
     assert html.index('id="usage-strip"') < html.index("<h2>Cost components</h2>")
@@ -171,3 +171,14 @@ def test_periods_before_turn_coverage_show_no_turn_figures(root, tmp_path):
     assert c.usage_current.turns == 1
     out = {x.name: x for x in c.components}["output"]
     assert out.baseline_per_turn is None and out.current_per_turn == pytest.approx(20)
+
+
+def test_usage_counts_subagent_runs_with_requests_per_period(root, service_for):
+    root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")],
+                          extra_lines=[prompt_line("u1", D + "09:00:00Z")])
+    root.write_subagent_transcript("p", "s1", "x1", [req("b", D + "10:05:00Z"), req("c", D + "10:06:00Z")])
+    root.write_subagent_transcript("p", "s1", "x2", [req("d", D + "10:07:00Z")])
+    root.write_subagent_transcript("p", "s1", "x3", [req("e", "2026-10-20T10:00:00Z")])
+    c = _cmp(service_for(root))
+    assert (c.usage_current.subagents, c.usage_baseline.subagents) == (2, 1)
+    assert c.usage_current.requests == 4  # Subagent requests stay inside Requests
