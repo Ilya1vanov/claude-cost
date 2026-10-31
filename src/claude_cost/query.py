@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from . import compact as compact_mod
 from . import explore
 from . import findings as findings_mod
-from . import pricing, spotlights
+from . import pricing, session_graph, spotlights
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
 from .projects import project_display_names
@@ -167,6 +167,7 @@ class SideSessionMark:
     before_index: int
     cost: float
     requests: int
+    kind: str = "side"  # "side" | "fork"
 
 
 @dataclass(frozen=True)
@@ -373,6 +374,14 @@ class QueryService:
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
         self._infos: dict[str, spotlights.SessionInfo] | None = None
+        self._graph: session_graph.SessionGraph | None = None
+
+    @property
+    def graph(self) -> session_graph.SessionGraph:
+        """The session graph, loaded on first use and kept for the life of the service."""
+        if self._graph is None:
+            self._graph = session_graph.load(self._conn)
+        return self._graph
 
     def close(self) -> None:
         self._conn.close()
@@ -425,8 +434,8 @@ class QueryService:
                           data_root: str | Path | None = None) -> list[SessionSummary]:
         """One row per Session (logical conversation), oldest first.
 
-        Costs include the Session's Subagents. Side sessions and Forks carry their parent
-        Session's id when the Desktop store linked them; everything else is top-level.
+        Costs include the Session's Subagents. Side sessions and Forks carry their Parent
+        session's id, from the Desktop store or copied history; everything else is top-level.
         """
         where, args = self._filter(surface, data_root)
         rows = self._conn.execute(
@@ -437,23 +446,10 @@ class QueryService:
             f"FROM requests r {SESSION_JOIN} "
             f"LEFT JOIN request_surface a ON a.message_id = r.message_id{where} "
             "GROUP BY sid ORDER BY first, sid", args).fetchall()
-        members: dict[str, list[str]] = {}
-        logical: dict[str, str] = {}
-        for r in self._conn.execute(
-                "SELECT stem, logical_session_id FROM session_links ORDER BY stem"):
-            members.setdefault(r["logical_session_id"], []).append(r["stem"])
-            logical[r["stem"]] = r["logical_session_id"]
-        parents: dict[str, tuple[str, str]] = {}
-        for rel in self._conn.execute(
-                "SELECT child_stem, parent_stem, kind FROM session_relations ORDER BY child_stem"):
-            child = logical.get(rel["child_stem"], rel["child_stem"])
-            parent = logical.get(rel["parent_stem"], rel["parent_stem"])
-            if child != parent:
-                parents.setdefault(child, (parent, rel["kind"]))
-        return [SessionSummary(r["sid"], r["cost"], r["n"],
-                               tuple(members.get(r["sid"], [r["sid"]])),
+        graph = self.graph
+        return [SessionSummary(r["sid"], r["cost"], r["n"], tuple(graph.transcripts(r["sid"])),
                                r["sub_cost"], r["sub_n"] or 0,
-                               *parents.get(r["sid"], (None, None))) for r in rows]
+                               *(graph.link(r["sid"]) or (None, None))) for r in rows]
 
     def subagent_summaries(self, surface: str | None = None,
                            data_root: str | Path | None = None) -> list[SubagentSummary]:
@@ -526,8 +522,7 @@ class QueryService:
         def index(ts: float) -> int:
             return sum(1 for t in times if t < ts)
 
-        stems = [r["stem"] for r in self._conn.execute(
-            "SELECT stem FROM session_links WHERE logical_session_id = ?", (session_id,))] or [session_id]
+        stems = self.graph.transcripts(session_id)
         marks = ",".join("?" * len(stems))
         compactions = tuple(self._mark(c, index(c["ts_epoch"]), points)
                             for c in self._conn.execute(
@@ -537,8 +532,9 @@ class QueryService:
             SubagentLaunch(a.agent_id, a.agent_type, a.description, a.is_fork, first, index(first),
                            a.cost, a.requests)
             for a, first in self._subagent_starts(session_id) if a.parent_agent_id == agent_id)
-        sides = tuple(SideSessionMark(s.session_id, first, index(first), s.cost, s.requests)
-                      for s, first in self._side_sessions(session_id)) if agent_id is None else ()
+        sides = tuple(SideSessionMark(s.session_id, first, index(first), s.cost, s.requests,
+                                      s.link_kind)
+                      for s, first in self._child_sessions(session_id)) if agent_id is None else ()
         parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
         return SessionTimeline(
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
@@ -565,9 +561,11 @@ class QueryService:
         return [(a, self._first_ts(session_id, a.agent_id))
                 for a in self.subagent_summaries() if a.session_id == session_id]
 
-    def _side_sessions(self, session_id: str) -> list[tuple[SessionSummary, float]]:
+    def _child_sessions(self, session_id: str) -> list[tuple[SessionSummary, float]]:
+        """Sessions whose Parent session is `session_id` (Side sessions and Forks), with first timestamps."""
+        children = set(self.graph.children(session_id))
         return [(s, self._first_ts(s.session_id)) for s in self.session_summaries()
-                if s.parent_session_id == session_id and s.link_kind == "side"]
+                if s.session_id in children]
 
     def period_comparison(self, mode: str, now: datetime, include_today: bool = True,
                           top_n: int = 10) -> PeriodComparison:
@@ -648,7 +646,7 @@ class QueryService:
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ? GROUP BY k", (lo, hi))}
         infos = self._session_infos()
         top = {r.key for r in ranked}
-        children = [sid for sid, i in infos.items() if i.parent in top]
+        children = [c for t in top for c in self.graph.children(t)]
         firsts = {r["k"]: r["t"] for r in self._conn.execute(
             f"SELECT {SESSION_ID_SQL} AS k, MIN(r.ts_epoch) AS t FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
@@ -658,7 +656,7 @@ class QueryService:
         for sid in children:
             first = firsts.get(sid)  # None when every request is Subagent-owned
             if first is not None and lo <= first < hi:  # started in the period
-                key = (infos[sid].parent, infos[sid].kind)
+                key = self.graph.link(sid)
                 linked[key] = linked.get(key, 0) + 1
         labels = {sid: i.label for sid, i in infos.items()}
         return tuple(RankedSpend(
@@ -724,7 +722,8 @@ class QueryService:
         defs = findings_mod.all_findings()
         ctx = findings_mod.FindingContext(rows, self._thresholds, findings_mod.all_thresholds(),
                                           self._table, self._conn,
-                                          self.compact_thresholds(), self._compare_model)
+                                          self.compact_thresholds(), self._compare_model,
+                                          self.graph)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,
@@ -826,30 +825,16 @@ class QueryService:
 
     def _build_session_infos(self) -> dict[str, spotlights.SessionInfo]:
         summaries = self.session_summaries()
-        logical = {r["stem"]: r["logical_session_id"]
-                   for r in self._conn.execute("SELECT stem, logical_session_id FROM session_links")}
         meta = {r["stem"]: r for r in self._conn.execute("SELECT * FROM session_meta")}
-        # A transcript that holds copied history (forkedFrom) is a Fork of the copied Session.
-        fork_of: dict[str, str] = {}
-        for r in self._conn.execute(
-                "SELECT DISTINCT f.file_stem AS stem, c.session_id AS orig FROM request_copies c "
-                "JOIN ingest_files f ON f.path = c.path "
-                "WHERE c.is_copy = 1 AND c.path NOT IN (SELECT path FROM subagent_files)"):
-            child, parent = logical.get(r["stem"], r["stem"]), logical.get(r["orig"], r["orig"])
-            if child != parent:
-                fork_of.setdefault(child, parent)
         out = {}
         for s in summaries:
             rows = [meta[t] for t in s.transcripts if t in meta]
-            parent, kind = s.parent_session_id, s.link_kind
-            if kind is None and s.session_id in fork_of:
-                parent, kind = fork_of[s.session_id], "fork"
 
             def vals(col: str, rows=rows) -> tuple[str, ...]:
                 return tuple(r[col] for r in rows if r[col])
             out[s.session_id] = spotlights.SessionInfo(
                 s.session_id, vals("custom_title"), vals("git_branch"), vals("cwd"),
-                vals("first_prompt"), parent, kind)
+                vals("first_prompt"), s.parent_session_id, s.link_kind)
         return out
 
     def auto_spotlights_enabled(self) -> bool:
@@ -869,11 +854,9 @@ class QueryService:
     def _definitions(self, infos: dict[str, spotlights.SessionInfo],
                      keys: dict[str, list[str]]) -> list[spotlights.Definition]:
         """User-defined Spotlights, then an Auto-spotlight per key (unless a user-defined one has the name)."""
-        logical = {r["stem"]: r["logical_session_id"]
-                   for r in self._conn.execute("SELECT stem, logical_session_id FROM session_links")}
         pins: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT spotlight, session_id FROM spotlight_pins"):
-            pins.setdefault(r["spotlight"], set()).add(logical.get(r["session_id"], r["session_id"]))
+            pins.setdefault(r["spotlight"], set()).add(self.graph.session_of(r["session_id"]))
         defs = [spotlights.Definition(r["name"], "rule" if r["rule"] else "pinned", r["rule"],
                                       frozenset(pins.get(r["name"], ())))
                 for r in self._conn.execute("SELECT name, rule FROM spotlights ORDER BY name")]
@@ -1015,20 +998,16 @@ class QueryService:
         if not name:
             raise spotlights.SpotlightError("a Spotlight needs a name")
         is_auto = any(name in ks for ks in self.session_keys().values())
-        row = self._conn.execute("SELECT logical_session_id FROM session_links WHERE stem = ?",
-                                 (session_id,)).fetchone()
         with self._conn:
             if not is_auto:
                 self._conn.execute("INSERT OR IGNORE INTO spotlights VALUES (?, '')", (name,))
             self._conn.execute("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                               (name, row["logical_session_id"] if row else session_id))
+                               (name, self.graph.session_of(session_id)))
 
     def unpin_session(self, name: str, session_id: str) -> None:
-        row = self._conn.execute("SELECT logical_session_id FROM session_links WHERE stem = ?",
-                                 (session_id,)).fetchone()
         with self._conn:
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ? AND session_id IN (?, ?)",
-                               (name, session_id, row["logical_session_id"] if row else session_id))
+                               (name, session_id, self.graph.session_of(session_id)))
 
     def session_labels(self) -> dict[str, str]:
         """Label of every logical Session id: custom title, else the first 60 characters of the

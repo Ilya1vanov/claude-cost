@@ -242,3 +242,28 @@ def test_table_shows_top_25_then_one_row_for_the_rest(root, service_for):
     assert len(f.table.rows) == 26
     assert f.table.rows[0][0] == "s27" and f.table.rows[24][0] == "s3"
     assert f.table.rows[25] == ("2 more listings", "", "", "", "$0.03")
+
+
+def test_listing_in_a_resumed_sessions_second_transcript_is_attributed_to_that_session(
+        root, desktop, service_for):
+    root.write_transcript("p", "a-old", [req("o1", "2026-10-30T09:00:00Z", write_1h=1000)])
+    root.write_transcript("p", "b-new", [
+        req("n1", "2026-10-30T10:00:00Z", write_1h=1000),
+        req("n2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+        req("n3", "2026-10-30T10:10:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    desktop.write_session("a", "b-new", priorCliSessionIds=["a-old"])
+    f = _by_id(service_for(root, desktop=desktop).findings())["unused-listing"]
+    assert [s.session_id for s in f.sessions] == ["a-old"]
+    assert f.avoidable == pytest.approx(0.004)
+    assert f.table.rows[0][2].items == ("p: $0.00, 1 session",)
+
+
+def test_detector_loads_the_session_graph_when_given_a_conn_without_one(root, service_for):
+    from claude_cost import findings as findings_mod
+    from claude_cost.findings import unused_listing
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    svc = service_for(root)
+    ctx = findings_mod.FindingContext(findings_mod.load_rows(svc._conn, None, None, None),
+                                      {}, findings_mod.all_thresholds(), svc._table, svc._conn)
+    assert unused_listing.detect(ctx).covered

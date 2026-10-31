@@ -65,8 +65,6 @@ def detect(ctx: FindingContext) -> Detection:
     if ctx.conn is None or not period:
         return Detection([])
     start = min(r.ts for r in period)
-    sid_of = {x["stem"]: x["sid"] for x in ctx.conn.execute(
-        "SELECT stem, logical_session_id AS sid FROM session_links")}
     agent_of = {x["message_id"]: x["agent_id"] or "" for x in ctx.conn.execute(
         "SELECT message_id, agent_id FROM request_surface")}
     by_stream: dict[tuple[str, str], list] = defaultdict(list)  # (session, agent) -> requests
@@ -87,12 +85,12 @@ def detect(ctx: FindingContext) -> Detection:
     listed: dict[tuple, tuple[float, int]] = {}
     for x in ctx.conn.execute("SELECT stem, agent_id, project, kind, name, ts_epoch, tokens "
                               "FROM listings ORDER BY ts_epoch"):
-        sid = sid_of.get(x["stem"], x["stem"])
+        sid = ctx.graph.session_of(x["stem"])
         key = (x["project"], sid, x["agent_id"], x["kind"], x["name"])
         listed.setdefault(key, (x["ts_epoch"], x["tokens"]))
     removed: dict[tuple, list[float]] = defaultdict(list)  # removal times
     for x in ctx.conn.execute("SELECT stem, agent_id, kind, name, ts_epoch FROM listing_removals"):
-        sid = sid_of.get(x["stem"], x["stem"])
+        sid = ctx.graph.session_of(x["stem"])
         removed[(sid, x["agent_id"], x["kind"], x["name"])].append(x["ts_epoch"])
     def elsewhere(kind: str, name: str) -> int:
         """Invocations of the listing, matched like `_used`, in every project."""
