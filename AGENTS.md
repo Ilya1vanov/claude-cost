@@ -12,6 +12,8 @@ Default five roles, label = role name. See `docs/agents/triage-labels.md`.
 
 Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
+Glossary and ADR edits are changes too: write them in your worktree under `.claude/worktrees/`, creating one before the first write if the session (e.g. `/grill-with-docs`) started without it.
+
 ## Git workflow
 
 Single-developer project: never create pull requests.
