@@ -255,6 +255,7 @@ class SessionTimeline:
 
 
 PERIOD_MODES = ("last7", "week", "month")
+CUSTOM_MODE = "custom"
 
 
 @dataclass(frozen=True)
@@ -387,8 +388,21 @@ def calendar_period(mode: str, start: date) -> Period:
     raise ValueError(f"{start} is not the start of a {mode}")
 
 
-def resolve_periods(mode: str, today: date, include_today: bool = True) -> tuple[Period, Period, int]:
-    """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days."""
+def resolve_periods(mode: str, today: date, include_today: bool = True,
+                    custom: Period | None = None) -> tuple[Period, Period, int]:
+    """(current, baseline, full period length). Partial calendar periods compare on equal elapsed days.
+
+    `custom` (required for mode "custom") is a run of whole local days: its Baseline is the run of
+    the same length just before it, and it is never partial."""
+    if mode == CUSTOM_MODE:
+        if custom is None:
+            raise ValueError("custom period needs start and end dates")
+        if custom.end < custom.start:
+            raise ValueError(f"custom period ends ({custom.end}) before it starts ({custom.start})")
+        if custom.start > today:
+            raise ValueError(f"custom period starts ({custom.start}) after today ({today})")
+        n = custom.days
+        return custom, Period(custom.start - timedelta(n), custom.start - timedelta(1)), n
     if mode == "last7":
         end = today if include_today else today - timedelta(days=1)
         return Period(end - timedelta(6), end), Period(end - timedelta(13), end - timedelta(7)), 7
@@ -624,13 +638,13 @@ class QueryService:
                 if s.session_id in children]
 
     def period_comparison(self, mode: str, now: datetime, include_today: bool = True,
-                          top_n: int = 10) -> PeriodComparison:
+                          top_n: int = 10, custom: Period | None = None) -> PeriodComparison:
         """Spend for a Period against the baseline before it, in the service's time zone.
 
         `include_today` only affects `last7`; calendar periods always run through today.
         """
         today = self.today(now)
-        cur, base, full = resolve_periods(mode, today, include_today)
+        cur, base, full = resolve_periods(mode, today, include_today, custom)
         cur_sums, base_sums = self._sums(cur), self._sums(base)
         use_cur, use_base = self._usage(cur), self._usage(base)
 
@@ -742,10 +756,11 @@ class QueryService:
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
                           row["w5"], row["w1"], row["rebuilds"])
 
-    def cache_card(self, mode: str, now: datetime, include_today: bool = True) -> CacheCard:
+    def cache_card(self, mode: str, now: datetime, include_today: bool = True,
+                   custom: Period | None = None) -> CacheCard:
         """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
         today = self.today(now)
-        cur, base, _ = resolve_periods(mode, today, include_today)
+        cur, base, _ = resolve_periods(mode, today, include_today, custom)
         return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
 
     def spend_by_cache_event(self, start: date, end: date) -> list[CacheEventSpend]:
@@ -785,10 +800,10 @@ class QueryService:
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,
-                     top_n: int = 10) -> list[findings_mod.Finding]:
+                     top_n: int = 10, custom: Period | None = None) -> list[findings_mod.Finding]:
         """The findings covering the most spend inside the Period (same periods as
         period_comparison), costliest first; findings that cover nothing are left out."""
-        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today, custom)
         hits = [f for f in self.findings(cur.start, cur.end) if f.attributed > 0]
         return sorted(hits, key=lambda f: (-f.attributed, f.id))[:top_n]
 
@@ -982,9 +997,9 @@ class QueryService:
                     "GROUP BY sid", (lo, hi))}
 
     def top_spotlights(self, mode: str, now: datetime, include_today: bool = True,
-                       top_n: int = 10) -> list[SpotlightRank]:
+                       top_n: int = 10, custom: Period | None = None) -> list[SpotlightRank]:
         """Spotlights ranked by spend inside the Period (same periods as period_comparison)."""
-        cur, _, _ = resolve_periods(mode, self.today(now), include_today)
+        cur, _, _ = resolve_periods(mode, self.today(now), include_today, custom)
         lo, hi = self._bounds(cur)
         _, defs, member = self._spotlight_state()
         agg = self._session_aggregates(lo, hi)

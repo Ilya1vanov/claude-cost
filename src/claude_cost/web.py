@@ -12,7 +12,7 @@ from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
-from .query import COMPARISON_MODES, PERIOD_MODES, Period, QueryService
+from .query import COMPARISON_MODES, CUSTOM_MODE, PERIOD_MODES, Period, QueryService
 from .spotlights import SpotlightError
 from .tooltips import TOOLTIPS
 
@@ -81,8 +81,15 @@ def create_app(service_factory: Callable[[], QueryService],
     def dashboard():
         service = helper_service()
         mode = request.args.get("period", "last7")
-        if mode not in PERIOD_MODES:
-            abort(400, f"period must be one of {', '.join(PERIOD_MODES)}")
+        if mode not in (*PERIOD_MODES, CUSTOM_MODE):
+            abort(400, f"period must be one of {', '.join((*PERIOD_MODES, CUSTOM_MODE))}")
+        custom = None
+        if mode == CUSTOM_MODE:
+            try:
+                custom = Period(date.fromisoformat(request.args["start"]),
+                                date.fromisoformat(request.args["end"]))
+            except (KeyError, ValueError):
+                abort(400, "a custom period needs start and end dates like 2026-10-01")
         # the form sends a hidden 0 before the checkbox's 1, so the last value wins
         include_today = request.args.getlist("include_today")[-1:] != ["0"]
         if refresh:
@@ -95,17 +102,21 @@ def create_app(service_factory: Callable[[], QueryService],
                 service = helper_service()
         today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
+        try:
+            comparison = service.period_comparison(mode, now(), include_today, top_n, custom)
+        except ValueError as e:
+            abort(400, str(e))
         return render_template(
             "dashboard.html",
             days=days,
             total=sum(d.cost for d in days),
-            comparison=service.period_comparison(mode, now(), include_today, top_n),
-            cache=service.cache_card(mode, now(), include_today),
+            comparison=comparison,
+            cache=service.cache_card(mode, now(), include_today, custom),
             modes=PERIOD_MODES,
             include_today=include_today,
             unpriced=service.unpriced_models(),
-            spotlights=service.top_spotlights(mode, now(), include_today, top_n),
-            top_findings=service.top_findings(mode, now(), include_today, top_n),
+            spotlights=service.top_spotlights(mode, now(), include_today, top_n, custom),
+            top_findings=service.top_findings(mode, now(), include_today, top_n, custom),
             chart_data=[{"day": d.day.isoformat(), "cost": round(d.cost, 4)} for d in days],
         )
 
