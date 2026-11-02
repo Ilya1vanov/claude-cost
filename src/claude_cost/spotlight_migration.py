@@ -20,19 +20,19 @@ def run(conn: sqlite3.Connection) -> None:
     """Migrate rules to Picked sessions unless that already happened. Needs Sessions grouped."""
     if conn.execute("SELECT 1 FROM meta WHERE key = ?", (GUARD,)).fetchone():
         return
-    rules = conn.execute("SELECT name, rule FROM spotlights WHERE rule != ''").fetchall()
+    rules = conn.execute("SELECT id, rule FROM spotlights WHERE rule != ''").fetchall()
     infos = QueryService(conn)._session_infos() if rules else {}
     with conn:
         done = []
-        for name, rule in rules:
+        for sp_id, rule in rules:
             try:
                 pattern = re.compile(rule, re.IGNORECASE)
             except re.error:
                 continue  # a rule that no longer compiles is left as stored, never breaking ingest
             conn.executemany(
                 "INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                [(name, sid) for sid, info in infos.items()
+                [(sp_id, sid) for sid, info in infos.items()
                  if any(pattern.search(t) for t in info.texts())])
-            done.append(name)
-        conn.executemany("UPDATE spotlights SET rule = '' WHERE name = ?", [(n,) for n in done])
+            done.append(sp_id)
+        conn.executemany("UPDATE spotlights SET rule = '' WHERE id = ?", [(n,) for n in done])
         conn.execute("INSERT INTO meta VALUES (?, '1')", (GUARD,))

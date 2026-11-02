@@ -19,7 +19,7 @@ def test_included_spotlights_card_lists_rows_and_names_the_includer_in_joined_as
     client, _ = _included_client(root, tmp_path)
     html = client.get("/spotlights/Sprint").get_data(as_text=True)
     card = html.split('id="included-spotlights"')[1].split("</section>")[0]
-    assert "/spotlights/PROJ-12" in card and "$20.00" in card and "Remove" in card
+    assert "/spotlights/auto:PROJ-12" in card and "$20.00" in card and "Remove" in card
     picker = card.split("<select")[1]
     assert "Spare" in picker and "PROJ-12" not in picker
     table = html.split('id="spotlight-sessions"')[1].split("</table>")[0]

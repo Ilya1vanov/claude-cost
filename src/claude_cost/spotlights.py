@@ -48,6 +48,14 @@ class SessionInfo:
         return self.session_id
 
 
+AUTO_PREFIX = "auto:"
+
+
+def auto_id(key: str) -> str:
+    """The id of an Auto-spotlight: derived from its key, so it needs no stored row."""
+    return AUTO_PREFIX + key
+
+
 def compile_pattern(pattern: str, what: str) -> re.Pattern[str]:
     try:
         return re.compile(pattern, re.IGNORECASE)
@@ -79,11 +87,12 @@ def detect_keys(info: SessionInfo, pattern: re.Pattern[str] | None) -> list[str]
 
 @dataclass(frozen=True)
 class Definition:
-    name: str
+    id: str                         # stable identity (ADR-0004): generated, or `auto:<KEY>`
+    name: str                       # editable label; an Auto-spotlight's is its key until renamed
     kind: str                       # "picked" | "auto"
     key: str = ""                   # the key of an Auto-spotlight
     picked: frozenset[str] = field(default_factory=frozenset)  # logical Session ids
-    includes: frozenset[str] = frozenset()  # names of included Spotlights that exist
+    includes: frozenset[str] = frozenset()  # ids of included Spotlights that exist
 
 
 @dataclass(frozen=True)
@@ -91,7 +100,7 @@ class Membership:
     key_matched: frozenset[str]  # Sessions of an Auto-spotlight that carry its key
     members: frozenset[str]      # Session ids counted in the Spotlight
     related: frozenset[str]      # Forks of members that are not members ("related, excluded")
-    via: dict[str, str] = field(default_factory=dict)  # Session -> the included Spotlight that brought it
+    via: dict[str, str] = field(default_factory=dict)  # Session -> name of the included Spotlight that brought it
 
 
 def direct_members(defn: Definition, sessions: dict[str, SessionInfo],
@@ -113,7 +122,7 @@ def resolve(defn: Definition, sessions: dict[str, SessionInfo], keys: dict[str, 
     """
     key_matched, own = direct_members(defn, sessions, keys)
     via: dict[str, str] = {}
-    for inc in sorted(included, key=lambda d: d.name):
+    for inc in sorted(included, key=lambda d: (d.name, d.id)):
         for sid in direct_members(inc, sessions, keys)[1] - own:
             via.setdefault(sid, inc.name)
     direct = own | via.keys()

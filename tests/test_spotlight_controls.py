@@ -179,14 +179,14 @@ def test_spotlight_header_is_only_a_batch_picker_with_no_saved_chips(root, tmp_p
     page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     head = page.split("Cost per day", 1)[0]
     assert "<select" not in page and "Pin a Session" not in page
-    assert 'data-search-url="/api/session-search"' in head and 'data-name="PROJ-12"' in head
-    assert 'data-mode="collect"' in head and 'action="/spotlights/PROJ-12/add"' in head
+    assert 'data-search-url="/api/session-search"' in head and 'data-name="auto:PROJ-12"' in head
+    assert 'data-mode="collect"' in head and 'action="/spotlights/auto:PROJ-12/add"' in head
     assert '<span class="chip"' not in head and "chip-x" not in head and "login work" not in head
     assert "picker-submit" in head
     js = client.get("/static/picker.js").get_data(as_text=True)
     assert "Suggested: Forks" in js and "sessions" in js
     table = page.split('id="spotlight-sessions"')[1].split("</table>")[0]  # saved members live here
-    assert "login work" in table and "/spotlights/PROJ-12/remove" in table and "Key match" in table
+    assert "login work" in table and "/spotlights/auto:PROJ-12/remove" in table and "Key match" in table
 
 
 def test_add_endpoint_takes_several_ids_in_one_post(root, tmp_path):

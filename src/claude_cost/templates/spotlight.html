@@ -6,12 +6,15 @@
   <div class="crumbs"><a href="{{ url_for('spotlight_list') }}">All Spotlights</a><span class="sep">/</span>{{ s.name }}</div>
   <div class="page-head">
     <div>
-      <h1>Spotlight: {{ s.name }}</h1>
+      <h1>Spotlight: {{ s.name }}{% if s.key and s.key != s.name %} <small class="note" id="spotlight-key">{{ s.key }}</small>{% endif %}</h1>
       <p class="sub" id="spotlight-total">Lifetime: <strong>${{ "%.2f"|format(s.total) }}</strong> across {{ s.sessions }} Sessions and {{ s.requests }} requests
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
         Includes Subagents and Side sessions.</p>
-      <form method="post" action="{{ url_for('spotlight_add', name=s.name) }}">{{ ui.picker(s.name, "collect", submit=true) }}</form>
+      <p class="note">id <code id="spotlight-id">{{ s.id }}</code></p>
+      <form method="post" action="{{ url_for('spotlight_rename', name=s.id) }}" class="inline" id="rename-spotlight">
+        <input name="name" value="{{ s.name }}" required aria-label="Spotlight name"><button type="submit" class="small">Rename</button></form>
+      <form method="post" action="{{ url_for('spotlight_add', name=s.id) }}">{{ ui.picker(s.id, "collect", submit=true) }}</form>
     </div>
   </div>
 
@@ -32,13 +35,13 @@
     <h2>Included Spotlights</h2>
     {% if d.included %}<div class="table-wrap"><table>
       <tr><th>Spotlight</th><th class="num">Cost</th><th class="num">Sessions</th><th></th></tr>
-      {% for i in d.included %}<tr><td><a href="{{ url_for('spotlight_page', name=i.name) }}">{{ i.name }}</a></td>
+      {% for i in d.included %}<tr><td><a href="{{ url_for('spotlight_page', name=i.id) }}">{{ i.name }}</a></td>
         <td class="num">${{ "%.2f"|format(i.cost) }}</td><td class="num">{{ i.sessions }}</td>
-        <td class="num"><form method="post" action="{{ url_for('spotlight_exclude', name=s.name) }}" class="inline"><input type="hidden" name="spotlight" value="{{ i.name }}"><button type="submit" class="ghost small">Remove</button></form></td></tr>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_exclude', name=s.id) }}" class="inline"><input type="hidden" name="spotlight" value="{{ i.id }}"><button type="submit" class="ghost small">Remove</button></form></td></tr>
       {% endfor %}
     </table></div>{% endif %}
-    {% if includable %}<form method="post" action="{{ url_for('spotlight_include', name=s.name) }}" class="inline">
-      <select name="spotlight" aria-label="Include a Spotlight">{% for n in includable %}<option>{{ n }}</option>{% endfor %}</select>
+    {% if includable %}<form method="post" action="{{ url_for('spotlight_include', name=s.id) }}" class="inline">
+      <select name="spotlight" aria-label="Include a Spotlight">{% for i, n in includable %}<option value="{{ i }}">{{ n }}</option>{% endfor %}</select>
       <button type="submit" class="small">Include</button></form>{% endif %}
   </section>
   {% endif %}
@@ -51,8 +54,8 @@
       {% for x in d.sessions %}<tr data-depth="{{ x.depth }}"><td class="tree-node tree-depth-{{ [x.depth, 4]|min }}">{% if x.depth %}<span class="muted">&#8627;</span> {% endif %}{{ session_label(x.session_id) }}</td>
         <td class="num">${{ "%.2f"|format(x.cost) }}{% if x.subtree_cost > x.cost %}<div class="muted" title="This Session plus all its Side sessions and Forks below">${{ "%.2f"|format(x.subtree_cost) }} with Side sessions</div>{% endif %}</td><td class="num">${{ "%.2f"|format(x.subagent_cost) }}</td>
         <td><span class="badge joined" title="{{ x.joined_as }}">{{ "via " ~ x.via if x.via and x.joined_as.startswith("Included spotlight") else x.joined_as }}</span></td>
-        {% if show_also %}<td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=o) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>{% endif %}
-        <td class="num">{% if x.removable %}<form method="post" action="{{ url_for('spotlight_remove', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
+        {% if show_also %}<td>{% for o in x.also_in %}<a href="{{ url_for('spotlight_page', name=x.also_in_ids[loop.index0]) }}">{{ o }}</a>{{ ", " if not loop.last }}{% endfor %}{% if x.also_in %} (also in){% endif %}</td>{% endif %}
+        <td class="num">{% if x.removable %}<form method="post" action="{{ url_for('spotlight_remove', name=s.id) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Remove</button></form>{% endif %}</td></tr>
       {% else %}<tr><td colspan="{{ 6 if show_also else 5 }}" class="empty">No Sessions</td></tr>{% endfor %}
     </table></div>
   </section>
@@ -74,7 +77,7 @@
     <p class="note">Forks of Sessions above that are not picked; their cost is not in the total.</p>
     <div class="table-wrap"><table id="spotlight-related">
       {% for r in d.related %}<tr><td>{{ session_label(r.session_id) }}</td><td>fork of {{ session_label(r.parent_id) }}</td><td class="num">${{ "%.2f"|format(r.cost) }}</td>
-        <td class="num"><form method="post" action="{{ url_for('spotlight_add', name=s.name) }}" class="inline"><input type="hidden" name="session" value="{{ r.session_id }}"><button type="submit" class="ghost small">Add</button></form></td></tr>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_add', name=s.id) }}" class="inline"><input type="hidden" name="session" value="{{ r.session_id }}"><button type="submit" class="ghost small">Add</button></form></td></tr>
       {% endfor %}
     </table></div>
   </section>
@@ -83,7 +86,7 @@
   {% if s.kind != "auto" %}
   <section class="card danger-zone">
     <h2>Delete</h2>
-    <form method="post" action="{{ url_for('spotlight_delete', name=s.name) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>
+    <form method="post" action="{{ url_for('spotlight_delete', name=s.id) }}" class="inline"><button type="submit" class="danger small">Delete Spotlight</button></form>
   </section>
   {% endif %}
 {% endblock %}
