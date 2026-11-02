@@ -195,7 +195,27 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_list():
         service = service_factory()
         return render_template("spotlights.html", spotlights=service.spotlights(),
-                               auto_enabled=service.auto_spotlights_enabled())
+                               auto_enabled=service.auto_spotlights_enabled(),
+                               pending=sum(len(g.suggested) for g in service.suggestions()))
+
+    @app.get("/spotlights/triage")
+    def spotlight_triage():
+        return render_template("spotlight_triage.html", groups=service_factory().suggestions())
+
+    def _triage(action):
+        try:
+            action(service_factory(), request.form.get("key", ""), request.form.get("session", ""))
+        except SpotlightError as e:
+            abort(400, str(e))
+        return redirect(url_for("spotlight_triage"))
+
+    @app.post("/spotlights/triage/accept")
+    def spotlight_triage_accept():
+        return _triage(lambda s, key, sid: s.add_sessions(key, [sid], create=False))
+
+    @app.post("/spotlights/triage/dismiss")
+    def spotlight_triage_dismiss():
+        return _triage(lambda s, key, sid: s.remove_session(key, sid))
 
     @app.post("/spotlights")
     def spotlight_create():
@@ -403,6 +423,7 @@ def create_app(service_factory: Callable[[], QueryService],
                           for c in timeline.compactions if c.late]}
         return render_template("session.html", t=timeline, chart_data=chart,
                                period=period, in_period=in_period,
+                               suggested_keys=service.session_suggestions(session_id) if agent_id is None else [],
                                when=lambda ts: service.local_time(ts).strftime("%Y-%m-%d %H:%M:%S %Z"))
 
     return app
