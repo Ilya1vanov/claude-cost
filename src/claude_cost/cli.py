@@ -121,7 +121,8 @@ def _ingest(config: Config, now: datetime, err=None, rebuild: bool = False) -> i
                                  desktop_stores=config.desktop_stores,
                                  compact_settings=tuple(
                                      config.thresholds.get(n, all_thresholds()[n].default)
-                                     for n in ("compact_min_sample", "compact_step")))
+                                     for n in ("compact_min_sample", "compact_step")),
+                                 key_pattern=config.spotlight_key_pattern)
     finally:
         conn.close()
 
@@ -188,7 +189,7 @@ def _date(d: date | None) -> str | None:
 
 
 def _summary_json(s) -> dict:
-    return {"id": s.id, "name": s.name, "key": s.key, "kind": s.kind, "total": round(s.total, 4), "requests": s.requests,
+    return {"id": s.id, "name": s.name, "key": s.key, "kind": s.kind, "locked": s.locked, "total": round(s.total, 4), "requests": s.requests,
             "sessions": s.sessions, "includes": s.includes,
             "first_activity": _date(s.first_activity), "last_activity": _date(s.last_activity)}
 
@@ -200,7 +201,8 @@ def _print_spotlight_list(summaries, as_json: bool, out) -> None:
     for s in summaries:
         includes = f"  includes {s.includes}" if s.includes else ""
         key = f"  key {s.key}" if s.key and s.key != s.name else ""
-        print(f"{s.id}  {s.name}{key}  {s.kind}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
+        lock = "  locked" if s.locked else ""
+        print(f"{s.id}  {s.name}{key}  {s.kind}{lock}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
 
 
 def _print_spotlight_detail(detail, as_json: bool, out) -> None:
@@ -219,7 +221,8 @@ def _print_spotlight_detail(detail, as_json: bool, out) -> None:
         return
     summary = detail.summary
     key = f"  key {summary.key}" if summary.key and summary.key != summary.name else ""
-    print(f"{summary.id}  {summary.name}{key}  {summary.kind}  {_money(summary.total)}  "
+    lock = "  locked" if summary.locked else ""
+    print(f"{summary.id}  {summary.name}{key}  {summary.kind}{lock}  {_money(summary.total)}  "
           f"{summary.sessions} sessions, {summary.requests} requests", file=out)
     for inc in detail.included:
         print(f"  includes {inc.name}  {_money(inc.cost)}  {inc.sessions} sessions", file=out)
@@ -281,6 +284,10 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
         _print_spotlight_detail(detail, args.json, out)
     elif action == "rename":
         svc.rename_spotlight(args.name, args.new_name)
+    elif action == "lock":
+        svc.lock_spotlight(args.name)
+    elif action == "unlock":
+        svc.unlock_spotlight(args.name)
     elif action == "suggestions":
         _print_suggestions(svc.suggestions(), args.json, out)
     elif action == "search":
@@ -385,9 +392,13 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sp = spot_sub.add_parser("rename", help="rename a Spotlight (any Spotlight, to a non-empty name)")
     sp.add_argument("name", help="id, key or unique name")
     sp.add_argument("new_name")
+    for action, helptext in (("lock", "lock an Auto-spotlight: its Key matches become Picked sessions and "
+                                      "sessions carrying its key are only suggested"),
+                             ("unlock", "unlock an Auto-spotlight: Key matches join automatically again")):
+        spot_sub.add_parser(action, help=helptext).add_argument("name", help="id or key of an Auto-spotlight")
     sp = spot_sub.add_parser("suggestions", help="every pending Suggested session, grouped by key")
     sp.add_argument("--json", action="store_true")
-    sp = spot_sub.add_parser("search",help="find sessions by key or text, ranked as the web picker does")
+    sp = spot_sub.add_parser("search", help="find sessions by key or text, ranked as the web picker does")
     sp.add_argument("text")
     sp.add_argument("--json", action="store_true")
     sp = spot_sub.add_parser("create", help="create a Spotlight")
@@ -446,7 +457,11 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
             print(f"claude-cost: {e}", file=err)
             return 1
     if args.command == "ingest":
-        return cmd_ingest(config, now_fn(), out, err, args.rebuild)
+        try:
+            return cmd_ingest(config, now_fn(), out, err, args.rebuild)
+        except SpotlightError as e:
+            print(f"claude-cost: {e}", file=err)
+            return 1
     if (args.browser or env.get("BROWSER")) == "none":
         open_browser = lambda url: None
     return cmd_serve(config, now_fn, out, err, run_server, open_browser)

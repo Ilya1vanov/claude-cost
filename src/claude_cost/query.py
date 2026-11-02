@@ -143,6 +143,7 @@ class SpotlightSummary:
     includes: int = 0  # how many Spotlights it includes
     id: str = ""  # stable identity (ADR-0004); the name is an editable label
     key: str = ""  # an Auto-spotlight's key, '' for a user-defined Spotlight
+    locked: bool = False  # a Locked auto-spotlight: sessions carrying its key are only suggested
 
 
 @dataclass(frozen=True)
@@ -1000,10 +1001,13 @@ class QueryService:
         dismissed: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT key, session_id FROM spotlight_dismissed"):
             dismissed.setdefault(r["key"], set()).add(self.graph.session_of(r["session_id"]))
-        custom = {r["key"]: r["name"] for r in self._conn.execute("SELECT key, name FROM auto_spotlights")}
+        state = self._conn.execute("SELECT key, name, locked FROM auto_spotlights").fetchall()
+        custom = {r["key"]: r["name"] for r in state}
+        locked = {r["key"] for r in state if r["locked"]}
         has_key = {k for ks in self._key_matches().values() for k in ks}
         has_key |= {i[len(spotlights.AUTO_PREFIX):] for i, sids in picked.items()
                     if i.startswith(spotlights.AUTO_PREFIX) and sids}
+        has_key |= locked  # a Locked auto-spotlight stays, even with no members
         found = sorted(has_key - {n for _, n in users} - set(self.dismissed_keys()))
         exist = {i for i, _ in users} | {spotlights.auto_id(k) for k in found}  # an edge to a missing one is ignored
 
@@ -1013,7 +1017,7 @@ class QueryService:
                  for i, n in users]
                 + [spotlights.Definition(spotlights.auto_id(k), custom.get(k, k), "auto", k,
                                          frozenset(picked.get(spotlights.auto_id(k), ())),
-                                         inc(spotlights.auto_id(k)), frozenset(dismissed.get(k, ())))
+                                         inc(spotlights.auto_id(k)), frozenset(dismissed.get(k, ())), k in locked)
                    for k in found])
 
     def _spotlight_state(self):
@@ -1117,7 +1121,7 @@ class QueryService:
             defn.name, defn.kind, total, requests, sessions,
             self._local_day(first_ts) if first_ts is not None else None,
             self._local_day(last_ts) if last_ts is not None else None, len(defn.includes),
-            defn.id, defn.key)
+            defn.id, defn.key, defn.locked)
 
     def _summary(self, defn, members: frozenset[str], rows: list) -> SpotlightSummary:
         mine = [r for r in rows if r["sid"] in members]
@@ -1374,12 +1378,39 @@ class QueryService:
         defn = self._need(ref)
         with self._conn:
             if defn.kind == "auto":
-                if name == defn.key:
-                    self._conn.execute("DELETE FROM auto_spotlights WHERE key = ?", (defn.key,))
-                else:
-                    self._conn.execute("INSERT OR REPLACE INTO auto_spotlights VALUES (?, ?)", (defn.key, name))
+                self._conn.execute("INSERT OR IGNORE INTO auto_spotlights (key, name) VALUES (?, ?)",
+                                   (defn.key, defn.key))
+                self._conn.execute("UPDATE auto_spotlights SET name = ? WHERE key = ?", (name, defn.key))
+                self._conn.execute("DELETE FROM auto_spotlights WHERE key = ? AND name = key AND NOT locked",
+                                   (defn.key,))
             else:
                 self._conn.execute("UPDATE spotlights SET name = ? WHERE id = ?", (name, defn.id))
+
+    def _need_auto(self, ref: str) -> spotlights.Definition:
+        defn = self._need(ref)
+        if defn.kind != "auto":
+            raise spotlights.SpotlightError(f"{defn.name!r} is not an Auto-spotlight")
+        return defn
+
+    def lock_spotlight(self, ref: str) -> None:
+        """Lock an Auto-spotlight: its current Key matches become Picked sessions (so the total
+        does not change) and from then on every Session carrying its key is only a Suggested session."""
+        defn = self._need_auto(ref)
+        if defn.locked:
+            return
+        matched = spotlights.direct_members(defn, self._session_infos(), self._key_matches())[0]
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO auto_spotlights (key, name) VALUES (?, ?)",
+                               (defn.key, defn.key))
+            self._conn.execute("UPDATE auto_spotlights SET locked = 1 WHERE key = ?", (defn.key,))
+            self._insert_pins(defn.id, sorted(matched))
+
+    def unlock_spotlight(self, ref: str) -> None:
+        """Unlock an Auto-spotlight: Key matches join automatically again; Dismissed sessions stay dismissed."""
+        defn = self._need_auto(ref)
+        with self._conn:
+            self._conn.execute("UPDATE auto_spotlights SET locked = 0 WHERE key = ?", (defn.key,))
+            self._conn.execute("DELETE FROM auto_spotlights WHERE key = ? AND name = key", (defn.key,))
 
     def include_spotlight(self, ref: str, other: str) -> None:
         """Make Spotlight `ref` include Spotlight `other` (see the nesting rules in _check_include)."""

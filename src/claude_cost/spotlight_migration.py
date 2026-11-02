@@ -11,9 +11,11 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from . import spotlights
 from .query import QueryService
 
 GUARD = "spotlight_picked"
+KEY_GUARD = "spotlight_key_named"
 
 
 def run(conn: sqlite3.Connection) -> None:
@@ -36,3 +38,31 @@ def run(conn: sqlite3.Connection) -> None:
             done.append(sp_id)
         conn.executemany("UPDATE spotlights SET rule = '' WHERE id = ?", [(n,) for n in done])
         conn.execute("INSERT INTO meta VALUES (?, '1')", (GUARD,))
+
+
+def lock_key_named(conn: sqlite3.Connection, key_pattern: str | None) -> None:
+    """Turn each user-defined Spotlight named like a key (the whole name matches the key pattern)
+    into that key's Locked auto-spotlight, keeping its name, picks and the edges that include it.
+    Runs once, the first time a key pattern is configured. A Spotlight that includes others cannot
+    become an Auto-spotlight: SpotlightError names it and nothing is changed."""
+    if not key_pattern or conn.execute("SELECT 1 FROM meta WHERE key = ?", (KEY_GUARD,)).fetchone():
+        return
+    pattern = spotlights.compile_pattern(key_pattern, "spotlight_key_pattern")
+    named = [r for r in conn.execute("SELECT id, name FROM spotlights ORDER BY name, id")
+             if pattern.fullmatch(r["name"])]
+    for r in named:
+        if conn.execute("SELECT 1 FROM spotlight_includes WHERE spotlight = ?", (r["id"],)).fetchone():
+            raise spotlights.SpotlightError(
+                f"the Spotlight {r['name']!r} is named like a key but includes other Spotlights; "
+                "remove its includes (or rename it) and run again")
+    with conn:
+        for r in named:
+            key, auto = r["name"].upper(), spotlights.auto_id(r["name"].upper())
+            conn.execute("INSERT OR REPLACE INTO auto_spotlights (key, name, locked) VALUES (?, ?, 1)",
+                         (key, r["name"]))
+            conn.execute("UPDATE OR IGNORE spotlight_pins SET spotlight = ? WHERE spotlight = ?", (auto, r["id"]))
+            conn.execute("UPDATE OR IGNORE spotlight_includes SET included = ? WHERE included = ?", (auto, r["id"]))
+            conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ?", (r["id"],))
+            conn.execute("DELETE FROM spotlight_includes WHERE included = ?", (r["id"],))
+            conn.execute("DELETE FROM spotlights WHERE id = ?", (r["id"],))
+        conn.execute("INSERT INTO meta VALUES (?, '1')", (KEY_GUARD,))

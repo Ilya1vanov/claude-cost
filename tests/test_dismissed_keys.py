@@ -98,3 +98,14 @@ def test_dismissed_keys_survive_rebuild(root, tmp_path):
     QueryService(conn, "UTC", key_pattern=KEY).dismiss_key("PROJ-1")
     ingest.ingest(conn, [root.path], rebuild=True)
     assert QueryService(conn, "UTC", key_pattern=KEY).dismissed_keys() == ["PROJ-1"]
+
+
+def test_restore_keeps_lock_state(root, service_for):
+    curated(root)
+    svc = service_for(root, key_pattern=KEY)
+    svc.lock_spotlight("PROJ-1")
+    svc.dismiss_key("PROJ-1")
+    assert names(svc) == ["PROJ-2"]
+    svc.restore_key("PROJ-1")
+    assert {s.session_id for s in svc.spotlight("PROJ-1").sessions} == {"a1", "a2"}
+    assert "m" in {x.session_id for x in svc.spotlight("PROJ-1").suggested}

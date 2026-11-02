@@ -78,7 +78,7 @@ def test_create_show_and_list(cenv):
 
     rows = {r["name"]: r for r in json.loads(ok(["list", "--json"], cenv))}
     assert set(rows) == {"Sprint 5", "PROJ-1", "PROJ-2"}
-    assert {"id", "key", "name", "kind", "total", "requests", "sessions", "includes",
+    assert {"id", "key", "name", "kind", "locked", "total", "requests", "sessions", "includes",
             "first_activity", "last_activity"} == set(rows["Sprint 5"])
     assert rows["Sprint 5"]["includes"] == 2 and rows["PROJ-1"]["kind"] == "auto"
 

@@ -11,7 +11,9 @@
         ({{ {"auto": "Auto-spotlight for this key", "picked": "Picked sessions"}[s.kind] }}).
         {% if s.first_activity %}First activity {{ s.first_activity }}, last {{ s.last_activity }}.{% endif %}
         Includes Subagents and Side sessions.</p>
-      <p class="note">id <code id="spotlight-id">{{ s.id }}</code></p>
+      <p class="note">id <code id="spotlight-id">{{ s.id }}</code>{% if s.locked %} <span class="badge" id="spotlight-locked" title="Sessions carrying this key are only suggested until you accept them">Locked</span>{% endif %}</p>
+      {% if s.kind == "auto" %}<form method="post" action="{{ url_for('spotlight_unlock' if s.locked else 'spotlight_lock', name=s.id) }}" class="inline" id="lock-spotlight">
+        <button type="submit" class="small">{{ "Unlock" if s.locked else "Lock" }}</button></form>{% endif %}
       <form method="post" action="{{ url_for('spotlight_rename', name=s.id) }}" class="inline" id="rename-spotlight">
         <input name="name" value="{{ s.name }}" required aria-label="Spotlight name"><button type="submit" class="small">Rename</button></form>
       {% if s.kind == "auto" %}<form method="post" action="{{ url_for('spotlight_dismiss_key', name=s.id) }}" class="inline" id="dismiss-key">

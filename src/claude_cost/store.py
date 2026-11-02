@@ -160,7 +160,8 @@ CREATE TABLE IF NOT EXISTS spotlights (
 );
 CREATE TABLE IF NOT EXISTS auto_spotlights (
   key TEXT PRIMARY KEY,
-  name TEXT NOT NULL
+  name TEXT NOT NULL,
+  locked INTEGER NOT NULL DEFAULT 0
 );
 -- Dismissed sessions (ticket #67): a Session the user removed from the Auto-spotlight for `key`;
 -- it stays out while it carries the key. By logical session id; user data like the pins.
@@ -246,6 +247,8 @@ def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
     if schema:
         conn.executescript(SCHEMA)
         _migrate_spotlight_ids(conn)
+        if not any(r[1] == "locked" for r in conn.execute("PRAGMA table_info(auto_spotlights)")):
+            conn.execute("ALTER TABLE auto_spotlights ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
     return conn
 
 
