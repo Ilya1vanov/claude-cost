@@ -12,6 +12,7 @@ claude-cost --version  # installed version
 # Spotlights from Bash (any Claude session can drive these; no LLM or Jira inside claude-cost)
 claude-cost spotlight list [--json]
 claude-cost spotlight show "Sprint 5" [--json]
+claude-cost spotlight rename "Sprint 5" "Sprint 6"     # any Spotlight; names need not be unique
 claude-cost spotlight search PROJ-12 [--json]        # same ranking as the web picker; prints full session ids
 claude-cost spotlight create "Sprint 5" [--session ID]... [--include SPOTLIGHT]...
 claude-cost spotlight add "Sprint 5" ID...           # Picked sessions
@@ -21,7 +22,7 @@ claude-cost spotlight exclude "Sprint 5" PROJ-13
 claude-cost spotlight delete "Sprint 5"
 ```
 
-Spotlight commands ingest first, call the same `QueryService` operations as the web, and on a bad name, session id or nesting print one `claude-cost: ...` line to stderr and exit 1. `--json` shapes: `list` is an array of `{name, kind, total, requests, sessions, includes, first_activity, last_activity}`; `show` is that object plus `picked` (ids), `included` (`{name, kind, cost, sessions}`) and `members` (`{id, label, cost, requests, joined_as, picked, key_matched, via}`); `search` is an array of `{id, label, cost, kind}`.
+Every Spotlight command takes a Spotlight by id, key or name (a name only while exactly one Spotlight has it; otherwise it fails listing the ids). Spotlight commands ingest first, call the same `QueryService` operations as the web, and on a bad name, session id or nesting print one `claude-cost: ...` line to stderr and exit 1. `--json` shapes: `list` is an array of `{id, name, key, kind, total, requests, sessions, includes, first_activity, last_activity}`; `show` is that object plus `picked` (ids), `included` (`{id, name, kind, cost, sessions}`) and `members` (`{id, label, cost, requests, joined_as, picked, key_matched, via}`); `search` is an array of `{id, label, cost, kind}`.
 
 ## Developer conventions
 

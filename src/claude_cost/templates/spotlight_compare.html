@@ -5,7 +5,7 @@
   <div class="crumbs"><a href="{{ url_for('spotlight_list') }}">All Spotlights</a><span class="sep">/</span>Compare</div>
   <div class="page-head"><h1>Compare Spotlights</h1></div>
   <form method="get" action="{{ url_for('spotlight_compare') }}" class="card">
-    <div class="checks">{% for s in available %}<label><input type="checkbox" name="s" value="{{ s.name }}" {{ "checked" if s.name in selected }}> {{ s.name }}</label>
+    <div class="checks">{% for s in available %}<label><input type="checkbox" name="s" value="{{ s.id }}" {{ "checked" if s.id in selected or s.name in selected }}> {{ s.name }}</label>
     {% else %}<span class="muted">No Spotlights yet</span>{% endfor %}</div>
     <button type="submit">Compare</button>
   </form>
@@ -15,7 +15,7 @@
     <div class="table-wrap"><table id="spotlight-compare-table">
       <tr><th>Spotlight</th><th class="num">Lifetime</th><th class="num">Sessions</th><th class="num">Requests</th><th>First activity</th><th>Last activity</th>
         {% for n in details[0].components %}<th class="num">{{ ui.component(n) }}</th>{% endfor %}</tr>
-      {% for d in details %}<tr><td class="name-cell" title="{{ d.summary.name }}"><a href="{{ url_for('spotlight_page', name=d.summary.name) }}">{{ d.summary.name }}</a></td>
+      {% for d in details %}<tr><td class="name-cell" title="{{ d.summary.name }}"><a href="{{ url_for('spotlight_page', name=d.summary.id) }}">{{ d.summary.name }}</a></td>
         <td class="num">${{ "%.2f"|format(d.summary.total) }}</td><td class="num">{{ d.summary.sessions }}</td><td class="num">{{ d.summary.requests }}</td>
         <td>{{ d.summary.first_activity or "" }}</td><td>{{ d.summary.last_activity or "" }}</td>
         {% for c in d.components.values() %}<td class="num">${{ "%.2f"|format(c) }}</td>{% endfor %}</tr>

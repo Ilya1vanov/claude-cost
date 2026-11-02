@@ -188,7 +188,7 @@ def _date(d: date | None) -> str | None:
 
 
 def _summary_json(s) -> dict:
-    return {"name": s.name, "kind": s.kind, "total": round(s.total, 4), "requests": s.requests,
+    return {"id": s.id, "name": s.name, "key": s.key, "kind": s.kind, "total": round(s.total, 4), "requests": s.requests,
             "sessions": s.sessions, "includes": s.includes,
             "first_activity": _date(s.first_activity), "last_activity": _date(s.last_activity)}
 
@@ -199,12 +199,13 @@ def _print_spotlight_list(summaries, as_json: bool, out) -> None:
         return
     for s in summaries:
         includes = f"  includes {s.includes}" if s.includes else ""
-        print(f"{s.name}  {s.kind}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
+        key = f"  key {s.key}" if s.key and s.key != s.name else ""
+        print(f"{s.id}  {s.name}{key}  {s.kind}  {_money(s.total)}  {s.sessions} sessions{includes}", file=out)
 
 
 def _print_spotlight_detail(detail, as_json: bool, out) -> None:
     if as_json:
-        included = [{"name": i.name, "kind": i.kind, "cost": round(i.cost, 4), "sessions": i.sessions}
+        included = [{"id": i.id, "name": i.name, "kind": i.kind, "cost": round(i.cost, 4), "sessions": i.sessions}
                     for i in detail.included]
         members = [{"id": m.session_id, "label": m.label, "cost": round(m.cost, 4),
                     "requests": m.requests, "joined_as": m.joined_as, "picked": m.picked,
@@ -213,7 +214,8 @@ def _print_spotlight_detail(detail, as_json: bool, out) -> None:
                           "included": included, "members": members}, indent=2), file=out)
         return
     summary = detail.summary
-    print(f"{summary.name}  {summary.kind}  {_money(summary.total)}  "
+    key = f"  key {summary.key}" if summary.key and summary.key != summary.name else ""
+    print(f"{summary.id}  {summary.name}{key}  {summary.kind}  {_money(summary.total)}  "
           f"{summary.sessions} sessions, {summary.requests} requests", file=out)
     for inc in detail.included:
         print(f"  includes {inc.name}  {_money(inc.cost)}  {inc.sessions} sessions", file=out)
@@ -244,6 +246,8 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
         except KeyError:
             raise SpotlightError(f"no Spotlight named {args.name!r}") from None
         _print_spotlight_detail(detail, args.json, out)
+    elif action == "rename":
+        svc.rename_spotlight(args.name, args.new_name)
     elif action == "search":
         _print_session_search(svc.search_sessions(args.text, ""), args.json, out)
     elif action == "create":
@@ -336,6 +340,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sp = spot_sub.add_parser("show", help="one Spotlight: included Spotlights and sessions")
     sp.add_argument("name")
     sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("rename", help="rename a Spotlight (any Spotlight, to a non-empty name)")
+    sp.add_argument("name", help="id, key or unique name")
+    sp.add_argument("new_name")
     sp = spot_sub.add_parser("search", help="find sessions by key or text, ranked as the web picker does")
     sp.add_argument("text")
     sp.add_argument("--json", action="store_true")

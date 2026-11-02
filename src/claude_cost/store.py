@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from pathlib import Path
 
 SCHEMA = """
@@ -141,6 +142,10 @@ CREATE TABLE IF NOT EXISTS session_relations (
 -- spotlights/spotlight_pins: user-defined Spotlights and their Picked sessions (by logical
 -- session id); these are user data and survive `ingest --rebuild`. `rule` is only read by the
 -- one-time migration that turns rules into Picked sessions; it is '' afterwards.
+-- ADR-0004: a Spotlight is identified by `id` (generated for a user-defined one, `auto:<KEY>` for
+-- an Auto-spotlight); `name` is an editable label. spotlight_pins.spotlight and
+-- spotlight_includes.* hold ids. auto_spotlights: per-key state of an Auto-spotlight (its custom
+-- name), keyed by key, a row only once the user changed something.
 CREATE TABLE IF NOT EXISTS session_meta (
   stem TEXT PRIMARY KEY,
   custom_title TEXT,
@@ -149,17 +154,21 @@ CREATE TABLE IF NOT EXISTS session_meta (
   first_prompt TEXT
 );
 CREATE TABLE IF NOT EXISTS spotlights (
-  name TEXT PRIMARY KEY,
-  rule TEXT NOT NULL DEFAULT ''
+  name TEXT NOT NULL,
+  rule TEXT NOT NULL DEFAULT '',
+  id TEXT PRIMARY KEY DEFAULT ('sp-' || lower(hex(randomblob(4))))
+);
+CREATE TABLE IF NOT EXISTS auto_spotlights (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS spotlight_pins (
   spotlight TEXT NOT NULL,
   session_id TEXT NOT NULL,
   PRIMARY KEY (spotlight, session_id)
 );
--- Include edges (ticket #56): `spotlight` includes the Spotlight named `included`, which may be
--- an Auto-spotlight (resolved by name at query time). User data like the pins; an edge whose
--- end no longer exists is ignored.
+-- Include edges (ticket #56): `spotlight` includes the Spotlight with id `included`, which may be
+-- an Auto-spotlight. User data like the pins; an edge whose end no longer exists is ignored.
 CREATE TABLE IF NOT EXISTS spotlight_includes (
   spotlight TEXT NOT NULL,
   included TEXT NOT NULL,
@@ -226,4 +235,32 @@ def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     if schema:
         conn.executescript(SCHEMA)
+        _migrate_spotlight_ids(conn)
     return conn
+
+
+def _migrate_spotlight_ids(conn: sqlite3.Connection) -> None:
+    """One-time (ADR-0004): a store whose `spotlights` table has no `id` column is name-keyed;
+    give each user-defined Spotlight an id and rewrite pins and include edges from names to ids.
+    A name that is no user-defined Spotlight was an Auto-spotlight's key, whose id is `auto:<KEY>`."""
+    if any(r[1] == "id" for r in conn.execute("PRAGMA table_info(spotlights)")):
+        return
+    old = conn.execute("SELECT name, rule FROM spotlights").fetchall()
+    pins = conn.execute("SELECT spotlight, session_id FROM spotlight_pins").fetchall()
+    edges = conn.execute("SELECT spotlight, included FROM spotlight_includes").fetchall()
+    ids = {r[0]: "sp-" + uuid.uuid4().hex[:8] for r in old}
+
+    def to_id(name: str) -> str:
+        return ids.get(name) or f"auto:{name}"
+    with conn:
+        conn.execute("DROP TABLE spotlights")
+        conn.execute("CREATE TABLE spotlights (name TEXT NOT NULL, rule TEXT NOT NULL DEFAULT '', "
+                     "id TEXT PRIMARY KEY DEFAULT ('sp-' || lower(hex(randomblob(4)))))")
+        conn.executemany("INSERT INTO spotlights (name, rule, id) VALUES (?, ?, ?)",
+                         [(n, rule, ids[n]) for n, rule in old])
+        conn.execute("DELETE FROM spotlight_pins")
+        conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
+                         [(to_id(n), sid) for n, sid in pins])
+        conn.execute("DELETE FROM spotlight_includes")
+        conn.executemany("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)",
+                         [(to_id(a), to_id(b)) for a, b in edges])

@@ -139,7 +139,7 @@
     <p class="note">A Session can be in several Spotlights, so these totals overlap: never add them up.</p>
     <div class="table-wrap"><table id="top-spotlights">
       <tr><th>Spotlight</th><th class="num">This period</th><th class="num">Lifetime</th><th>First activity</th><th>Last activity</th></tr>
-      {% for r in spotlights %}<tr><td><a href="{{ url_for('spotlight_page', name=r.summary.name) }}">{{ r.summary.name }}</a></td>
+      {% for r in spotlights %}<tr><td><a href="{{ url_for('spotlight_page', name=r.summary.id) }}">{{ r.summary.name }}</a>{% if r.summary.key and r.summary.key != r.summary.name %} <small class="note">{{ r.summary.key }}</small>{% endif %}</td>
         <td class="num">${{ "%.2f"|format(r.period_cost) }}</td><td class="num">${{ "%.2f"|format(r.summary.total) }}</td>
         <td>{{ r.summary.first_activity }}</td><td>{{ r.summary.last_activity }}</td></tr>
       {% else %}<tr><td colspan="5" class="empty">No Spotlight spend in this period</td></tr>{% endfor %}

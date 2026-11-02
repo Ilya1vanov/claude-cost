@@ -201,11 +201,11 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_create():
         name = request.form.get("name", "")
         try:
-            service_factory().create_spotlight(
+            sp_id = service_factory().create_spotlight(
                 name, request.form.getlist("session"), request.form.getlist("include"))
         except SpotlightError as e:
             abort(400, str(e))
-        return redirect(url_for("spotlight_page", name=name.strip()))
+        return redirect(url_for("spotlight_page", name=sp_id))
 
     @app.get("/spotlights/compare")
     def spotlight_compare():
@@ -215,6 +215,8 @@ def create_app(service_factory: Callable[[], QueryService],
             details = service.spotlight_comparison(names) if len(set(names)) >= 2 else None
         except KeyError as e:
             abort(404, f"no Spotlight named {e.args[0]!r}")
+        except SpotlightError as e:
+            abort(400, str(e))
         chart = None
         if details:
             n = max(len(d.days) for d in details)
@@ -231,11 +233,13 @@ def create_app(service_factory: Callable[[], QueryService],
             detail = service.spotlight(name)
         except KeyError:
             abort(404, f"no Spotlight named {name!r}")
+        except SpotlightError as e:
+            abort(400, str(e))
         chart = {"labels": [d.day.isoformat() for d in detail.days],
                  "series": [{"label": c, "data": [round(d.components[c], 4) for d in detail.days]}
                             for c in detail.components]}
         return render_template("spotlight.html", d=detail, chart_data=chart,
-                               includable=service.includable_spotlights(name))
+                               includable=service.includable_spotlight_choices(name))
 
     @app.get("/api/daily-cost")
     def daily_cost():
@@ -263,9 +267,10 @@ def create_app(service_factory: Callable[[], QueryService],
         service = service_factory()
         try:
             action(service)
+            sp_id = service.resolve_spotlight(name)
         except SpotlightError as e:
             abort(400, str(e))
-        return redirect(url_for("spotlight_page", name=name))
+        return redirect(url_for("spotlight_page", name=sp_id))
 
     @app.post("/spotlights/<path:name>/add")
     def spotlight_add(name):
@@ -274,6 +279,10 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.post("/spotlights/<path:name>/remove")
     def spotlight_remove(name):
         return _edit(name, lambda s: s.remove_session(name, request.form.get("session", "")))
+
+    @app.post("/spotlights/<path:name>/rename")
+    def spotlight_rename(name):
+        return _edit(name, lambda s: s.rename_spotlight(name, request.form.get("name", "")))
 
     @app.post("/spotlights/<path:name>/include")
     def spotlight_include(name):

@@ -27,8 +27,9 @@ def legacy_rule_store(root, tmp_path, rules, pins=()):
     conn = store.connect(tmp_path / "store.sqlite")
     ingest.ingest(conn, [root.path])
     with conn:
-        conn.executemany("INSERT INTO spotlights VALUES (?, ?)", rules)
-        conn.executemany("INSERT INTO spotlight_pins VALUES (?, ?)", pins)
+        conn.executemany("INSERT INTO spotlights (name, rule) VALUES (?, ?)", rules)
+        ids = dict(conn.execute("SELECT name, id FROM spotlights"))
+        conn.executemany("INSERT INTO spotlight_pins VALUES (?, ?)", [(ids[n], s) for n, s in pins])
         conn.execute("DELETE FROM meta WHERE key = 'spotlight_picked'")
     return conn
 

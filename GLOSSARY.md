@@ -86,6 +86,10 @@ _Avoid_: incremental write
 A named set of sessions the user picks, whose total cost is tracked together, including their subagents, their side sessions, any forks picked too and the members of its included spotlights.
 _Avoid_: group, tag, bucket
 
+**Spotlight id**:
+The stable identity of a spotlight: generated for a user-defined one, derived from its key (`auto:<KEY>`) for an auto-spotlight. Its name is an editable, non-empty label that need not be unique; a reference is resolved by id, then key, then a name only one spotlight has.
+_Avoid_: slug, handle
+
 **Picked session**:
 A session the user added to a spotlight by hand, rather than one that joined as a side session or by key.
 _Avoid_: pinned session, rule match
