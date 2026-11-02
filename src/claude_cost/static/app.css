@@ -262,6 +262,23 @@ form.inline { display: inline; margin: 0; }
 .seg label:has(input:checked) { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); }
 
+/* Period popover: a <details> whose summary is the trigger; the panel holds the rail */
+.period-pop { position: relative; }
+.period-trigger { list-style: none; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 12px; font-weight: 500; white-space: nowrap; box-shadow: var(--shadow); }
+.period-trigger::-webkit-details-marker { display: none; }
+.period-trigger::after { content: "\25BE"; margin-left: 8px; color: var(--muted); }
+.period-trigger:hover { background: var(--surface-2); }
+.period-trigger:focus-visible { outline: 2px solid var(--accent); }
+.period-panel { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; min-width: 200px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 8px; }
+.period-rail { display: flex; flex-direction: column; gap: 2px; }
+.period-rail a { color: var(--text); padding: 6px 10px; border-radius: 6px; font-weight: 500; white-space: nowrap; }
+.period-rail a:hover { background: var(--surface-2); text-decoration: none; }
+.period-rail a[aria-current="true"] { background: var(--accent-soft); color: var(--accent); }
+.period-rail hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; width: 100%; }
+.period-foot { display: flex; justify-content: flex-end; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+
 .checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
 .checks label { display: inline-flex; gap: 6px; align-items: center; }
 

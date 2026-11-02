@@ -250,3 +250,13 @@ def test_invalid_custom_bounds_raise(root, service_for, start, end):
 def test_custom_mode_without_dates_raises(root, service_for):
     with pytest.raises(ValueError):
         service_for(root).period_comparison("custom", NOW)
+
+
+def test_first_request_day_is_the_local_day_of_the_earliest_request(root, service_for):
+    _spend(root, "p", "s1", "2026-10-20", "a")
+    _spend(root, "p", "s2", "2026-10-05", "b", hour=0)
+    assert service_for(root).first_request_day() == date(2026, 10, 5)
+
+
+def test_first_request_day_is_none_for_an_empty_store(root, service_for):
+    assert service_for(root).first_request_day() is None

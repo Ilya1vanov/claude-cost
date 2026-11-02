@@ -813,15 +813,19 @@ class QueryService:
                 return f
         raise KeyError(finding_id)
 
+    def first_request_day(self) -> date | None:
+        """The local day of the earliest Request; None for an empty store."""
+        row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
+        return None if row["first"] is None else self._local_day(row["first"])
+
     def available_periods(self, mode: str, now: datetime) -> list[date]:
         """Start dates of every calendar period from the first request to now, newest first."""
         if mode not in COMPARISON_MODES:
             raise ValueError(f"mode must be one of {COMPARISON_MODES}")
-        row = self._conn.execute("SELECT MIN(ts_epoch) AS first FROM requests").fetchone()
-        if row["first"] is None:
+        first = self.first_request_day()
+        if first is None:
             return []
         today = self.today(now)
-        first = self._local_day(row["first"])
         if mode == "week":
             cur, step = first - timedelta(days=first.weekday()), lambda d: d + timedelta(7)
         else:

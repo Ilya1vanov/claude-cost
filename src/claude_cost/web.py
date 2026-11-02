@@ -21,6 +21,13 @@ CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show al
 REQUEST_ROWS = 1000
 
 
+PERIOD_LABELS = {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}
+
+
+def _short_day(d: date) -> str:
+    return f"{d.day} {d:%b}"
+
+
 def short_id(id: str, n: int = 8) -> str:
     """The leading characters of an id, as the `ui.sid` template macro shows it (minus the ellipsis)."""
     return id[:n]
@@ -106,13 +113,23 @@ def create_app(service_factory: Callable[[], QueryService],
             comparison = service.period_comparison(mode, now(), include_today, top_n, custom)
         except ValueError as e:
             abort(400, str(e))
+        first = service.first_request_day() or today
+        custom_link = lambda start: url_for("dashboard", period=CUSTOM_MODE, start=start.isoformat(),
+                                            end=today.isoformat())
+        rail = [(PERIOD_LABELS[m], url_for("dashboard", period=m), m == mode) for m in PERIOD_MODES]
+        shortcuts = [("Last 14 days", today - timedelta(days=13)), ("Last 30 days", today - timedelta(days=29)),
+                     ("Last 90 days", today - timedelta(days=89)),
+                     ("Year to date", max(today.replace(month=1, day=1), first)), ("All time", first)]
+        cur = comparison.current
         return render_template(
             "dashboard.html",
+            trigger_label=f"{PERIOD_LABELS.get(mode, 'Custom')} · {_short_day(cur.start)} – {_short_day(cur.end)}",
+            rail=rail,
+            shortcuts=[(label, custom_link(start)) for label, start in shortcuts],
             days=days,
             total=sum(d.cost for d in days),
             comparison=comparison,
             cache=service.cache_card(mode, now(), include_today, custom),
-            modes=PERIOD_MODES,
             include_today=include_today,
             unpriced=service.unpriced_models(),
             spotlights=service.top_spotlights(mode, now(), include_today, top_n, custom),
