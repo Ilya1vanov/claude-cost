@@ -5,7 +5,7 @@ Local, AI-free analysis of what Claude Code usage costs. Terms are defined in `G
 ```
 uv tool install git+https://github.com/Ilya1vanov/claude-cost
 claude-cost today      # today's spend
-claude-cost serve      # dashboard on http://127.0.0.1:8765/
+claude-cost serve      # dashboard on http://127.0.0.1:8765/; reuses an open Chrome tab (macOS), else opens one
 claude-cost serve --browser=none  # same, without opening a browser (or BROWSER=none)
 claude-cost --version  # installed version
 
@@ -45,7 +45,7 @@ Spotlight commands ingest first, call the same `QueryService` operations as the 
 | `web.py` / `templates/` / `static/` | Flask adapter (`create_app`) |
 | `cli.py` | argparse adapter (`main`), including the `spotlight` group |
 
-**Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
+**Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`, `focus_tab`, `probe_server`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
 
 **Add a dimension (group-by/filter):** add the column in `store.py` `SCHEMA` (and the insert in `ingest.py`), expose a query method on `QueryService` that groups by it, test it through the service.
 

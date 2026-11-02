@@ -140,7 +140,7 @@ def test_serve_uses_configured_port(env, root):
     run(["config", "set", "port", "9321"], env)
     run(["config", "set", "data_roots", str(root.path)], env)
     seen = []
-    code, out, _ = run(["serve"], env, run_server=lambda app, host, port: seen.append((host, port)),
+    code, out, _ = run(["serve"], env, run_server=lambda app, host, port, on_ready: seen.append((host, port)),
                        open_browser=lambda url: None)
     assert code == 0 and seen == [("127.0.0.1", 9321)]
 
@@ -218,7 +218,7 @@ def test_fresh_config_comments_the_detected_path(mac, env):
 def test_serve_opens_browser_by_default(env, root):
     run(["config", "set", "data_roots", str(root.path)], env)
     opened = []
-    run(["serve"], env, run_server=lambda app, host, port: None, open_browser=opened.append)
+    run(["serve"], env, run_server=lambda app, host, port, on_ready: on_ready(), open_browser=opened.append)
     assert opened == ["http://127.0.0.1:8765/"]
 
 
@@ -229,6 +229,6 @@ def test_serve_opens_browser_by_default(env, root):
 def test_serve_skips_browser_when_none(env, root, argv, extra_env):
     run(["config", "set", "data_roots", str(root.path)], env)
     opened = []
-    code, out, _ = run(argv, {**env, **extra_env}, run_server=lambda app, host, port: None,
+    code, out, _ = run(argv, {**env, **extra_env}, run_server=lambda app, host, port, on_ready: on_ready(),
                        open_browser=opened.append)
     assert code == 0 and opened == [] and "Serving http://127.0.0.1:8765/" in out

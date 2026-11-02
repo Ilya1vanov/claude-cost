@@ -24,6 +24,14 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_COST_DATA_DIR", str(tmp_path / "data"))
 
 
+@pytest.fixture(autouse=True)
+def no_real_browser_or_port(monkeypatch):
+    """`serve` never probes the real port or drives the real Chrome in tests."""
+    from claude_cost import cli
+    monkeypatch.setattr(cli, "_probe_server", lambda url: None)
+    monkeypatch.setattr(cli, "_focus_chrome_tab", lambda url: False)
+
+
 @pytest.fixture
 def root(tmp_path) -> DataRoot:
     return DataRoot(tmp_path / "claude")
