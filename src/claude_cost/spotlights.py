@@ -15,6 +15,9 @@ from typing import Iterable
 # The order in which fields are searched for keys; keys are collected from all of them.
 FIELDS = ("title", "branch", "worktree", "prompt")
 
+# The first prompt is stored cut to this many characters; a key the cut runs through is untrusted.
+PROMPT_LIMIT = 300
+
 
 class SpotlightError(ValueError):
     """An invalid Spotlight name or pattern; the message is safe to show to the user."""
@@ -69,11 +72,16 @@ def detect_keys(info: SessionInfo, pattern: re.Pattern[str] | None) -> list[str]
     if pattern is None:
         return []
     keys: list[str] = []
-    for text in info.texts():
-        for m in pattern.finditer(text):
-            key = m.group(0).upper()
-            if key not in keys:
-                keys.append(key)
+    for field_name in FIELDS:
+        for text in getattr(info, field_name):
+            # A match reaching the end of a prompt at the storage limit may have been cut.
+            cut = field_name == "prompt" and len(text) >= PROMPT_LIMIT
+            for m in pattern.finditer(text):
+                if cut and m.end() >= len(text):
+                    continue
+                key = m.group(0).upper()
+                if key not in keys:
+                    keys.append(key)
     return keys
 
 
