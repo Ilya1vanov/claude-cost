@@ -210,8 +210,9 @@ def _print_spotlight_detail(detail, as_json: bool, out) -> None:
         members = [{"id": m.session_id, "label": m.label, "cost": round(m.cost, 4),
                     "requests": m.requests, "joined_as": m.joined_as, "picked": m.picked,
                     "key_matched": m.key_matched, "via": m.via} for m in detail.sessions]
+        dismissed = [{"id": d.session_id, "label": d.label, "cost": round(d.cost, 4)} for d in detail.dismissed]
         print(json.dumps({**_summary_json(detail.summary), "picked": list(detail.picked),
-                          "included": included, "members": members}, indent=2), file=out)
+                          "included": included, "members": members, "dismissed": dismissed}, indent=2), file=out)
         return
     summary = detail.summary
     key = f"  key {summary.key}" if summary.key and summary.key != summary.name else ""
@@ -221,6 +222,8 @@ def _print_spotlight_detail(detail, as_json: bool, out) -> None:
         print(f"  includes {inc.name}  {_money(inc.cost)}  {inc.sessions} sessions", file=out)
     for m in detail.sessions:
         print(f"  {m.session_id}  {_money(m.cost)}  {m.label}  [{m.joined_as}]", file=out)
+    for d in detail.dismissed:
+        print(f"  dismissed {d.session_id}  {_money(d.cost)}  {d.label}", file=out)
 
 
 def _print_session_search(found, as_json: bool, out) -> None:
@@ -259,6 +262,9 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
     elif action == "remove":
         for session_id in args.session:
             svc.remove_session(args.name, session_id)
+    elif action == "restore":
+        for session_id in args.session:
+            svc.restore_session(args.name, session_id)
     elif action == "include":
         for other in args.other:
             svc.include_spotlight(args.name, other)
@@ -351,7 +357,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sp.add_argument("--session", action="append", default=[], help="Picked session id (repeatable)")
     sp.add_argument("--include", action="append", default=[], help="Spotlight to include (repeatable)")
     spot_sub.add_parser("delete", help="delete a Spotlight").add_argument("name")
-    for action, helptext in (("add", "pick sessions"), ("remove", "unpick sessions")):
+    for action, helptext in (("add", "pick sessions (clears a dismissal)"),
+                             ("remove", "unpick sessions; a session carrying an Auto-spotlight's key is dismissed"),
+                             ("restore", "restore Dismissed sessions of an Auto-spotlight")):
         sp = spot_sub.add_parser(action, help=helptext)
         sp.add_argument("name")
         sp.add_argument("session", nargs="+")

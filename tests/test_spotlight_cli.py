@@ -159,3 +159,18 @@ def test_runs_as_a_subprocess(cenv):
     assert r.returncode == 0 and json.loads(r.stdout)["picked"] == ["aaaa1111"]
     r = sub("show", "Nope")
     assert r.returncode != 0 and r.stdout == "" and len(errors(r.stderr)) == 1
+
+
+def test_remove_dismisses_a_key_match_and_restore_brings_it_back(cenv):
+    ok(["remove", "PROJ-1", "aaaa1111"], cenv)
+    data = show(cenv, "PROJ-1")
+    assert data["members"] == [] and data["sessions"] == 0
+    assert [(d["id"], d["label"]) for d in data["dismissed"]] == [("aaaa1111", "Ticket one")]
+    assert set(data["dismissed"][0]) == {"id", "label", "cost"}
+    text = ok(["show", "PROJ-1"], cenv)
+    assert "dismissed" in text and "aaaa1111" in text
+    ok(["restore", "PROJ-1", "aaaa1111"], cenv)
+    data = show(cenv, "PROJ-1")
+    assert [m["id"] for m in data["members"]] == ["aaaa1111"] and data["dismissed"] == []
+    fails(["restore", "PROJ-1", "aaaa1111"], cenv, "not dismissed")
+    fails(["restore", "Nope", "aaaa1111"], cenv, "Nope")
