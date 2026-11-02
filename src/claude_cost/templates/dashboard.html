@@ -14,7 +14,7 @@
     </div>
     <div class="form-row">
       <details class="period-pop" id="period-pop" data-min="{{ first }}" data-max="{{ today }}"
-               data-start="{{ c.current.start }}" data-end="{{ c.current.end }}" data-apply="{{ url_for('dashboard') }}">
+               data-start="{{ c.current.start }}" data-end="{{ c.current.end }}" data-apply="{{ url_for('dashboard') }}" data-costs="{{ url_for('daily_cost') }}">
         <summary class="period-trigger" aria-label="Period">{{ trigger_label }}</summary>
         <div class="period-panel">
           <nav class="period-rail" aria-label="Period choices">

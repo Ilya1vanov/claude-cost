@@ -235,6 +235,18 @@ def create_app(service_factory: Callable[[], QueryService],
         return render_template("spotlight.html", d=detail, chart_data=chart,
                                includable=service.includable_spotlights(name))
 
+    @app.get("/api/daily-cost")
+    def daily_cost():
+        try:
+            start = date.fromisoformat(request.args["start"])
+            end = date.fromisoformat(request.args["end"])
+        except (KeyError, ValueError):
+            abort(400, "start and end must be dates like 2026-10-01")
+        if end < start:
+            abort(400, "end must not be before start")
+        return jsonify(days=[{"day": d.day.isoformat(), "cost": round(d.cost, 4), "requests": d.requests}
+                             for d in service_factory().daily_spend(start, end)])
+
     @app.get("/api/session-search")
     def session_search():
         found = service_factory().search_sessions(

@@ -17,7 +17,8 @@
     if (e.key === "Escape" && pop.open) { close(); pop.querySelector("summary").focus(); }
   });
   document.addEventListener("click", function (e) {
-    if (pop.open && !pop.contains(e.target)) close();
+    // composedPath, not contains(): a paging click rebuilds the calendar, detaching its own target
+    if (pop.open && e.composedPath().indexOf(pop) < 0) close();
   });
   if (cancel) cancel.addEventListener("click", close);
   if (!cal || !apply) return;
@@ -64,7 +65,9 @@
     grid = el("div", "cal-months");
     for (var i = 0; i < shown(); i++) grid.appendChild(month(addMonths(first, i)));
     cal.appendChild(grid);
+    tint();
     paint();
+    load();
   }
 
   function el(tag, cls, text) {
@@ -87,14 +90,45 @@
     for (var s = m; s.slice(0, 7) === m.slice(0, 7); s = addDays(s, 1)) {
       var b = el("button", "cal-day", String(+s.slice(8)));
       b.type = "button"; b.dataset.day = s;
-      b.setAttribute("aria-label", parse(s).toLocaleDateString("en-GB",
-        { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }));
+      b.dataset.label = parse(s).toLocaleDateString("en-GB",
+        { weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+      b.setAttribute("aria-label", b.dataset.label);
       if (!inRange(s)) b.disabled = true;
       if (s === MAX) b.classList.add("today");
       rows.appendChild(b);
     }
     box.appendChild(rows);
     return box;
+  }
+
+  /* ---- spend heat: per-day costs fetched for the shown months, tinted relative to the biggest day loaded ---- */
+  var costs = {}, asked = {};   // day -> cost; month-start -> true once requested
+  function tint() {
+    var max = 0, s;
+    for (s in costs) if (costs[s] > max) max = costs[s];
+    cal.querySelectorAll(".cal-day").forEach(function (b) {
+      var c = costs[b.dataset.day], label = b.dataset.label;
+      if (c === undefined) { b.removeAttribute("data-heat"); b.title = ""; b.setAttribute("aria-label", label); return; }
+      var text = "$" + c.toFixed(2);
+      if (c > 0 && max > 0) b.dataset.heat = Math.min(4, Math.max(1, Math.ceil(4 * Math.sqrt(c / max))));
+      else b.removeAttribute("data-heat");
+      b.title = label + " · " + text;
+      b.setAttribute("aria-label", label + ", " + text);
+    });
+  }
+  function load() {
+    if (!pop.dataset.costs) return;
+    for (var i = 0; i < shown(); i++) {
+      (function (m) {
+        if (asked[m]) return;
+        asked[m] = true;
+        var last = addDays(addMonths(m, 1), -1);
+        fetch(pop.dataset.costs + "?start=" + clampDay(m < MIN ? MIN : m) + "&end=" + clampDay(last))
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(function (j) { j.days.forEach(function (d) { costs[d.day] = d.cost; }); tint(); })
+          .catch(function () { delete asked[m]; });   // untinted until the next page/open retries
+      })(addMonths(first, i));
+    }
   }
 
   function paint() {
