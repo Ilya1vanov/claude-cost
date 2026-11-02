@@ -144,7 +144,7 @@ def test_invalid_nesting_and_duplicates_are_one_line_errors(cenv):
     fails(["include", "Other", "Sprint"], cenv, "cannot be included")
     fails(["include", "Sprint", "Sprint"], cenv, "itself")
     fails(["include", "PROJ-2", "PROJ-1"], cenv, "Auto-spotlight")
-    fails(["create", "Sprint"], cenv, "already exists")
+    ok(["create", "Sprint"], cenv)  # names need not be unique
 
 
 def test_runs_as_a_subprocess(cenv):

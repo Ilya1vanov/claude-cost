@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from . import spotlights
+from . import spotlights, store
 from .query import QueryService
 
 GUARD = "spotlight_picked"
@@ -44,25 +44,33 @@ def lock_key_named(conn: sqlite3.Connection, key_pattern: str | None) -> None:
     """Turn each user-defined Spotlight named like a key (the whole name matches the key pattern)
     into that key's Locked auto-spotlight, keeping its name, picks and the edges that include it.
     Runs once, the first time a key pattern is configured. A Spotlight that includes others cannot
-    become an Auto-spotlight: SpotlightError names it and nothing is changed."""
+    become an Auto-spotlight, and of several whose names differ only by case (one key) only the
+    first does: those stay user-defined. The rest are converted and committed, the step is marked
+    done, and then SpotlightError names the ones that cannot (raised once, never on later ingests)."""
     if not key_pattern or conn.execute("SELECT 1 FROM meta WHERE key = ?", (KEY_GUARD,)).fetchone():
         return
     pattern = spotlights.compile_pattern(key_pattern, "spotlight_key_pattern")
     named = [r for r in conn.execute("SELECT id, name FROM spotlights ORDER BY name, id")
              if pattern.fullmatch(r["name"])]
-    for r in named:
-        if conn.execute("SELECT 1 FROM spotlight_includes WHERE spotlight = ?", (r["id"],)).fetchone():
-            raise spotlights.SpotlightError(
-                f"the Spotlight {r['name']!r} is named like a key but includes other Spotlights; "
-                "remove its includes (or rename it) and run again")
-    with conn:
+    includers = {r["id"] for r in named
+                 if conn.execute("SELECT 1 FROM spotlight_includes WHERE spotlight = ?", (r["id"],)).fetchone()}
+    taken: set[str] = set()
+    with conn:  # also commits what the ingest wrote before this step
         for r in named:
-            key, auto = r["name"].upper(), spotlights.auto_id(r["name"].upper())
-            conn.execute("INSERT OR REPLACE INTO auto_spotlights (key, name, locked) VALUES (?, ?, 1)",
-                         (key, r["name"]))
+            key = r["name"].upper()
+            if r["id"] in includers or key in taken:
+                continue
+            taken.add(key)
+            auto = spotlights.auto_id(key)
+            store.set_auto_state(conn, key, name=r["name"], locked=True)
             conn.execute("UPDATE OR IGNORE spotlight_pins SET spotlight = ? WHERE spotlight = ?", (auto, r["id"]))
             conn.execute("UPDATE OR IGNORE spotlight_includes SET included = ? WHERE included = ?", (auto, r["id"]))
             conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ?", (r["id"],))
             conn.execute("DELETE FROM spotlight_includes WHERE included = ?", (r["id"],))
             conn.execute("DELETE FROM spotlights WHERE id = ?", (r["id"],))
         conn.execute("INSERT INTO meta VALUES (?, '1')", (KEY_GUARD,))
+    if includers:
+        names = ", ".join(repr(r["name"]) for r in named if r["id"] in includers)
+        raise spotlights.SpotlightError(
+            f"the Spotlight(s) {names} are named like a key but include other Spotlights, so they stay "
+            "user-defined; remove their includes and lock the key's Auto-spotlight by hand")

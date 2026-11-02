@@ -306,8 +306,9 @@ def test_user_spotlight_overrides_auto_of_same_name(root, service_for):
     root.write_transcript("p", "a", [req("m1", "2026-10-29T01:00:00Z", output=M)], title="PROJ-1")
     root.write_transcript("p", "b", [req("m2", "2026-10-29T01:00:00Z", output=M)], title="other")
     svc = service_for(root, key_pattern=KEY)
-    with pytest.raises(SpotlightError, match="already exists"):  # no new one under an Auto key
-        svc.create_spotlight("PROJ-1", ["b"])
+    dup = svc.create_spotlight("PROJ-1", ["b"])  # names need not be unique; ids always win
+    assert svc._find(dup).kind == "picked" and svc._find("auto:PROJ-1") is None
+    svc._conn.execute("DELETE FROM spotlights WHERE id = ?", (dup,))
     # one saved before the key appeared (or by the old rule migration) still wins
     svc._conn.execute("INSERT INTO spotlights (name) VALUES ('PROJ-1')")
     svc.add_sessions("PROJ-1", ["b"])
