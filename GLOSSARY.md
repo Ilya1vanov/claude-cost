@@ -95,8 +95,28 @@ A spotlight whose members count toward another spotlight that includes it, each 
 _Avoid_: child spotlight, sub-spotlight, group
 
 **Auto-spotlight**:
-A spotlight created for each key, such as a ticket id, that a configured pattern finds in sessions.
+A spotlight created for each key, such as a ticket id, that a configured pattern finds in sessions; it can be renamed, and its key stays the same.
 _Avoid_: ticket group
+
+**Key match**:
+A session that joins an auto-spotlight because its key appears in the session's custom title, or, when the title carries no key, in its git branch or worktree path.
+_Avoid_: rule match, auto member
+
+**Suggested session**:
+A session that carries a key only where it may be a mere mention, such as the first prompt, or the branch when the title names another key, or any session carrying the key of a locked auto-spotlight; it is offered to the spotlight for that key but not counted until the user accepts it.
+_Avoid_: candidate, weak match, possible member
+
+**Dismissed session**:
+A session that carries a spotlight's key but that the user removed or declined; it stays out of that spotlight while it carries the key.
+_Avoid_: excluded session, ignored session, unpinned session
+
+**Locked auto-spotlight**:
+An auto-spotlight whose membership the user controls: sessions that carry its key are only suggested and join when the user accepts them.
+_Avoid_: converted spotlight, frozen spotlight, claimed key
+
+**Dismissed key**:
+A key the user hid, so no auto-spotlight is shown for it until the user restores it.
+_Avoid_: ignored key, hidden spotlight, muted key
 
 ## Findings
 
