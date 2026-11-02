@@ -163,8 +163,12 @@ _Avoid_: late auto-compact
 ## Time
 
 **Period**:
-A span of time that spend is reported for: a rolling 7 days, a calendar week, or a calendar month.
+A span of time that spend is reported for: a rolling 7 days, a calendar week, a calendar month, or a custom period.
 _Avoid_: range, window
+
+**Custom period**:
+A run of whole local days the user picks, both ends included; its baseline is the equally long run of days just before it, and it is never partial.
+_Avoid_: date range, arbitrary period
 
 **Comparison**:
 A view of two or more periods of the same kind side by side, against one baseline period.
