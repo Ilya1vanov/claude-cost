@@ -86,3 +86,14 @@ def test_include_today_only_beside_the_trigger_for_last7(client):
     assert "Include today" in _html(client)
     for q in ("period=week", "period=month", "period=custom&start=2026-10-12&end=2026-10-16"):
         assert "Include today" not in _html(client, q)
+
+
+@pytest.mark.parametrize("query, start, end", [
+    ("", "2026-10-24", "2026-10-30"),
+    ("period=month", "2026-10-01", "2026-10-30"),
+    ("period=custom&start=2026-10-03&end=2026-10-16", "2026-10-03", "2026-10-16"),
+])
+def test_popover_hands_the_calendar_its_bounds_and_the_current_period(client, query, start, end):
+    html = _html(client, query)
+    assert 'data-min="2026-10-09"' in html and 'data-max="2026-10-30"' in html
+    assert f'data-start="{start}"' in html and f'data-end="{end}"' in html

@@ -13,7 +13,8 @@
         vs {{ c.baseline.start }} to {{ c.baseline.end }}</p>
     </div>
     <div class="form-row">
-      <details class="period-pop" id="period-pop">
+      <details class="period-pop" id="period-pop" data-min="{{ first }}" data-max="{{ today }}"
+               data-start="{{ c.current.start }}" data-end="{{ c.current.end }}" data-apply="{{ url_for('dashboard') }}">
         <summary class="period-trigger" aria-label="Period">{{ trigger_label }}</summary>
         <div class="period-panel">
           <nav class="period-rail" aria-label="Period choices">
@@ -21,7 +22,9 @@
             <hr>
             {% for label, href in shortcuts %}<a href="{{ href }}">{{ label }}</a>{% endfor %}
           </nav>
-          <div class="period-foot"><button type="button" class="ghost period-cancel">Cancel</button></div>
+          <div class="period-cal" hidden></div>
+          <div class="period-foot"><button type="button" class="ghost period-cancel">Cancel</button>
+            <button type="button" class="period-apply" disabled hidden>Apply</button></div>
         </div>
       </details>
       {% if c.mode == "last7" %}
