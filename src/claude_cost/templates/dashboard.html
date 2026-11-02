@@ -12,17 +12,30 @@
       <p class="sub">{{ c.current.start }} to {{ c.current.end }}{% if c.partial %} <em>(partial: {{ c.elapsed_days }} of {{ c.period_days }} days)</em>{% endif %}
         vs {{ c.baseline.start }} to {{ c.baseline.end }}</p>
     </div>
-    <form method="get" action="/" class="form-row">
-      <nav class="seg" aria-label="Period">{% for m in modes %}
-        <label><input type="radio" name="period" value="{{ m }}" {{ "checked" if m == c.mode }} onchange="this.form.submit()">
-          {{ {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}[m] }}</label>
-      {% endfor %}</nav>
+    <div class="form-row">
+      <details class="period-pop" id="period-pop" data-min="{{ first }}" data-max="{{ today }}"
+               data-start="{{ c.current.start }}" data-end="{{ c.current.end }}" data-apply="{{ url_for('dashboard') }}" data-costs="{{ url_for('daily_cost') }}">
+        <summary class="period-trigger" aria-label="Period">{{ trigger_label }}</summary>
+        <div class="period-panel">
+          <nav class="period-rail" aria-label="Period choices">
+            {% for label, href, active in rail %}<a href="{{ href }}" {{ 'aria-current="true"'|safe if active }}>{{ label }}</a>{% endfor %}
+            <hr>
+            {% for label, href in shortcuts %}<a href="{{ href }}">{{ label }}</a>{% endfor %}
+          </nav>
+          <div class="period-cal" hidden></div>
+          <div class="period-foot"><button type="button" class="ghost period-cancel">Cancel</button>
+            <button type="button" class="period-apply" disabled hidden>Apply</button></div>
+        </div>
+      </details>
       {% if c.mode == "last7" %}
-      <input type="hidden" name="include_today" value="0">
-      <label><input type="checkbox" name="include_today" value="1" {{ "checked" if include_today }} onchange="this.form.submit()"> Include today</label>
+      <form method="get" action="/" class="form-row">
+        <input type="hidden" name="period" value="last7">
+        <input type="hidden" name="include_today" value="0">
+        <label><input type="checkbox" name="include_today" value="1" {{ "checked" if include_today }} onchange="this.form.submit()"> Include today</label>
+        <noscript><button type="submit">Show</button></noscript>
+      </form>
       {% endif %}
-      <noscript><button type="submit">Show</button></noscript>
-    </form>
+    </div>
   </div>
 
   {% if unpriced %}<p class="alert unpriced">Unpriced models: {{ unpriced|join(", ") }}</p>{% endif %}
@@ -148,4 +161,5 @@
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   {{ ui.chart_scripts('dashboard.js') }}
+  <script src="{{ url_for('static', filename='period_popover.js') }}"></script>
 {% endblock %}

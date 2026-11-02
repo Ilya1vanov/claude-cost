@@ -164,3 +164,100 @@ def test_top_n_sessions_and_projects_ranked_by_period_cost(root, service_for):
 def test_unknown_mode_is_rejected(root, service_for):
     with pytest.raises(ValueError):
         service_for(root).period_comparison("year", NOW)
+
+
+# --- Custom period -------------------------------------------------------------------------
+
+from claude_cost.query import Period  # noqa: E402
+
+
+def test_custom_period_and_its_baseline_of_equal_length(root, service_for):
+    _spend(root, "p", "s1", "2026-10-12", "a")   # first day of current (12..16)
+    _spend(root, "p", "s2", "2026-10-16", "b")   # last day of current
+    _spend(root, "p", "s3", "2026-10-11", "c")   # last day of baseline (7..11)
+    _spend(root, "p", "s4", "2026-10-07", "d")   # first day of baseline
+    _spend(root, "p", "s5", "2026-10-06", "e")   # outside both
+    _spend(root, "p", "s6", "2026-10-17", "f")   # after the period
+    c = service_for(root).period_comparison(
+        "custom", NOW, custom=Period(date(2026, 10, 12), date(2026, 10, 16)))
+    assert c.mode == "custom"
+    assert (c.current.start, c.current.end) == (date(2026, 10, 12), date(2026, 10, 16))
+    assert (c.baseline.start, c.baseline.end) == (date(2026, 10, 7), date(2026, 10, 11))
+    assert (c.current_cost, c.baseline_cost) == (pytest.approx(40.0), pytest.approx(40.0))
+    assert not c.partial
+
+
+def test_custom_one_day_period_baseline_is_the_day_before(root, service_for):
+    _spend(root, "p", "s1", "2026-10-20", "a")
+    _spend(root, "p", "s2", "2026-10-19", "b", output=2_000_000)
+    c = service_for(root).period_comparison(
+        "custom", NOW, custom=Period(date(2026, 10, 20), date(2026, 10, 20)))
+    assert (c.baseline.start, c.baseline.end) == (date(2026, 10, 19), date(2026, 10, 19))
+    assert (c.current_cost, c.baseline_cost) == (pytest.approx(20.0), pytest.approx(40.0))
+
+
+def test_custom_period_crossing_a_month_boundary(root, service_for):
+    _spend(root, "p", "s1", "2026-09-29", "a")   # first day of current (9-29..10-02)
+    _spend(root, "p", "s2", "2026-10-02", "b")
+    _spend(root, "p", "s3", "2026-09-28", "c")   # last day of baseline (9-25..9-28)
+    c = service_for(root).period_comparison(
+        "custom", NOW, custom=Period(date(2026, 9, 29), date(2026, 10, 2)))
+    assert (c.baseline.start, c.baseline.end) == (date(2026, 9, 25), date(2026, 9, 28))
+    assert (c.current_cost, c.baseline_cost) == (pytest.approx(40.0), pytest.approx(20.0))
+
+
+def test_custom_period_ending_today_is_not_partial(root, service_for):
+    c = service_for(root).period_comparison(
+        "custom", NOW, custom=Period(date(2026, 10, 1), date(2026, 10, 30)))
+    assert not c.partial and c.elapsed_days == c.period_days == 30
+
+
+def test_cache_card_spotlights_and_findings_use_the_same_custom_period(root, service_for):
+    _spend(root, "p", "s1", "2026-10-14", "a")   # in current (12..16)
+    _spend(root, "p", "s2", "2026-10-09", "b")   # in baseline (7..11)
+    _spend(root, "p", "s3", "2026-10-20", "c")   # outside both
+    for sid, day, mid, kw in (("c1", "14", "ca", {"write_5m": 100_000}),   # current
+                              ("c2", "09", "cb", {"write_5m": 100_000}),   # baseline
+                              ("c3", "20", "cc", {"write_5m": 100_000})):  # outside both
+        root.write_transcript("p", sid, [req(mid, f"2026-10-{day}T10:00:00Z", **kw)])
+    svc = service_for(root)
+    svc.create_spotlight("Sprint", ["s1", "s2", "s3"])
+    custom = Period(date(2026, 10, 12), date(2026, 10, 16))
+    card = svc.cache_card("custom", NOW, custom=custom)
+    assert card.mode == "custom"
+    one_write = 100_000 * 5 / 1e6    # 5m cache write at the fixture model's $5/M
+    assert card.current.write_5m_cost == pytest.approx(one_write)
+    assert card.baseline.write_5m_cost == pytest.approx(one_write)
+    ranks = svc.top_spotlights("custom", NOW, custom=custom)
+    assert [(r.summary.name, round(r.period_cost)) for r in ranks] == [("Sprint", 20)]
+    all_ids = {f.id for f in svc.findings(custom.start, custom.end)}
+    got = {f.id for f in svc.top_findings("custom", NOW, custom=custom)}
+    assert got <= all_ids
+
+
+@pytest.mark.parametrize("start,end", [
+    (date(2026, 10, 16), date(2026, 10, 12)),   # end before start
+    (date(2026, 10, 31), date(2026, 11, 2)),    # start after today
+    (date(2026, 10, 20), date(2026, 10, 31)),   # end after today
+])
+def test_invalid_custom_bounds_raise(root, service_for, start, end):
+    svc = service_for(root)
+    with pytest.raises(ValueError):
+        svc.period_comparison("custom", NOW, custom=Period(start, end))
+    with pytest.raises(ValueError):
+        svc.cache_card("custom", NOW, custom=Period(start, end))
+
+
+def test_custom_mode_without_dates_raises(root, service_for):
+    with pytest.raises(ValueError):
+        service_for(root).period_comparison("custom", NOW)
+
+
+def test_first_request_day_is_the_local_day_of_the_earliest_request(root, service_for):
+    _spend(root, "p", "s1", "2026-10-20", "a")
+    _spend(root, "p", "s2", "2026-10-05", "b", hour=0)
+    assert service_for(root).first_request_day() == date(2026, 10, 5)
+
+
+def test_first_request_day_is_none_for_an_empty_store(root, service_for):
+    assert service_for(root).first_request_day() is None
