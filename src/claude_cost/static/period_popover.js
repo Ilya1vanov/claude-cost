@@ -49,7 +49,7 @@
   }
 
   /* ---- rendering ---- */
-  var grid;
+  var grid, prevBtn, nextBtn;
   function build() {
     cal.hidden = false; apply.hidden = false;
     cal.textContent = "";
@@ -60,6 +60,7 @@
     next.disabled = first >= lastFirst();
     prev.onclick = function () { page(-1); };
     next.onclick = function () { page(1); };
+    prevBtn = prev; nextBtn = next;
     head.appendChild(prev); head.appendChild(next);
     cal.appendChild(head);
     grid = el("div", "cal-months");
@@ -101,11 +102,15 @@
     return box;
   }
 
-  /* ---- spend heat: per-day costs fetched for the shown months, tinted relative to the biggest day loaded ---- */
+  /* ---- spend heat: per-day costs fetched for the shown months, tinted relative to the biggest day shown ---- */
   var costs = {}, asked = {};   // day -> cost; month-start -> true once requested
   function tint() {
-    var max = 0, s;
-    for (s in costs) if (costs[s] > max) max = costs[s];
+    // scale = biggest day among the shown months only, so a view's tints don't depend on what else was loaded
+    var max = 0;
+    cal.querySelectorAll(".cal-day").forEach(function (b) {
+      var c = costs[b.dataset.day];
+      if (c > max) max = c;
+    });
     cal.querySelectorAll(".cal-day").forEach(function (b) {
       var c = costs[b.dataset.day], label = b.dataset.label;
       if (c === undefined) { b.removeAttribute("data-heat"); b.title = ""; b.setAttribute("aria-label", label); return; }
@@ -149,7 +154,9 @@
   function page(n) {
     first = clampFirst(addMonths(first, n));
     if (focus < first || focus > addDays(addMonths(first, shown()), -1)) focus = clampDay(first > MIN ? first : MIN);
-    build();
+    build();   // recreates the nav buttons: put keyboard focus back on the one that was used
+    var keep = n < 0 ? prevBtn : nextBtn, other = n < 0 ? nextBtn : prevBtn;
+    (keep.disabled ? other : keep).focus();
   }
 
   function pick(s) {

@@ -41,3 +41,8 @@ def test_returns_a_cost_per_day_with_zero_spend_days_distinguishable(client):
 ])
 def test_bad_dates_are_rejected(client, query):
     assert client.get("/api/daily-cost?" + query).status_code == 400
+
+
+def test_span_is_capped(client):
+    assert client.get("/api/daily-cost?start=2026-01-01&end=2026-02-05").status_code == 200
+    assert client.get("/api/daily-cost?start=2025-01-01&end=2026-10-30").status_code == 400

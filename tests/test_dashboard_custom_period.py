@@ -46,6 +46,7 @@ def test_top_sessions_links_carry_the_custom_period(client):
     "period=custom&start=2026-10-12&end=nope",                # malformed
     "period=custom&start=2026-10-16&end=2026-10-12",          # end before start
     "period=custom&start=2026-10-31&end=2026-11-02",          # start after today
+    "period=custom&start=2026-10-20&end=2026-10-31",          # end after today
 ])
 def test_bad_custom_parameters_are_400(client, query):
     assert client.get("/?" + query).status_code == 400
@@ -60,3 +61,13 @@ def test_no_period_is_still_last_7_days_with_include_today(client):
 def test_include_today_only_for_last7(client):
     assert "Include today" not in _html(client, "period=custom&start=2026-10-12&end=2026-10-16")
     assert "Include today" not in _html(client, "period=week")
+
+
+def test_invalid_custom_period_is_rejected_before_any_ingest(root, configure):
+    cfg = cli.load_config(configure(root))
+    calls = []
+    app = create_app(lambda: QueryService(store.connect(cfg.store_path), cfg.timezone),
+                     lambda: NOW, refresh=lambda: calls.append(1))
+    r = app.test_client().get("/?period=custom&start=2026-10-20&end=2026-10-31")
+    assert r.status_code == 400
+    assert calls == []

@@ -401,6 +401,8 @@ def resolve_periods(mode: str, today: date, include_today: bool = True,
             raise ValueError(f"custom period ends ({custom.end}) before it starts ({custom.start})")
         if custom.start > today:
             raise ValueError(f"custom period starts ({custom.start}) after today ({today})")
+        if custom.end > today:
+            raise ValueError(f"custom period ends ({custom.end}) after today ({today})")
         n = custom.days
         return custom, Period(custom.start - timedelta(n), custom.start - timedelta(1)), n
     if mode == "last7":

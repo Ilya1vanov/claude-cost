@@ -12,11 +12,12 @@ from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
-from .query import COMPARISON_MODES, CUSTOM_MODE, PERIOD_MODES, Period, QueryService
+from .query import COMPARISON_MODES, CUSTOM_MODE, PERIOD_MODES, Period, QueryService, resolve_periods
 from .spotlights import SpotlightError
 from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
+MAX_DAILY_COST_DAYS = 400  # longest span /api/daily-cost will serve
 CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
 REQUEST_ROWS = 1000
 
@@ -99,6 +100,10 @@ def create_app(service_factory: Callable[[], QueryService],
                 abort(400, "a custom period needs start and end dates like 2026-10-01")
         # the form sends a hidden 0 before the checkbox's 1, so the last value wins
         include_today = request.args.getlist("include_today")[-1:] != ["0"]
+        try:  # reject a bad Period before any ingest or query work
+            resolve_periods(mode, service.today(now()), include_today, custom)
+        except ValueError as e:
+            abort(400, str(e))
         if refresh:
             last = service.last_ingest_epoch()
             if last is None or now().timestamp() - last > service.stale_after_seconds():
@@ -109,10 +114,7 @@ def create_app(service_factory: Callable[[], QueryService],
                 service = helper_service()
         today = service.today(now())
         days = service.daily_spend(today - timedelta(days=DASHBOARD_DAYS - 1), today)
-        try:
-            comparison = service.period_comparison(mode, now(), include_today, top_n, custom)
-        except ValueError as e:
-            abort(400, str(e))
+        comparison = service.period_comparison(mode, now(), include_today, top_n, custom)
         first = service.first_request_day() or today
         custom_link = lambda start: url_for("dashboard", period=CUSTOM_MODE, start=start.isoformat(),
                                             end=today.isoformat())
@@ -244,6 +246,8 @@ def create_app(service_factory: Callable[[], QueryService],
             abort(400, "start and end must be dates like 2026-10-01")
         if end < start:
             abort(400, "end must not be before start")
+        if (end - start).days >= MAX_DAILY_COST_DAYS:
+            abort(400, f"span must be under {MAX_DAILY_COST_DAYS} days")
         return jsonify(days=[{"day": d.day.isoformat(), "cost": round(d.cost, 4), "requests": d.requests}
                              for d in service_factory().daily_spend(start, end)])
 

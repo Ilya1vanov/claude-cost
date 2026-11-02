@@ -238,6 +238,7 @@ def test_cache_card_spotlights_and_findings_use_the_same_custom_period(root, ser
 @pytest.mark.parametrize("start,end", [
     (date(2026, 10, 16), date(2026, 10, 12)),   # end before start
     (date(2026, 10, 31), date(2026, 11, 2)),    # start after today
+    (date(2026, 10, 20), date(2026, 10, 31)),   # end after today
 ])
 def test_invalid_custom_bounds_raise(root, service_for, start, end):
     svc = service_for(root)
