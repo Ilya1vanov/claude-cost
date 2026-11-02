@@ -252,6 +252,18 @@ def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
     return conn
 
 
+def set_auto_state(conn: sqlite3.Connection, key: str, name: str | None = None,
+                   locked: bool | None = None) -> None:
+    """Set an Auto-spotlight's custom name and/or Locked state, keeping the per-key row only while
+    it holds something: a row with the default name (the key) that is not locked is dropped."""
+    conn.execute("INSERT OR IGNORE INTO auto_spotlights (key, name) VALUES (?, ?)", (key, key))
+    if name is not None:
+        conn.execute("UPDATE auto_spotlights SET name = ? WHERE key = ?", (name, key))
+    if locked is not None:
+        conn.execute("UPDATE auto_spotlights SET locked = ? WHERE key = ?", (int(locked), key))
+    conn.execute("DELETE FROM auto_spotlights WHERE key = ? AND name = key AND NOT locked", (key,))
+
+
 def _migrate_spotlight_ids(conn: sqlite3.Connection) -> None:
     """One-time (ADR-0004): a store whose `spotlights` table has no `id` column is name-keyed;
     give each user-defined Spotlight an id and rewrite pins and include edges from names to ids.

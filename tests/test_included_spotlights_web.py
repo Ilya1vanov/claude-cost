@@ -50,10 +50,9 @@ def test_list_page_shows_the_include_count(root, tmp_path):
     assert "includes 1 Spotlight" in page and "includes 0" not in page
 
 
-def test_create_form_rejects_a_taken_name_and_an_unknown_session(root, tmp_path):
+def test_create_form_allows_a_taken_name_but_rejects_an_unknown_session(root, tmp_path):
     client, new = _included_client(root, tmp_path)
-    for name in ("Spare", "PROJ-12"):  # a user-defined Spotlight, an Auto-spotlight key
-        assert client.post("/spotlights", data={"name": name}).status_code == 400
+    assert client.post("/spotlights", data={"name": "Spare"}).status_code == 302  # names need not be unique
     assert client.post("/spotlights", data={"name": "Fresh", "session": "ghost"}).status_code == 400
     assert [i.name for i in new().spotlight("Sprint").included] == ["PROJ-12"]
     assert "Fresh" not in {s.name for s in new().spotlights()}

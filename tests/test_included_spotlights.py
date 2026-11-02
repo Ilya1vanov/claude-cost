@@ -133,13 +133,12 @@ def test_includable_spotlights_lists_only_the_allowed_ones(svc):
 
 
 @pytest.mark.parametrize("name", ["Sprint", "PROJ-1"])  # a user-defined name, an Auto-spotlight key
-def test_creating_a_spotlight_whose_name_is_taken_is_rejected(svc, name):
-    svc.create_spotlight("Sprint")
-    svc.create_spotlight("Big", includes=["Sprint"])
-    with pytest.raises(SpotlightError, match="already exists"):
-        svc.create_spotlight(name, ["k"], includes=["PROJ-2"])
-    assert [i.name for i in svc.spotlight("Big").included] == ["Sprint"]
-    assert svc.spotlight("Sprint").picked == ()
+def test_creating_a_spotlight_whose_name_is_taken_is_allowed(svc, name):
+    first = svc.create_spotlight("Sprint")
+    new = svc.create_spotlight(name, ["k"])
+    assert new != first and svc.spotlight(new).picked == ("k",)
+    with pytest.raises(SpotlightError, match="needs a name"):
+        svc.create_spotlight("  ")
 
 
 def test_creating_with_an_unknown_session_is_rejected_and_leaves_nothing(svc):
@@ -181,3 +180,13 @@ def test_related_forks_are_computed_over_the_union_of_direct_members(root, deskt
     detail = svc.spotlight("Sprint")
     assert ids(detail) == {"base"}
     assert [r.session_id for r in detail.related] == ["fk"]
+
+
+def test_adding_to_a_carried_key_checks_the_session_carries_it(root, service_for):
+    root.write_transcript("p", "m", [req("m5", "2026-10-29T05:00:00Z", output=M)], prompt="mentions PROJ-9")
+    root.write_transcript("p", "k", [req("m4", "2026-10-29T04:00:00Z", output=M)], prompt="keyless")
+    svc = service_for(root, key_pattern=KEY)   # PROJ-9 is only suggested: no Auto-spotlight yet
+    with pytest.raises(SpotlightError, match="does not carry"):
+        svc.add_sessions("PROJ-9", ["k"], create=False)
+    svc.add_sessions("PROJ-9", ["m"], create=False)
+    assert ids(svc.spotlight("PROJ-9")) == {"m"}

@@ -142,12 +142,28 @@ def test_a_key_named_spotlight_becomes_that_keys_locked_auto_spotlight(root, tmp
     assert svc.spotlight("PROJ-1").summary.locked
 
 
-def test_the_migration_fails_naming_a_key_named_spotlight_that_includes_others(root, tmp_path):
+def test_a_key_named_spotlight_that_includes_others_stays_and_fails_only_once(root, tmp_path):
     base(root)
     conn = _named_store(root, tmp_path, includes=["sp-other"])
     with pytest.raises(SpotlightError, match="PROJ-1"):
         ingest.ingest(conn, [root.path], key_pattern=KEY)
-    assert conn.execute("SELECT 1 FROM spotlights WHERE name = 'PROJ-1'").fetchone()  # nothing changed
+    assert conn.execute("SELECT 1 FROM spotlights WHERE name = 'PROJ-1'").fetchone()  # stays user-defined
+    assert conn.execute("SELECT 1 FROM requests LIMIT 1").fetchone()                   # ingest data kept
+    ingest.ingest(conn, [root.path], key_pattern=KEY)                                  # never again
+
+
+def test_names_differing_only_by_case_do_not_overwrite_each_other(root, tmp_path):
+    base(root)
+    conn = store.connect(tmp_path / "store.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("INSERT INTO spotlights (name, id) VALUES ('proj-1', 'sp-a'), ('PROJ-1', 'sp-b')")
+        conn.execute("INSERT INTO spotlight_pins VALUES ('sp-a', 'p'), ('sp-b', 't1')")
+    ingest.ingest(conn, [root.path], key_pattern=KEY)
+    svc = QueryService(conn, "UTC", key_pattern=KEY)
+    kinds = sorted((s.name, s.kind) for s in svc.spotlights() if s.name.lower() == "proj-1")
+    assert kinds == [("PROJ-1", "picked"), ("proj-1", "auto")] or kinds == [("PROJ-1", "auto"), ("proj-1", "picked")]
+    assert conn.execute("SELECT COUNT(*) FROM auto_spotlights").fetchone()[0] == 1
 
 
 # ---- adapters: shape only ---------------------------------------------------------------
