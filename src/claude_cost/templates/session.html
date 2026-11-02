@@ -19,6 +19,19 @@
     <a href="{{ url_for('compact') }}">Compact threshold</a>
   </div>
 
+  {% if suggested_keys %}
+  <section class="card" id="session-suggested">
+    <h2>Suggested for</h2>
+    <p class="note">This Session carries these keys only where it may be a mention, so it is not counted there until you accept it.</p>
+    <div class="table-wrap"><table>
+      {% for x in suggested_keys %}<tr><td>{% if x.spotlight_id %}<a href="{{ url_for('spotlight_page', name=x.spotlight_id) }}">{{ x.name }}</a>{% if x.name != x.key %} <small class="note">{{ x.key }}</small>{% endif %}{% else %}{{ x.key }}{% endif %}</td>
+        <td><span class="badge">{{ x.field }}</span> <span class="muted">{{ x.snippet }}</span></td>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_triage_accept') }}" class="inline"><input type="hidden" name="key" value="{{ x.key }}"><input type="hidden" name="session" value="{{ t.session_id }}"><button type="submit" class="small">Accept</button></form></td></tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% endif %}
+
   <section class="card">
     <h2>Context and cost per request</h2>
     <div class="chart tall"><canvas id="timeline" aria-label="Context size and cost per request"></canvas></div>
