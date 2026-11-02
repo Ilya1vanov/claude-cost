@@ -34,6 +34,9 @@ def short_id(id: str, n: int = 8) -> str:
     return id[:n]
 
 
+HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a running instance
+
+
 def create_app(service_factory: Callable[[], QueryService],
                now: Callable[[], datetime],
                refresh: Callable[[], object] | None = None, top_n: int = 10) -> Flask:
@@ -78,6 +81,10 @@ def create_app(service_factory: Callable[[], QueryService],
         if "project_names" not in g:
             g.project_names = helper_service().project_names()
         return g.project_names.get(key, key)
+
+    @app.get("/healthz")
+    def healthz():
+        return HEALTH, 200, {"Content-Type": "text/plain"}
 
     @app.post("/refresh")
     def force_refresh():

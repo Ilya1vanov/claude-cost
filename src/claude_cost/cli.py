@@ -264,10 +264,82 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
     return 0
 
 
-def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
-              run_server: Callable | None, open_browser: Callable[[str], object]) -> int:
-    from .web import create_app
+# Select the first Chrome tab on the dashboard's origin, raise its window and reload it.
+# Never launches Chrome: a closed Chrome means there is no tab to reuse.
+_FOCUS_TAB_SCRIPT = """
+on run argv
+    set prefix to item 1 of argv
+    if application "Google Chrome" is not running then return "none"
+    tell application "Google Chrome"
+        repeat with w in windows
+            set i to 0
+            repeat with t in tabs of w
+                set i to i + 1
+                if URL of t starts with prefix then
+                    set active tab index of w to i
+                    set index of w to 1
+                    tell t to reload
+                    activate
+                    return "focused"
+                end if
+            end repeat
+        end repeat
+    end tell
+    return "none"
+end run
+"""
 
+
+def _focus_chrome_tab(url: str) -> bool:
+    """True when an open Chrome tab on `url`'s origin was focused and reloaded (macOS only).
+    Any failure, such as macOS denying control of Chrome, is False so the caller opens a tab."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        done = subprocess.run(["osascript", "-e", _FOCUS_TAB_SCRIPT, url],
+                              capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0 and done.stdout.strip() == "focused"
+
+
+def _probe_server(url: str) -> str | None:
+    """What GET /healthz answers on `url`, "" when something else holds the port, None when nothing does."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{url}healthz", timeout=1) as response:
+            return response.read(64).decode(errors="replace")
+    except urllib.error.HTTPError:
+        return ""
+    except urllib.error.URLError as e:
+        return None if isinstance(e.reason, ConnectionRefusedError) else ""
+    except OSError:
+        return ""
+
+
+def _run_server(app, host: str, port: int, on_ready: Callable[[], object]) -> None:
+    """Bind first, then `on_ready` (the tab is shown once it can load), then serve."""
+    from werkzeug.serving import make_server
+    server = make_server(host, port, app, threaded=True)
+    on_ready()
+    server.serve_forever()
+
+
+def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_server: Callable,
+              show_tab: Callable[[str], object], probe_server: Callable[[str], str | None]) -> int:
+    from .web import HEALTH, create_app
+
+    url = f"http://{HOST}:{config.port}/"
+    answer = probe_server(url)
+    if answer == HEALTH:  # a serve is already running: just bring its tab back
+        print(f"Already serving {url}", file=out)
+        show_tab(url)
+        return 0
+    if answer is not None:
+        print(f"claude-cost: port {config.port} is in use by another program "
+              f"(change it with `claude-cost config set port N`)", file=err)
+        return 1
     lock = threading.Lock()
 
     def refresh() -> None:
@@ -276,13 +348,8 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err,
 
     _ingest(config, now_fn(), err)  # ingest on start
     app = create_app(lambda: _open(config), now_fn, refresh, top_n=config.top_n)
-    url = f"http://{HOST}:{config.port}/"
     print(f"Serving {url}", file=out)
-    open_browser(url)
-    if run_server is None:
-        app.run(host=HOST, port=config.port)
-    else:
-        run_server(app, HOST, config.port)
+    run_server(app, HOST, config.port, lambda: show_tab(url))
     return 0
 
 
@@ -309,6 +376,8 @@ def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[li
 def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = None,
          now: datetime | None = None, out=None, err=None, run_server: Callable | None = None,
          open_browser: Callable[[str], object] = webbrowser.open,
+         focus_tab: Callable[[str], bool] | None = None,
+         probe_server: Callable[[str], str | None] | None = None,
          run_editor: Callable[[list[str]], object] = subprocess.run) -> int:
     """Entry point with injectable env/clock/server so tests never touch real state."""
     env = os.environ if env is None else env
@@ -394,9 +463,13 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
             return 1
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
+    focus_tab = focus_tab or _focus_chrome_tab
     if (args.browser or env.get("BROWSER")) == "none":
-        open_browser = lambda url: None
-    return cmd_serve(config, now_fn, out, err, run_server, open_browser)
+        show_tab = lambda url: None
+    else:
+        show_tab = lambda url: focus_tab(url) or open_browser(url)
+    return cmd_serve(config, now_fn, out, err, run_server or _run_server, show_tab,
+                     probe_server or _probe_server)
 
 
 def main_entry() -> None:
