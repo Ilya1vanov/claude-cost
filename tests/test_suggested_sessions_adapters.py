@@ -74,3 +74,35 @@ def test_web_suggested_section_with_accept_and_dismiss(root, tmp_path):
     assert client.post("/spotlights/PROJ-12/remove", data={"session": "s3"}).status_code == 302
     page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
     assert 'id="spotlight-suggested"' not in page and "Dismissed sessions (1)" in page
+
+
+def test_cli_suggestions_text_and_json(cenv):
+    data = json.loads(ok(["suggestions", "--json"], cenv))
+    assert [(g["key"], g["spotlight"]) for g in data] == [("PROJ-1", "auto:PROJ-1"), ("PROJ-7", None)]
+    assert set(data[0]) == {"key", "spotlight", "name", "suggested"}
+    assert set(data[0]["suggested"][0]) == {"id", "label", "cost", "field", "snippet"}
+    assert [s["id"] for s in data[0]["suggested"]] == ["bbbb2222", "cccc3333"]
+    text = ok(["suggestions"], cenv)
+    assert "PROJ-1" in text and "bbbb2222" in text and "prompt: only PROJ-7" in text
+
+
+def test_web_triage_session_page_and_spotlights_count(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=M)], title="PROJ-12 login")
+    root.write_transcript("p", "s2", [req("m2", "2026-10-30T02:00:00Z", output=M)], prompt="mentions PROJ-12 only")
+    root.write_transcript("p", "s3", [req("m3", "2026-10-30T03:00:00Z", output=M)], prompt="about PROJ-30")
+    conn = store.connect(tmp_path / "web.sqlite")
+    ingest.ingest(conn, [root.path])
+    conn.close()
+    client = create_app(lambda: QueryService(store.connect(tmp_path / "web.sqlite"), "UTC",
+                                             key_pattern=r"PROJ-\d+"), lambda: NOW).test_client()
+    page = client.get("/spotlights").get_data(as_text=True)
+    assert 'id="pending-suggestions"' in page and "2 suggestions pending" in page and "/spotlights/triage" in page
+    tri = client.get("/spotlights/triage").get_data(as_text=True)
+    assert "PROJ-12" in tri and "PROJ-30" in tri and "about PROJ-30" in tri
+    assert 'id="session-suggested"' in client.get("/session/s2").get_data(as_text=True)
+    assert 'id="session-suggested"' not in client.get("/session/s1").get_data(as_text=True)
+    assert client.post("/spotlights/triage/accept", data={"key": "PROJ-30", "session": "s3"}).status_code == 302
+    assert client.post("/spotlights/triage/dismiss", data={"key": "PROJ-12", "session": "s2"}).status_code == 302
+    page = client.get("/spotlights").get_data(as_text=True)
+    assert 'id="pending-suggestions"' not in page
+    assert "PROJ-30" in page  # accepting created the Auto-spotlight

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Suggestions · claude-cost{% endblock %}
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('spotlight_list') }}">Spotlights</a></div>
+  <div class="page-head"><h1>Suggested sessions</h1></div>
+  <p class="note">These Sessions carry a key only where it may be a mention. They are not counted until you accept them. Accepting one for a key with no Auto-spotlight creates it.</p>
+  {% for g in groups %}
+  <section class="card" id="triage-{{ g.key }}">
+    <h2>{% if g.spotlight_id %}<a href="{{ url_for('spotlight_page', name=g.spotlight_id) }}">{{ g.name }}</a>{% if g.name != g.key %} <small class="note">{{ g.key }}</small>{% endif %}{% else %}{{ g.key }} <small class="note">no Auto-spotlight yet</small>{% endif %}
+      ({{ g.suggested|length }})</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Session</th><th>Why</th><th class="num">Cost</th><th></th></tr>
+      {% for x in g.suggested %}<tr><td>{{ session_label(x.session_id) }}</td>
+        <td><span class="badge">{{ x.field }}</span> <span class="muted">{{ x.snippet }}</span></td>
+        <td class="num">${{ "%.2f"|format(x.cost) }}</td>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_triage_accept') }}" class="inline"><input type="hidden" name="key" value="{{ g.key }}"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="small">Accept</button></form>
+          <form method="post" action="{{ url_for('spotlight_triage_dismiss') }}" class="inline"><input type="hidden" name="key" value="{{ g.key }}"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Dismiss</button></form></td></tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% else %}<p class="empty">No suggestions pending</p>{% endfor %}
+{% endblock %}

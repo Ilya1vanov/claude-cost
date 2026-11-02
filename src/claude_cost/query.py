@@ -189,6 +189,25 @@ class SpotlightSuggested:
 
 
 @dataclass(frozen=True)
+class SuggestionGroup:
+    """Pending suggestions for one key; `spotlight_id` is None while the key has no Auto-spotlight."""
+    key: str
+    spotlight_id: str | None
+    name: str
+    suggested: tuple[SpotlightSuggested, ...]
+
+
+@dataclass(frozen=True)
+class SessionSuggestion:
+    """A key a Session is suggested for, and where the Session carries it."""
+    key: str
+    spotlight_id: str | None
+    name: str
+    field: str
+    snippet: str
+
+
+@dataclass(frozen=True)
 class SpotlightDetail:
     summary: SpotlightSummary
     sessions: tuple[SpotlightSession, ...]
@@ -1020,6 +1039,36 @@ class QueryService:
                 out.append(SpotlightSuggested(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
                                               hit.field, hit.snippet))
         return tuple(sorted(out, key=lambda x: (-x.cost, x.session_id)))
+
+    def suggestions(self) -> list[SuggestionGroup]:
+        """Every pending suggestion across all keys, grouped by key (keys sorted), including keys
+        that have no Auto-spotlight yet. Each group lists its Sessions costliest first."""
+        _, defs, member = self._spotlight_state()
+        auto = {d.key: d for d in defs if d.kind == "auto"}
+        by = {s.session_id: s for s in self.session_summaries()}
+        dismissed: dict[str, set[str]] = {}
+        for r in self._conn.execute("SELECT key, session_id FROM spotlight_dismissed"):
+            dismissed.setdefault(r["key"], set()).add(self.graph.session_of(r["session_id"]))
+        keys = sorted({k for hits in self._key_hits().values() for k in hits})
+        groups = []
+        for key in keys:
+            defn = auto.get(key)
+            if defn is None:  # nothing joins a key without an Auto-spotlight, so every carrier is a candidate
+                defn = spotlights.Definition(spotlights.auto_id(key), key, "auto", key,
+                                             dismissed=frozenset(dismissed.get(key, ())))
+                members: frozenset[str] = frozenset()
+            else:
+                members = member[defn.id].members
+            found = self._suggested(defn, members, by)
+            if found:
+                groups.append(SuggestionGroup(key, defn.id if key in auto else None, defn.name, found))
+        return groups
+
+    def session_suggestions(self, session_id: str) -> list[SessionSuggestion]:
+        """The keys a Session is suggested for (logical Session id), in key order."""
+        sid = self.graph.session_of(session_id)
+        return [SessionSuggestion(g.key, g.spotlight_id, g.name, x.field, x.snippet)
+                for g in self.suggestions() for x in g.suggested if x.session_id == sid]
 
     def _carried_key(self, ref: str) -> str | None:
         """`ref` as a key some Session carries (upper-cased), for a key with no Auto-spotlight yet."""

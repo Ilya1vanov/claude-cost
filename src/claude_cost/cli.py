@@ -231,6 +231,20 @@ def _print_spotlight_detail(detail, as_json: bool, out) -> None:
         print(f"  dismissed {d.session_id}  {_money(d.cost)}  {d.label}", file=out)
 
 
+def _print_suggestions(groups, as_json: bool, out) -> None:
+    if as_json:
+        print(json.dumps([{"key": g.key, "spotlight": g.spotlight_id, "name": g.name,
+                           "suggested": [{"id": x.session_id, "label": x.label, "cost": round(x.cost, 4),
+                                          "field": x.field, "snippet": x.snippet} for x in g.suggested]}
+                          for g in groups], indent=2), file=out)
+        return
+    for g in groups:
+        target = g.spotlight_id or "no Auto-spotlight yet"
+        print(f"{g.key}  ({target})", file=out)
+        for x in g.suggested:
+            print(f"  {x.session_id}  {_money(x.cost)}  {x.label}  {x.field}: {x.snippet}", file=out)
+
+
 def _print_session_search(found, as_json: bool, out) -> None:
     if as_json:
         print(json.dumps([{"id": c.session_id, "label": c.label, "cost": round(c.cost, 4), "kind": c.kind}
@@ -256,6 +270,8 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
         _print_spotlight_detail(detail, args.json, out)
     elif action == "rename":
         svc.rename_spotlight(args.name, args.new_name)
+    elif action == "suggestions":
+        _print_suggestions(svc.suggestions(), args.json, out)
     elif action == "search":
         _print_session_search(svc.search_sessions(args.text, ""), args.json, out)
     elif action == "create":
@@ -354,7 +370,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     sp = spot_sub.add_parser("rename", help="rename a Spotlight (any Spotlight, to a non-empty name)")
     sp.add_argument("name", help="id, key or unique name")
     sp.add_argument("new_name")
-    sp = spot_sub.add_parser("search", help="find sessions by key or text, ranked as the web picker does")
+    sp = spot_sub.add_parser("suggestions", help="every pending Suggested session, grouped by key")
+    sp.add_argument("--json", action="store_true")
+    sp = spot_sub.add_parser("search",help="find sessions by key or text, ranked as the web picker does")
     sp.add_argument("text")
     sp.add_argument("--json", action="store_true")
     sp = spot_sub.add_parser("create", help="create a Spotlight")
