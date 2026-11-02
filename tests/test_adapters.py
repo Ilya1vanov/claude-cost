@@ -42,7 +42,7 @@ def test_serve_binds_loopback_only_and_opens_browser(root, configure):
     env = configure(_root_with_spend(root))
     seen, opened = {}, []
     cli.main(["serve"], env=env, now=NOW, out=io.StringIO(),
-             run_server=lambda app, host, port: seen.update(host=host, port=port),
+             run_server=lambda app, host, port, on_ready: (seen.update(host=host, port=port), on_ready()),
              open_browser=opened.append)
     assert seen["host"] == "127.0.0.1"
     assert opened == [f"http://127.0.0.1:{seen['port']}/"]
