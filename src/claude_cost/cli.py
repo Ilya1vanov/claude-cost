@@ -297,7 +297,7 @@ def _focus_chrome_tab(url: str) -> bool:
         return False
     try:
         done = subprocess.run(["osascript", "-e", _FOCUS_TAB_SCRIPT, url],
-                              capture_output=True, text=True, timeout=5)
+                              capture_output=True, text=True, timeout=60)  # room for the first-run macOS prompt
     except (OSError, subprocess.TimeoutExpired):
         return False
     return done.returncode == 0 and done.stdout.strip() == "focused"
@@ -305,16 +305,18 @@ def _focus_chrome_tab(url: str) -> bool:
 
 def _probe_server(url: str) -> str | None:
     """What GET /healthz answers on `url`, "" when something else holds the port, None when nothing does."""
+    import http.client
     import urllib.error
     import urllib.request
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never via a system proxy
     try:
-        with urllib.request.urlopen(f"{url}healthz", timeout=1) as response:
+        with direct.open(f"{url}healthz", timeout=1) as response:
             return response.read(64).decode(errors="replace")
     except urllib.error.HTTPError:
         return ""
     except urllib.error.URLError as e:
         return None if isinstance(e.reason, ConnectionRefusedError) else ""
-    except OSError:
+    except (OSError, http.client.HTTPException):
         return ""
 
 
@@ -463,11 +465,11 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
             return 1
     if args.command == "ingest":
         return cmd_ingest(config, now_fn(), out, err, args.rebuild)
-    focus_tab = focus_tab or _focus_chrome_tab
+    focus = focus_tab or _focus_chrome_tab
     if (args.browser or env.get("BROWSER")) == "none":
         show_tab = lambda url: None
     else:
-        show_tab = lambda url: focus_tab(url) or open_browser(url)
+        show_tab = lambda url: focus(url) or open_browser(url)
     return cmd_serve(config, now_fn, out, err, run_server or _run_server, show_tab,
                      probe_server or _probe_server)
 

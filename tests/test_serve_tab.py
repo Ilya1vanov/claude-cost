@@ -59,3 +59,67 @@ def test_healthz_names_the_app(root, configure):
     client = create_app(lambda: None, lambda: NOW).test_client()
     page = client.get("/healthz")
     assert page.status_code == 200 and page.get_data(as_text=True) == "claude-cost"
+
+
+# --- the real /healthz probe, against throwaway local servers on free ports ---
+
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from werkzeug.serving import make_server
+
+real_probe = cli._probe_server  # captured at import, before conftest stubs it for every test
+
+
+def _serving(server):
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}/"
+
+
+def test_probe_reads_our_healthz():
+    from claude_cost.web import create_app
+    server = make_server("127.0.0.1", 0, create_app(lambda: None, lambda: NOW))
+    try:
+        assert real_probe(_serving(server)) == "claude-cost"
+    finally:
+        server.shutdown()
+
+
+def test_probe_reports_nothing_on_a_free_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert real_probe(f"http://127.0.0.1:{port}/") is None
+
+
+class _NotFound(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_error(404)
+
+    def log_message(self, *a):
+        pass
+
+
+def test_probe_reports_another_http_program():
+    server = HTTPServer(("127.0.0.1", 0), _NotFound)
+    try:
+        assert real_probe(_serving(server)) == ""
+    finally:
+        server.shutdown()
+
+
+def test_probe_reports_a_program_that_does_not_speak_http():
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    def garbage():
+        conn, _ = listener.accept()
+        conn.recv(1024)
+        conn.sendall(b"SSH-2.0-not-http\r\n")
+        conn.close()
+    threading.Thread(target=garbage, daemon=True).start()
+    try:
+        assert real_probe(f"http://127.0.0.1:{listener.getsockname()[1]}/") == ""
+    finally:
+        listener.close()

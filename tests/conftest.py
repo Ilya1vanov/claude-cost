@@ -28,8 +28,8 @@ def isolated_home(tmp_path, monkeypatch):
 def no_real_browser_or_port(monkeypatch):
     """`serve` never probes the real port or drives the real Chrome in tests."""
     from claude_cost import cli
-    monkeypatch.setattr(cli, "_probe_server", lambda url: None, raising=False)
-    monkeypatch.setattr(cli, "_focus_chrome_tab", lambda url: False, raising=False)
+    monkeypatch.setattr(cli, "_probe_server", lambda url: None)
+    monkeypatch.setattr(cli, "_focus_chrome_tab", lambda url: False)
 
 
 @pytest.fixture
