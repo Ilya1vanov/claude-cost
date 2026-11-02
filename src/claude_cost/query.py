@@ -179,6 +179,16 @@ class SpotlightDismissed:
 
 
 @dataclass(frozen=True)
+class SpotlightSuggested:
+    """A Suggested session of an Auto-spotlight: where it carries the key, not counted until accepted."""
+    session_id: str
+    label: str
+    cost: float
+    field: str    # "title" | "branch" | "worktree" | "prompt"
+    snippet: str
+
+
+@dataclass(frozen=True)
 class SpotlightDetail:
     summary: SpotlightSummary
     sessions: tuple[SpotlightSession, ...]
@@ -189,6 +199,7 @@ class SpotlightDetail:
     picked: tuple[str, ...]
     included: tuple[SpotlightIncluded, ...] = ()
     dismissed: tuple[SpotlightDismissed, ...] = ()
+    suggested: tuple[SpotlightSuggested, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -460,6 +471,7 @@ class QueryService:
         self._table = pricing.PRICE_TABLE if price_table is None else price_table
         self._tz: tzinfo | None = ZoneInfo(timezone) if timezone else None
         self._infos: dict[str, spotlights.SessionInfo] | None = None
+        self._hits: dict[str, dict[str, list[spotlights.KeyHit]]] | None = None
         self._graph: session_graph.SessionGraph | None = None
 
     @property
@@ -937,17 +949,27 @@ class QueryService:
         return spotlights.compile_pattern(self._key_pattern, "spotlight_key_pattern") \
             if self._key_pattern else None
 
+    def _key_hits(self) -> dict[str, dict[str, list[spotlights.KeyHit]]]:
+        """Per Session, every key the pattern finds with where it was found (Sessions without keys left out)."""
+        if self._hits is None:
+            pat = self._key_regex()
+            hits = {sid: spotlights.key_hits(info, pat) for sid, info in self._session_infos().items()}
+            self._hits = {sid: h for sid, h in hits.items() if h}
+        return self._hits
+
     def session_keys(self) -> dict[str, list[str]]:
         """Keys the configured pattern finds per Session, in order: title, git branch, worktree
-        path, first prompt (all collected). Sessions without keys are left out."""
-        pat = self._key_regex()
-        keys = {sid: spotlights.detect_keys(info, pat) for sid, info in self._session_infos().items()}
-        return {sid: k for sid, k in keys.items() if k}
+        path, first prompt (all collected, Key match or not). Sessions without keys are left out."""
+        return {sid: list(h) for sid, h in self._key_hits().items()}
 
-    def _definitions(self, infos: dict[str, spotlights.SessionInfo],
-                     keys: dict[str, list[str]]) -> list[spotlights.Definition]:
-        """User-defined Spotlights, then an Auto-spotlight per key (unless a user-defined one has
-        the key as its name). Picks and include edges are stored by id."""
+    def _key_matches(self) -> dict[str, set[str]]:
+        """Per Session, the keys it joins automatically (Key matches); see spotlights.key_matches."""
+        return {sid: spotlights.key_matches(h) for sid, h in self._key_hits().items()}
+
+    def _definitions(self) -> list[spotlights.Definition]:
+        """User-defined Spotlights, then an Auto-spotlight per key that has a Key match or a Picked
+        session (unless a user-defined one has the key as its name). Picks and include edges are
+        stored by id."""
         picked: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT spotlight, session_id FROM spotlight_pins"):
             picked.setdefault(r["spotlight"], set()).add(self.graph.session_of(r["session_id"]))
@@ -960,7 +982,10 @@ class QueryService:
         for r in self._conn.execute("SELECT key, session_id FROM spotlight_dismissed"):
             dismissed.setdefault(r["key"], set()).add(self.graph.session_of(r["session_id"]))
         custom = {r["key"]: r["name"] for r in self._conn.execute("SELECT key, name FROM auto_spotlights")}
-        found = sorted({k for ks in keys.values() for k in ks} - {n for _, n in users})
+        has_key = {k for ks in self._key_matches().values() for k in ks}
+        has_key |= {i[len(spotlights.AUTO_PREFIX):] for i, sids in picked.items()
+                    if i.startswith(spotlights.AUTO_PREFIX) and sids}
+        found = sorted(has_key - {n for _, n in users})
         exist = {i for i, _ in users} | {spotlights.auto_id(k) for k in found}  # an edge to a missing one is ignored
 
         def inc(i: str) -> frozenset[str]:
@@ -975,17 +1000,31 @@ class QueryService:
     def _spotlight_state(self):
         """(infos, definitions, membership by Spotlight id)."""
         infos = self._session_infos()
-        pat = self._key_regex()
-        keys = {sid: spotlights.detect_keys(info, pat) for sid, info in infos.items()}
-        defs = self._definitions(infos, keys)
+        defs = self._definitions()
         by_id = {d.id: d for d in defs}
-        return infos, defs, {d.id: spotlights.resolve(d, infos, keys, [by_id[i] for i in d.includes])
+        matches, carried = self._key_matches(), self.session_keys()
+        return infos, defs, {d.id: spotlights.resolve(d, infos, matches, [by_id[i] for i in d.includes], carried)
                              for d in defs}
 
     def _all_definitions(self) -> list[spotlights.Definition]:
+        return self._definitions()
+
+    def _suggested(self, defn: spotlights.Definition, members: frozenset[str],
+                   by: dict) -> tuple[SpotlightSuggested, ...]:
+        """Sessions that carry the Auto-spotlight's key but are not in it and not dismissed."""
         infos = self._session_infos()
-        pat = self._key_regex()
-        return self._definitions(infos, {sid: spotlights.detect_keys(i, pat) for sid, i in infos.items()})
+        out = []
+        for sid, hits in self._key_hits().items():
+            if defn.key in hits and sid not in members and sid not in defn.dismissed:
+                hit = hits[defn.key][0]  # fields are searched in key order, so this is the strongest
+                out.append(SpotlightSuggested(sid, infos[sid].label, by[sid].cost if sid in by else 0.0,
+                                              hit.field, hit.snippet))
+        return tuple(sorted(out, key=lambda x: (-x.cost, x.session_id)))
+
+    def _carried_key(self, ref: str) -> str | None:
+        """`ref` as a key some Session carries (upper-cased), for a key with no Auto-spotlight yet."""
+        key = ref.strip().upper()
+        return key if any(key in h for h in self._key_hits().values()) else None
 
     def _find(self, ref: str, defs: list[spotlights.Definition] | None = None) -> spotlights.Definition | None:
         """The Spotlight a reference means: id, then key (Auto-spotlights), then a name that
@@ -1156,8 +1195,9 @@ class QueryService:
         dismissed = tuple(sorted(
             (SpotlightDismissed(sid, infos[sid].label, by[sid].cost if sid in by else 0.0)
              for sid in ms.dismissed), key=lambda x: (-x.cost, x.session_id)))
+        suggested = self._suggested(defn, ms.members, by) if defn.kind == "auto" else ()
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
-                               tuple(sorted(defn.picked)), included, dismissed)
+                               tuple(sorted(defn.picked)), included, dismissed, suggested)
 
     def spotlight_comparison(self, refs: list[str]) -> list[SpotlightDetail]:
         """Two or more Spotlights side by side, each in full (never summed). KeyError if unknown."""
@@ -1343,10 +1383,15 @@ class QueryService:
         session_ids = list(session_ids)
         self._require_sessions(session_ids)
         defn = self._find(ref)
-        if defn is None and not create:
+        key = self._carried_key(ref) if defn is None else None  # accepting a suggestion creates its Auto-spotlight
+        if defn is None and key is None and not create:
             raise spotlights.SpotlightError(f"no Spotlight named {ref!r}")
         with self._conn:
-            if defn is None:
+            if key is not None:
+                sp_id = spotlights.auto_id(key)
+                self._conn.executemany("DELETE FROM spotlight_dismissed WHERE key = ? AND session_id = ?",
+                                       [(key, self.graph.session_of(s)) for s in session_ids])
+            elif defn is None:
                 sp_id = self._new_id()
                 self._conn.execute("INSERT INTO spotlights (name, id) VALUES (?, ?)", (ref, sp_id))
             else:
@@ -1361,6 +1406,13 @@ class QueryService:
         In an Auto-spotlight a Session that carries the key becomes a Dismissed session (and is
         unpicked); any other is just unpicked."""
         sid = self.graph.session_of(session_id)
+        defn = self._find(ref)
+        if defn is None and (key := self._carried_key(ref)) is not None:  # a suggestion for a key with no Auto-spotlight
+            if key not in self.session_keys().get(sid, ()):
+                raise spotlights.SpotlightError(f"Session {session_id!r} does not carry {key}")
+            with self._conn:
+                self._conn.execute("INSERT OR IGNORE INTO spotlight_dismissed VALUES (?, ?)", (key, sid))
+            return
         defn = self._need(ref)
         carries = defn.kind == "auto" and defn.key in self.session_keys().get(sid, ())
         with self._conn:

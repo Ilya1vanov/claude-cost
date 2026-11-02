@@ -159,9 +159,10 @@ def test_auto_spotlight_per_key_and_key_order(root, service_for):
     # order: custom title, git branch, worktree path, first prompt; every key collected, no repeats
     assert svc.session_keys()["s1"] == ["PROJ-3", "PROJ-1", "PROJ-2", "PROJ-4", "PROJ-5"]
     names = {s.name: s for s in svc.spotlights()}
-    assert set(names) == {"PROJ-1", "PROJ-2", "PROJ-3", "PROJ-4", "PROJ-5"}
-    assert names["PROJ-2"].kind == "auto" and names["PROJ-2"].sessions == 2
-    assert names["PROJ-2"].total == pytest.approx(40.0) and names["PROJ-3"].total == pytest.approx(20.0)
+    # s1's title names PROJ-3 and PROJ-1, so PROJ-2/4/5 are only suggested for it
+    assert set(names) == {"PROJ-1", "PROJ-2", "PROJ-3"}
+    assert names["PROJ-2"].kind == "auto" and names["PROJ-2"].sessions == 1
+    assert names["PROJ-2"].total == pytest.approx(20.0) and names["PROJ-3"].total == pytest.approx(20.0)
 
 
 def test_no_pattern_means_no_auto_spotlights(root, service_for):
@@ -519,4 +520,4 @@ def test_a_key_cut_by_the_first_prompt_limit_is_ignored_but_one_before_the_cut_i
     keys = svc.session_keys()
     assert keys["s1"] == ["PROJ-1"]
     assert keys["s2"] == ["PROJ-8908", "PROJ-1"]   # title unaffected
-    assert {s.name for s in svc.spotlights()} == {"PROJ-1", "PROJ-8908"}
+    assert {s.name for s in svc.spotlights()} == {"PROJ-8908"}   # s1's PROJ-1 is prompt-only: suggested
