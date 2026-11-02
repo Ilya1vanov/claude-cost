@@ -77,7 +77,7 @@ class SpotlightSession:
     also_in: tuple[str, ...]  # other Spotlights that count this Session fully too
     picked: bool  # a Picked session, also when it joined as Key match
     key_matched: bool  # an Auto-spotlight's Key match: shown as a fixed chip
-    removable: bool  # picked and not Key match: the Remove control applies
+    removable: bool  # a direct member (picked or Key match): the Remove control applies
     via: str | None = None  # the included Spotlight that brought it in, when it did
     parent_id: str | None = None  # its parent Session when that is in the Spotlight, else None (a root)
     depth: int = 0  # nesting level in the Session tree
@@ -171,6 +171,14 @@ class SpotlightRank:
 
 
 @dataclass(frozen=True)
+class SpotlightDismissed:
+    """A Dismissed session of an Auto-spotlight, listed so it can be restored."""
+    session_id: str
+    label: str
+    cost: float
+
+
+@dataclass(frozen=True)
 class SpotlightDetail:
     summary: SpotlightSummary
     sessions: tuple[SpotlightSession, ...]
@@ -180,6 +188,7 @@ class SpotlightDetail:
     components: dict[str, float]  # lifetime cost per Cost component
     picked: tuple[str, ...]
     included: tuple[SpotlightIncluded, ...] = ()
+    dismissed: tuple[SpotlightDismissed, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -947,6 +956,9 @@ class QueryService:
             edges.setdefault(r["spotlight"], set()).add(r["included"])
         users = [(r["id"], r["name"]) for r in
                  self._conn.execute("SELECT id, name FROM spotlights ORDER BY name, id")]
+        dismissed: dict[str, set[str]] = {}
+        for r in self._conn.execute("SELECT key, session_id FROM spotlight_dismissed"):
+            dismissed.setdefault(r["key"], set()).add(self.graph.session_of(r["session_id"]))
         custom = {r["key"]: r["name"] for r in self._conn.execute("SELECT key, name FROM auto_spotlights")}
         found = sorted({k for ks in keys.values() for k in ks} - {n for _, n in users})
         exist = {i for i, _ in users} | {spotlights.auto_id(k) for k in found}  # an edge to a missing one is ignored
@@ -957,7 +969,7 @@ class QueryService:
                  for i, n in users]
                 + [spotlights.Definition(spotlights.auto_id(k), custom.get(k, k), "auto", k,
                                          frozenset(picked.get(spotlights.auto_id(k), ())),
-                                         inc(spotlights.auto_id(k)))
+                                         inc(spotlights.auto_id(k)), frozenset(dismissed.get(k, ())))
                    for k in found])
 
     def _spotlight_state(self):
@@ -1088,7 +1100,7 @@ class QueryService:
         members = [SpotlightSession(sid, infos[sid].label, by[sid].cost, by[sid].subagent_cost,
                                  by[sid].requests, self._joined_as(sid, infos, ms, defn),
                                  tuple(sorted(o.name for o in in_other.get(sid, ()))), sid in defn.picked,
-                                 sid in ms.key_matched, sid in defn.picked and sid not in ms.key_matched,
+                                 sid in ms.key_matched, sid in defn.picked or sid in ms.key_matched,
                                  ms.via.get(sid),
                                  also_in_ids=tuple(o.id for o in sorted(in_other.get(sid, ()),
                                                                         key=lambda o: o.name)))
@@ -1141,8 +1153,11 @@ class QueryService:
             SpotlightIncluded(by_id[i].name, by_id[i].kind,
                               (s := self._summary(by_id[i], member[i].members, rows)).total, s.sessions, i)
             for i in sorted(defn.includes, key=lambda i: (by_id[i].name, i)))
+        dismissed = tuple(sorted(
+            (SpotlightDismissed(sid, infos[sid].label, by[sid].cost if sid in by else 0.0)
+             for sid in ms.dismissed), key=lambda x: (-x.cost, x.session_id)))
         return SpotlightDetail(summary, sessions, subs, related, out_days, comps,
-                               tuple(sorted(defn.picked)), included)
+                               tuple(sorted(defn.picked)), included, dismissed)
 
     def spotlight_comparison(self, refs: list[str]) -> list[SpotlightDetail]:
         """Two or more Spotlights side by side, each in full (never summed). KeyError if unknown."""
@@ -1337,18 +1352,34 @@ class QueryService:
             else:
                 sp_id = defn.id
             self._insert_pins(sp_id, session_ids)
+            if defn is not None and defn.kind == "auto":  # picking a Dismissed session clears its dismissal
+                self._conn.executemany("DELETE FROM spotlight_dismissed WHERE key = ? AND session_id = ?",
+                                       [(defn.key, self.graph.session_of(s)) for s in session_ids])
 
     def remove_session(self, ref: str, session_id: str) -> None:
-        """Remove a Picked session; Side sessions that joined through it leave with it.
-        A Key-match Session of an Auto-spotlight cannot be removed."""
+        """Remove a Session from a Spotlight; Side sessions that joined through it leave with it.
+        In an Auto-spotlight a Session that carries the key becomes a Dismissed session (and is
+        unpicked); any other is just unpicked."""
         sid = self.graph.session_of(session_id)
-        _, defs, member = self._spotlight_state()
-        defn = self._need(ref, defs)
-        if sid in member[defn.id].key_matched:
-            raise spotlights.SpotlightError("a Key-match Session cannot be removed")
+        defn = self._need(ref)
+        carries = defn.kind == "auto" and defn.key in self.session_keys().get(sid, ())
         with self._conn:
             self._conn.execute("DELETE FROM spotlight_pins WHERE spotlight = ? AND session_id IN (?, ?)",
                                (defn.id, session_id, sid))
+            if carries:
+                self._conn.execute("INSERT OR IGNORE INTO spotlight_dismissed VALUES (?, ?)", (defn.key, sid))
+
+    def restore_session(self, ref: str, session_id: str) -> None:
+        """Undo the dismissal of a Session in an Auto-spotlight (by id, key or unique name)."""
+        defn = self._need(ref)
+        if defn.kind != "auto":
+            raise spotlights.SpotlightError(f"{defn.name!r} is not an Auto-spotlight")
+        sid = self.graph.session_of(session_id)
+        if sid not in defn.dismissed:
+            raise spotlights.SpotlightError(f"Session {session_id!r} is not dismissed from {defn.name!r}")
+        with self._conn:
+            self._conn.execute("DELETE FROM spotlight_dismissed WHERE key = ? AND session_id = ?",
+                               (defn.key, sid))
 
     def session_labels(self) -> dict[str, str]:
         """Label of every logical Session id: custom title, else the first 60 characters of the

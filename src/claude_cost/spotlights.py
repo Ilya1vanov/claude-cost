@@ -93,21 +93,25 @@ class Definition:
     key: str = ""                   # the key of an Auto-spotlight
     picked: frozenset[str] = field(default_factory=frozenset)  # logical Session ids
     includes: frozenset[str] = frozenset()  # ids of included Spotlights that exist
+    dismissed: frozenset[str] = frozenset()  # Dismissed sessions of an Auto-spotlight (logical Session ids)
 
 
 @dataclass(frozen=True)
 class Membership:
-    key_matched: frozenset[str]  # Sessions of an Auto-spotlight that carry its key
+    key_matched: frozenset[str]  # Sessions of an Auto-spotlight that carry its key and are not dismissed
     members: frozenset[str]      # Session ids counted in the Spotlight
     related: frozenset[str]      # Forks of members that are not members ("related, excluded")
     via: dict[str, str] = field(default_factory=dict)  # Session -> name of the included Spotlight that brought it
+    dismissed: frozenset[str] = frozenset()  # Sessions carrying its key that the user removed
 
 
 def direct_members(defn: Definition, sessions: dict[str, SessionInfo],
                    keys: dict[str, list[str]]) -> tuple[frozenset[str], frozenset[str]]:
-    """(Key matches, direct members) of one Spotlight, ignoring what it includes."""
-    key_matched = frozenset(sid for sid in sessions
-                            if defn.kind == "auto" and defn.key in keys.get(sid, ()))
+    """(Key matches, direct members) of one Spotlight, ignoring what it includes. A Dismissed
+    session is out while it carries the key."""
+    carriers = frozenset(sid for sid in sessions
+                         if defn.kind == "auto" and defn.key in keys.get(sid, ()))
+    key_matched = carriers - defn.dismissed
     return key_matched, key_matched | {sid for sid in sessions if sid in defn.picked}
 
 
@@ -121,6 +125,8 @@ def resolve(defn: Definition, sessions: dict[str, SessionInfo], keys: dict[str, 
     of Side sessions are too). Forks of members that are not direct members are related, excluded.
     """
     key_matched, own = direct_members(defn, sessions, keys)
+    dismissed = frozenset(sid for sid in sessions if defn.kind == "auto" and sid in defn.dismissed
+                          and defn.key in keys.get(sid, ()))
     via: dict[str, str] = {}
     for inc in sorted(included, key=lambda d: (d.name, d.id)):
         for sid in direct_members(inc, sessions, keys)[1] - own:
@@ -135,7 +141,7 @@ def resolve(defn: Definition, sessions: dict[str, SessionInfo], keys: dict[str, 
         members |= grown
     related = {sid for sid, info in sessions.items()
                if sid not in members and info.kind == "fork" and info.parent in members}
-    return Membership(key_matched, frozenset(members), frozenset(related), via)
+    return Membership(key_matched, frozenset(members), frozenset(related), via, dismissed)
 
 
 def match_score(query: str, text: str) -> int | None:

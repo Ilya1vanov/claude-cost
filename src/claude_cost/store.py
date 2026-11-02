@@ -162,6 +162,13 @@ CREATE TABLE IF NOT EXISTS auto_spotlights (
   key TEXT PRIMARY KEY,
   name TEXT NOT NULL
 );
+-- Dismissed sessions (ticket #67): a Session the user removed from the Auto-spotlight for `key`;
+-- it stays out while it carries the key. By logical session id; user data like the pins.
+CREATE TABLE IF NOT EXISTS spotlight_dismissed (
+  key TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (key, session_id)
+);
 CREATE TABLE IF NOT EXISTS spotlight_pins (
   spotlight TEXT NOT NULL,
   session_id TEXT NOT NULL,

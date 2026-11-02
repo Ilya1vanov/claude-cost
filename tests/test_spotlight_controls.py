@@ -46,7 +46,6 @@ def test_add_and_remove_session_endpoints_and_joined_as_column(root, tmp_path):
     table = html.split('id="spotlight-sessions"')[1].split("</table>")[0]
     assert "Joined as" in table and ">Link<" not in table
     assert table.count(">Key match<") == 1 and table.count(">Picked<") == 1
-    assert client.post("/spotlights/PROJ-12/remove", data={"session": "s2"}).status_code == 400
     assert client.post("/spotlights/PROJ-12/remove", data={"session": "s1"}).status_code == 302
     table = client.get("/spotlights/PROJ-12").get_data(as_text=True).split('id="spotlight-sessions"')[1].split("</table>")[0]
     assert "Picked" not in table and "login work" not in table
@@ -214,3 +213,20 @@ def test_new_spotlight_form_uses_the_picker(root, tmp_path):
     form = page.split("<h2>New Spotlight</h2>", 1)[1]
     assert 'data-search-url="/api/session-search"' in form and 'data-mode="collect"' in form
     assert "/static/picker.js" in page
+
+
+def test_key_match_remove_and_dismissed_list_with_restore(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=M)],
+                          branch="feature/proj-12-x", prompt="ticket work")
+    client, new = _client(root, tmp_path, key_pattern=r"PROJ-\d+")
+    page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
+    assert "/spotlights/auto:PROJ-12/remove" in page and "Dismissed sessions" not in page
+    assert client.post("/spotlights/PROJ-12/remove", data={"session": "s1"}).status_code == 302
+    page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
+    assert "Dismissed sessions (1)" in page
+    dismissed = page.split('id="spotlight-dismissed"')[1].split("</details>")[0]
+    assert "ticket work" in dismissed and "/spotlights/auto:PROJ-12/restore" in dismissed
+    assert client.post("/spotlights/PROJ-12/restore", data={"session": "s1"}).status_code == 302
+    page = client.get("/spotlights/PROJ-12").get_data(as_text=True)
+    assert "Dismissed sessions" not in page and "ticket work" in page
+    assert client.post("/spotlights/PROJ-12/restore", data={"session": "s1"}).status_code == 400

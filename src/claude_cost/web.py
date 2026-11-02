@@ -280,6 +280,10 @@ def create_app(service_factory: Callable[[], QueryService],
     def spotlight_remove(name):
         return _edit(name, lambda s: s.remove_session(name, request.form.get("session", "")))
 
+    @app.post("/spotlights/<path:name>/restore")
+    def spotlight_restore(name):
+        return _edit(name, lambda s: s.restore_session(name, request.form.get("session", "")))
+
     @app.post("/spotlights/<path:name>/rename")
     def spotlight_rename(name):
         return _edit(name, lambda s: s.rename_spotlight(name, request.form.get("name", "")))

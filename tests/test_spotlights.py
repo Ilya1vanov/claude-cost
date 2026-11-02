@@ -314,7 +314,7 @@ def test_user_spotlight_overrides_auto_of_same_name(root, service_for):
     assert s.kind == "picked" and s.sessions == 1
 
 
-def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_removed(
+def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_can_be_removed(
         root, desktop, service_for):
     ticket_root(root)
     svc = service_for(root, key_pattern=KEY)
@@ -323,18 +323,16 @@ def test_auto_spotlight_takes_extra_picked_sessions_and_key_match_cannot_be_remo
     assert d.summary.kind == "auto"
     assert {s.session_id: s.joined_as for s in d.sessions} == {"s1": "Key match", "s3": "Picked"}
     by_id = {s.session_id: s for s in d.sessions}
-    assert by_id["s1"].key_matched and not by_id["s1"].removable
+    assert by_id["s1"].key_matched and by_id["s1"].removable
     assert not by_id["s3"].key_matched and by_id["s3"].removable
-    with pytest.raises(SpotlightError):
-        svc.remove_session("PROJ-12", "s1")
     svc.remove_session("PROJ-12", "s3")
     assert [s.session_id for s in svc.spotlight("PROJ-12").sessions] == ["s1"]
-    svc.add_session("PROJ-12", "s1")  # picked too: Key match takes precedence, still fixed
+    svc.add_session("PROJ-12", "s1")  # picked too: Key match takes precedence
     s1 = svc.spotlight("PROJ-12").sessions[0]
     assert s1.joined_as == "Key match" and s1.picked
-    assert s1.key_matched and not s1.removable
-    with pytest.raises(SpotlightError):
-        svc.remove_session("PROJ-12", "s1")
+    assert s1.key_matched and s1.removable
+    svc.remove_session("PROJ-12", "s1")  # dismisses it and drops the pick
+    assert svc.spotlight("PROJ-12").sessions == ()
 
 
 def test_removing_a_picked_session_removes_the_side_sessions_that_joined_through_it(

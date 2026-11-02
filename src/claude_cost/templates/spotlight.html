@@ -60,6 +60,19 @@
     </table></div>
   </section>
 
+  {% if d.dismissed %}
+  <section class="card">
+    <details id="spotlight-dismissed">
+      <summary>Dismissed sessions ({{ d.dismissed|length }})</summary>
+      <div class="table-wrap"><table>
+        {% for x in d.dismissed %}<tr><td>{{ session_label(x.session_id) }}</td><td class="num">${{ "%.2f"|format(x.cost) }}</td>
+          <td class="num"><form method="post" action="{{ url_for('spotlight_restore', name=s.id) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Restore</button></form></td></tr>
+        {% endfor %}
+      </table></div>
+    </details>
+  </section>
+  {% endif %}
+
   <section class="card">
     <h2>Days</h2>
     <div class="table-wrap"><table id="spotlight-days">
