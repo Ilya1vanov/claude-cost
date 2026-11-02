@@ -169,6 +169,9 @@ CREATE TABLE IF NOT EXISTS spotlight_dismissed (
   session_id TEXT NOT NULL,
   PRIMARY KEY (key, session_id)
 );
+-- Dismissed keys (ticket #71): keys whose Auto-spotlight is hidden. Everything else about the key
+-- (name, picks, dismissed sessions) stays where it is, so restoring the key brings it all back.
+CREATE TABLE IF NOT EXISTS spotlight_dismissed_keys (key TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS spotlight_pins (
   spotlight TEXT NOT NULL,
   session_id TEXT NOT NULL,

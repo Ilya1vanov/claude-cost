@@ -18,6 +18,15 @@
     </table></div>
     <p><button type="submit">Compare selected</button></p>
   </form>
+  {% if dismissed_keys %}
+  <section class="card" id="dismissed-keys">
+    <h2>Dismissed keys ({{ dismissed_keys|length }})</h2>
+    <div class="table-wrap"><table>
+      {% for key, sp_id, name in dismissed_keys %}<tr><td>{{ name }}{% if name != key %} <small class="note">{{ key }}</small>{% endif %}</td>
+        <td><form method="post" action="{{ url_for('spotlight_restore_key') }}" class="inline"><input type="hidden" name="key" value="{{ key }}"><button type="submit" class="small">Restore</button></form></td></tr>{% endfor %}
+    </table></div>
+  </section>
+  {% endif %}
   <section class="card">
     <h2>New Spotlight</h2>
     <form method="post" action="{{ url_for('spotlight_create') }}">

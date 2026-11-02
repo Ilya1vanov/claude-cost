@@ -196,7 +196,8 @@ def create_app(service_factory: Callable[[], QueryService],
         service = service_factory()
         return render_template("spotlights.html", spotlights=service.spotlights(),
                                auto_enabled=service.auto_spotlights_enabled(),
-                               pending=sum(len(g.suggested) for g in service.suggestions()))
+                               pending=sum(len(g.suggested) for g in service.suggestions()),
+                               dismissed_keys=service.dismissed_key_rows())
 
     @app.get("/spotlights/triage")
     def spotlight_triage():
@@ -216,6 +217,14 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.post("/spotlights/triage/dismiss")
     def spotlight_triage_dismiss():
         return _triage(lambda s, key, sid: s.remove_session(key, sid))
+
+    @app.post("/spotlights/restore-key")
+    def spotlight_restore_key():
+        try:
+            service_factory().restore_key(request.form.get("key", ""))
+        except SpotlightError as e:
+            abort(400, str(e))
+        return redirect(url_for("spotlight_list"))
 
     @app.post("/spotlights")
     def spotlight_create():
@@ -303,6 +312,14 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.post("/spotlights/<path:name>/restore")
     def spotlight_restore(name):
         return _edit(name, lambda s: s.restore_session(name, request.form.get("session", "")))
+
+    @app.post("/spotlights/<path:name>/dismiss-key")
+    def spotlight_dismiss_key(name):
+        try:
+            service_factory().dismiss_key(name)
+        except SpotlightError as e:
+            abort(400, str(e))
+        return redirect(url_for("spotlight_list"))
 
     @app.post("/spotlights/<path:name>/rename")
     def spotlight_rename(name):

@@ -1004,7 +1004,7 @@ class QueryService:
         has_key = {k for ks in self._key_matches().values() for k in ks}
         has_key |= {i[len(spotlights.AUTO_PREFIX):] for i, sids in picked.items()
                     if i.startswith(spotlights.AUTO_PREFIX) and sids}
-        found = sorted(has_key - {n for _, n in users})
+        found = sorted(has_key - {n for _, n in users} - set(self.dismissed_keys()))
         exist = {i for i, _ in users} | {spotlights.auto_id(k) for k in found}  # an edge to a missing one is ignored
 
         def inc(i: str) -> frozenset[str]:
@@ -1049,7 +1049,8 @@ class QueryService:
         dismissed: dict[str, set[str]] = {}
         for r in self._conn.execute("SELECT key, session_id FROM spotlight_dismissed"):
             dismissed.setdefault(r["key"], set()).add(self.graph.session_of(r["session_id"]))
-        keys = sorted({k for hits in self._key_hits().values() for k in hits})
+        hidden = set(self.dismissed_keys())
+        keys = sorted({k for hits in self._key_hits().values() for k in hits} - hidden)
         groups = []
         for key in keys:
             defn = auto.get(key)
@@ -1469,6 +1470,35 @@ class QueryService:
                                (defn.id, session_id, sid))
             if carries:
                 self._conn.execute("INSERT OR IGNORE INTO spotlight_dismissed VALUES (?, ?)", (defn.key, sid))
+
+    def dismissed_keys(self) -> list[str]:
+        """Keys whose Auto-spotlight the user hid, sorted."""
+        return [r["key"] for r in self._conn.execute("SELECT key FROM spotlight_dismissed_keys ORDER BY key")]
+
+    def dismissed_key_rows(self) -> list[tuple[str, str, str]]:
+        """(key, Spotlight id, name) of each Dismissed key, so the user can recognise and restore it."""
+        custom = {r["key"]: r["name"] for r in self._conn.execute("SELECT key, name FROM auto_spotlights")}
+        return [(k, spotlights.auto_id(k), custom.get(k, k)) for k in self.dismissed_keys()]
+
+    def dismiss_key(self, ref: str) -> None:
+        """Hide a key's Auto-spotlight (by id or key) from lists, the Dashboard, Compare and triage.
+        Its name, picks and Dismissed sessions stay; include edges to it are ignored meanwhile."""
+        defn = self._find(ref)
+        if defn is not None and defn.kind != "auto":
+            raise spotlights.SpotlightError(f"{defn.name!r} is not an Auto-spotlight")
+        key = defn.key if defn is not None else self._carried_key(ref)
+        if key is None:
+            raise spotlights.SpotlightError(f"no key {ref!r}")
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO spotlight_dismissed_keys VALUES (?)", (key,))
+
+    def restore_key(self, key: str) -> None:
+        """Show a Dismissed key's Auto-spotlight again, with everything it had."""
+        key = key.strip().upper()
+        if key not in self.dismissed_keys():
+            raise spotlights.SpotlightError(f"{key!r} is not a Dismissed key")
+        with self._conn:
+            self._conn.execute("DELETE FROM spotlight_dismissed_keys WHERE key = ?", (key,))
 
     def restore_session(self, ref: str, session_id: str) -> None:
         """Undo the dismissal of a Session in an Auto-spotlight (by id, key or unique name)."""
