@@ -9,7 +9,7 @@
     <div class="table-wrap"><table id="spotlight-table">
       <tr><th>Compare</th><th>Spotlight</th><th>Kind</th><th class="num">Lifetime</th><th class="num">Sessions</th><th>First activity</th><th>Last activity</th></tr>
       {% for s in spotlights %}<tr><td><input type="checkbox" name="s" value="{{ s.id }}"></td>
-        <td><a href="{{ url_for('spotlight_page', name=s.id) }}">{{ s.name }}</a>{% if s.key and s.key != s.name %} <small class="note">{{ s.key }}</small>{% endif %}{% if s.includes %} <small class="note">includes {{ s.includes }} Spotlight{{ "s" if s.includes != 1 }}</small>{% endif %}</td>
+        <td><a href="{{ url_for('spotlight_page', name=s.id) }}">{{ s.name }}</a>{% if s.locked %} <span class="badge locked">Locked</span>{% endif %}{% if s.key and s.key != s.name %} <small class="note">{{ s.key }}</small>{% endif %}{% if s.includes %} <small class="note">includes {{ s.includes }} Spotlight{{ "s" if s.includes != 1 }}</small>{% endif %}</td>
         <td><span class="badge">{{ {"auto": "Auto-spotlight", "picked": "Picked"}[s.kind] }}</span></td>
         <td class="num">${{ "%.2f"|format(s.total) }}</td><td class="num">{{ s.sessions }}</td>
         <td>{{ s.first_activity or "" }}</td><td>{{ s.last_activity or "" }}</td></tr>

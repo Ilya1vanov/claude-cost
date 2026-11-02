@@ -117,6 +117,7 @@ class Definition:
     picked: frozenset[str] = field(default_factory=frozenset)  # logical Session ids
     includes: frozenset[str] = frozenset()  # ids of included Spotlights that exist
     dismissed: frozenset[str] = frozenset()  # Dismissed sessions of an Auto-spotlight (logical Session ids)
+    locked: bool = False            # a Locked auto-spotlight: Key matches no longer join by themselves
 
 
 @dataclass(frozen=True)
@@ -131,10 +132,11 @@ class Membership:
 def direct_members(defn: Definition, sessions: dict[str, SessionInfo],
                    keys: dict[str, set[str]]) -> tuple[frozenset[str], frozenset[str]]:
     """(Key matches, direct members) of one Spotlight, ignoring what it includes. `keys` holds
-    each Session's Key-match keys. A Dismissed session is out while it carries the key."""
+    each Session's Key-match keys. A Dismissed session is out while it carries the key. A Locked
+    auto-spotlight has no automatic members: only its Picked sessions."""
     carriers = frozenset(sid for sid in sessions
                          if defn.kind == "auto" and defn.key in keys.get(sid, ()))
-    key_matched = carriers - defn.dismissed
+    key_matched = frozenset() if defn.locked else carriers - defn.dismissed
     return key_matched, key_matched | {sid for sid in sessions if sid in defn.picked}
 
 

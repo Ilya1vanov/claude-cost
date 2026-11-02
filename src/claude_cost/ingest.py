@@ -566,12 +566,15 @@ def _str(meta: dict, key: str) -> str | None:
 def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False,
            now: datetime | None = None, price_table: dict | None = None,
            desktop_stores: list[Path] | None = None,
-           compact_settings: tuple[int, int] = (compact.MIN_SAMPLE, compact.STEP)) -> int:
+           compact_settings: tuple[int, int] = (compact.MIN_SAMPLE, compact.STEP),
+           key_pattern: str | None = None) -> int:
     """Ingest all Data roots; returns the number of Requests in the store afterwards.
 
     `desktop_stores` are Desktop session store folders (scanned recursively) that link Side
     sessions, Forks and earlier transcripts of the same Desktop session. A list replaces
     the kept Desktop records (empty = no Desktop links); None leaves them as they are.
+    `key_pattern` (the configured Spotlight key pattern) lets the one-time migration turn a user
+    Spotlight named like a key into that key's Locked auto-spotlight.
     """
     price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
@@ -692,4 +695,5 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     spotlight_migration.run(conn)  # once, after the Sessions are grouped
+    spotlight_migration.lock_key_named(conn, key_pattern)  # once a key pattern is configured
     return conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
