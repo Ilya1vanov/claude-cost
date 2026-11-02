@@ -60,6 +60,22 @@
     </table></div>
   </section>
 
+  {% if d.suggested %}
+  <section class="card" id="spotlight-suggested">
+    <h2>Suggested sessions ({{ d.suggested|length }})</h2>
+    <p class="note">These Sessions carry the key only where it may be a mention. They are not counted until you accept them.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Session</th><th>Why</th><th class="num">Cost</th><th></th></tr>
+      {% for x in d.suggested %}<tr><td>{{ session_label(x.session_id) }}</td>
+        <td><span class="badge">{{ x.field }}</span> <span class="muted">{{ x.snippet }}</span></td>
+        <td class="num">${{ "%.2f"|format(x.cost) }}</td>
+        <td class="num"><form method="post" action="{{ url_for('spotlight_add', name=s.id) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="small">Accept</button></form>
+          <form method="post" action="{{ url_for('spotlight_remove', name=s.id) }}" class="inline"><input type="hidden" name="session" value="{{ x.session_id }}"><button type="submit" class="ghost small">Dismiss</button></form></td></tr>
+      {% endfor %}
+    </table></div>
+  </section>
+  {% endif %}
+
   {% if d.dismissed %}
   <section class="card">
     <details id="spotlight-dismissed">
