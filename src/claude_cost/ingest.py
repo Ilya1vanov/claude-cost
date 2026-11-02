@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import cache, compact, ownership, pricing, sources, spotlight_migration
 from .localtime import price_day
+from .spotlights import PROMPT_LIMIT
 
 
 def _parse_ts(value: str) -> datetime:
@@ -119,7 +120,7 @@ def _prompt_text(rec: dict) -> str | None:
         content = next((b.get("text") for b in content
                         if isinstance(b, dict) and b.get("type") == "text"), None)
     if isinstance(content, str) and content.strip() and not content.lstrip().startswith("<"):
-        return content[:300]
+        return content[:PROMPT_LIMIT]
     return None
 
 
