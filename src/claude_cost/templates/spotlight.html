@@ -16,6 +16,8 @@
         <button type="submit" class="small">{{ "Unlock" if s.locked else "Lock" }}</button></form>{% endif %}
       <form method="post" action="{{ url_for('spotlight_rename', name=s.id) }}" class="inline" id="rename-spotlight">
         <input name="name" value="{{ s.name }}" required aria-label="Spotlight name"><button type="submit" class="small">Rename</button></form>
+      {% if s.kind == "auto" %}<form method="post" action="{{ url_for('spotlight_dismiss_key', name=s.id) }}" class="inline" id="dismiss-key">
+        <button type="submit" class="small">Dismiss key</button></form>{% endif %}
       <form method="post" action="{{ url_for('spotlight_add', name=s.id) }}">{{ ui.picker(s.id, "collect", submit=true) }}</form>
     </div>
   </div>

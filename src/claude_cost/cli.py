@@ -263,8 +263,19 @@ def cmd_spotlight(args, config: Config, now: datetime, out, err) -> int:
     validates names and Sessions and raises SpotlightError."""
     svc = _service(config, now, err)  # ingest first, so new Sessions can be picked
     action = args.spotlight_action
-    if action == "list":
+    if action == "list" and args.dismissed:
+        rows = svc.dismissed_key_rows()
+        if args.json:
+            print(json.dumps([{"key": k, "id": i, "name": n} for k, i, n in rows], indent=2), file=out)
+        else:
+            for k, i, n in rows:
+                print(f"{i}  {n}  key {k}" if n != k else f"{i}  {n}", file=out)
+    elif action == "list":
         _print_spotlight_list(svc.spotlights(), args.json, out)
+    elif action == "dismiss-key":
+        svc.dismiss_key(args.key)
+    elif action == "restore-key":
+        svc.restore_key(args.key)
     elif action == "show":
         try:
             detail = svc.spotlight(args.name)
@@ -371,6 +382,10 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     spot_sub = spot.add_subparsers(dest="spotlight_action", required=True)
     sp = spot_sub.add_parser("list", help="every Spotlight with its total")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--dismissed", action="store_true", help="list Dismissed keys instead")
+    for action, helptext in (("dismiss-key", "hide a key's Auto-spotlight"),
+                             ("restore-key", "show a Dismissed key's Auto-spotlight again, with everything it had")):
+        spot_sub.add_parser(action, help=helptext).add_argument("key")
     sp = spot_sub.add_parser("show", help="one Spotlight: included Spotlights and sessions")
     sp.add_argument("name")
     sp.add_argument("--json", action="store_true")
