@@ -249,6 +249,17 @@ class CompactionMark:
 
 
 @dataclass(frozen=True)
+class SettingChange:
+    """A request whose model or Effort differs from the previous request's in its Stream."""
+    before_index: int  # index of the request it happens before
+    ts: float  # that request's time
+    from_model: str
+    from_effort: str  # "" when not recorded
+    to_model: str
+    to_effort: str
+
+
+@dataclass(frozen=True)
 class SubagentLaunch:
     agent_id: str
     agent_type: str | None
@@ -286,6 +297,7 @@ class SessionTimeline:
     total_cost: float | None = None
     total_requests: int | None = None
     subagent_cost: float = 0.0
+    setting_changes: tuple[SettingChange, ...] = ()
 
     @property
     def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
@@ -664,7 +676,16 @@ class QueryService:
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
-              if parent and agent_id is None else ()))
+              if parent and agent_id is None else (None, None, 0.0)),
+            setting_changes=self._setting_changes(points))
+
+    @staticmethod
+    def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:
+        """Model changes, and Effort changes between two recorded Efforts; both at once is one."""
+        return tuple(
+            SettingChange(i, b.ts, a.model, a.effort, b.model, b.effort)
+            for i, (a, b) in enumerate(zip(points, points[1:]), 1)
+            if a.model != b.model or (a.effort and b.effort and a.effort != b.effort))
 
     @staticmethod
     def _mark(c, before: int, points: list[TimelinePoint]) -> CompactionMark:

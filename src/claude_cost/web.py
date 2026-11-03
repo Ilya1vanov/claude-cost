@@ -44,6 +44,11 @@ def short_model(model_id: str) -> str:
     return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
 
 
+def setting_label(model: str, effort: str) -> str:
+    """A model and Effort as shown in a Setting change ("Opus 5.5 high"; the model alone when no Effort)."""
+    return f"{short_model(model)} {effort}" if effort else short_model(model)
+
+
 HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a running instance
 
 
@@ -86,6 +91,7 @@ def create_app(service_factory: Callable[[], QueryService],
                       f'class="id" title="{sid}">{label}</a>')
 
     app.add_template_global(short_model)
+    app.add_template_global(setting_label)
 
     @app.template_global()
     def project_name(key: str) -> str:
@@ -456,7 +462,12 @@ def create_app(service_factory: Callable[[], QueryService],
                                   "pre": c.pre_tokens, "post": c.post_tokens, "late": c.late}
                                  for c in timeline.compactions],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
-                          for c in timeline.compactions if c.late]}
+                          for c in timeline.compactions if c.late],
+                 "settingChanges": [
+                     {"index": c.before_index,
+                      "label": f"{setting_label(c.from_model, c.from_effort)} → "
+                               f"{setting_label(c.to_model, c.to_effort)}"}
+                     for c in timeline.setting_changes]}
         return render_template("session.html", t=timeline, chart_data=chart,
                                period=period, in_period=in_period,
                                suggested_keys=service.session_suggestions(session_id) if agent_id is None else [],

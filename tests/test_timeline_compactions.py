@@ -50,7 +50,7 @@ def test_session_page_has_a_legend_with_one_entry_per_mark(root, tmp_path):
     for mark in ("Cold write", "after an idle gap", "Oversized context",
                  "Compact threshold", "Compaction"):
         assert mark in legend
-    assert legend.count("<li") == 5
+    assert legend.count("<li") == 6  # incl. Setting change
 
 
 def test_requests_table_interleaves_compaction_rows_and_highlights_late_compact(root, tmp_path):
