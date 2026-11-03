@@ -1,6 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -32,6 +33,15 @@ def _short_day(d: date) -> str:
 def short_id(id: str, n: int = 8) -> str:
     """The leading characters of an id, as the `ui.sid` template macro shows it (minus the ellipsis)."""
     return id[:n]
+
+
+_MODEL_ID = re.compile(r"claude-([a-z]+)-(\d+(?:-\d{1,2})*)(?:-\d{8})?")
+
+
+def short_model(model_id: str) -> str:
+    """A model ID by its display name (`claude-opus-5-5` -> "Opus 5.5"); an ID of another shape unchanged."""
+    m = _MODEL_ID.fullmatch(model_id)
+    return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
 
 
 HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a running instance
@@ -74,6 +84,8 @@ def create_app(service_factory: Callable[[], QueryService],
         args = {"from": period.start.isoformat(), "to": period.end.isoformat()} if period else {}
         return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id, **args))}" '
                       f'class="id" title="{sid}">{label}</a>')
+
+    app.add_template_global(short_model)
 
     @app.template_global()
     def project_name(key: str) -> str:

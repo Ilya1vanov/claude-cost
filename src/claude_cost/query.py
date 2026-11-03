@@ -234,6 +234,7 @@ class TimelinePoint:
     cache_event: str  # cold | warm | none (a Cold write is marked)
     cold_resume: bool = False  # Cold resume per its configured thresholds
     threshold: int | None = None  # Compact threshold of this request's model (None: unknown)
+    effort: str = ""  # Effort the request was made with ("" when not recorded)
 
 
 @dataclass(frozen=True)
@@ -611,8 +612,10 @@ class QueryService:
         or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
         rows = self._conn.execute(
             f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
-            f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event "
+            f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event, "
+            "COALESCE(d.effort, '') AS effort "
             f"FROM requests r {SESSION_JOIN} "
+            "LEFT JOIN request_dims d ON d.message_id = r.message_id "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN request_cache c ON c.message_id = r.message_id "
             f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
@@ -629,7 +632,8 @@ class QueryService:
             points.append(TimelinePoint(
                 r["message_id"], r["ts_epoch"], r["model"], r["ctx"], r["cost"], gap,
                 gap is not None and gap > idle_gap, r["event"],
-                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx)))
+                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx),
+                effort=r["effort"]))
         analysis = self.compact_thresholds()
 
         def threshold(model: str) -> int | None:
