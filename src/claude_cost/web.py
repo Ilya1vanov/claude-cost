@@ -44,6 +44,11 @@ def short_model(model_id: str) -> str:
     return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
 
 
+def setting_change_label(change) -> str:
+    return (f"{setting_label(change.from_model, change.from_effort)} → "
+            f"{setting_label(change.to_model, change.to_effort)}")
+
+
 def setting_label(model: str, effort: str) -> str:
     """A model and Effort as shown in a Setting change ("Opus 5.5 high"; the model alone when no Effort)."""
     return f"{short_model(model)} {effort}" if effort else short_model(model)
@@ -92,6 +97,7 @@ def create_app(service_factory: Callable[[], QueryService],
 
     app.add_template_global(short_model)
     app.add_template_global(setting_label)
+    app.add_template_global(setting_change_label)
 
     @app.template_global()
     def project_name(key: str) -> str:
@@ -465,8 +471,7 @@ def create_app(service_factory: Callable[[], QueryService],
                           for c in timeline.compactions if c.late],
                  "settingChanges": [
                      {"index": c.before_index,
-                      "label": f"{setting_label(c.from_model, c.from_effort)} → "
-                               f"{setting_label(c.to_model, c.to_effort)}"}
+                      "label": setting_change_label(c)}
                      for c in timeline.setting_changes]}
         return render_template("session.html", t=timeline, chart_data=chart,
                                period=period, in_period=in_period,

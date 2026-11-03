@@ -14,7 +14,7 @@
       {% elif t.total_cost is not none and t.subagent_cost %}<p class="sub">{{ t.total_requests }} requests, <strong>${{ "%.2f"|format(t.total_cost) }}</strong>
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }})</p>
       {% else %}<p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>{% endif %}
-      {% if t.combinations %}<p class="sub" id="combinations">{% for c in t.combinations %}{% if not loop.first %}; {% endif %}{{ short_model(c.model) }}{% if c.effort %} · {{ c.effort }}{% endif %}{% if t.combinations|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
+      {% set combos = t.combinations %}{% if combos %}<p class="sub" id="combinations">{% for c in combos %}{% if not loop.first %}; {% endif %}{{ short_model(c.model) }}{% if c.effort %} · {{ c.effort }}{% endif %}{% if combos|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
       {% if t.points %}<p class="sub">{{ when(t.points[0].ts) }} to {{ when(t.points[-1].ts) }}</p>{% endif %}
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
@@ -54,7 +54,7 @@
         <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
           (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
       {% for c in t.setting_changes %}<tr class="setting-change"><td>{{ when(c.ts) }}</td><td>Setting change</td>
-        <td>{{ setting_label(c.from_model, c.from_effort) }} → {{ setting_label(c.to_model, c.to_effort) }}</td></tr>{% endfor %}
+        <td>{{ setting_change_label(c) }}</td></tr>{% endfor %}
       {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
         <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
           {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}

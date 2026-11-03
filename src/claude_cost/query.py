@@ -695,7 +695,7 @@ class QueryService:
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
-              if parent and agent_id is None else (None, None, 0.0)),
+              if parent and agent_id is None else ()),
             setting_changes=self._setting_changes(points))
 
     @staticmethod

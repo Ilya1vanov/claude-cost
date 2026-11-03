@@ -6,25 +6,29 @@
   var line = theme.token("--text"), cold = theme.token("--up"), idle = theme.token("--warn"),
       late = theme.token("--late"), mark = theme.token("--compact"), lateMark = theme.token("--late-compact");
   // Vertical line at every compaction, between the requests before and after it
-  var compactionLines = { id: "compactionLines", afterDatasetsDraw: function (chart) {
-    var x = chart.scales.x, a = chart.chartArea, ctx = chart.ctx;
-    d.compactions.forEach(function (c) {
+  // Vertical line at each given point, in the given colour and dash pattern
+  function verticalLines(id, list, color, dash, pixel) {
+    return { id: id, afterDatasetsDraw: function (chart) {
+      var a = chart.chartArea, ctx = chart.ctx;
+      list().forEach(function (c) {
+        var px = pixel(chart.scales.x, c);
+        ctx.save(); ctx.strokeStyle = color(c); ctx.lineWidth = 2; ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); ctx.restore();
+      });
+    } };
+  }
+  // At every compaction, between the requests before and after it (solid)
+  var compactionLines = verticalLines("compactionLines", function () { return d.compactions; },
+    function (c) { return c.late ? lateMark : mark; }, [], function (x, c) {
       var left = x.getPixelForValue(Math.max(c.index - 1, 0)), right = x.getPixelForValue(Math.min(c.index, d.labels.length - 1));
-      var px = c.index === 0 ? left : c.index >= d.labels.length ? right : (left + right) / 2;
-      ctx.save(); ctx.strokeStyle = c.late ? lateMark : mark; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); ctx.restore();
+      return c.index === 0 ? left : c.index >= d.labels.length ? right : (left + right) / 2;
     });
-  } };
-  // Dashed vertical line at every Setting change, in its own colour (compactions are solid)
+  // At every Setting change, in its own colour (dashed)
   var settingColor = theme.token("--setting");
-  var settingLines = { id: "settingLines", afterDatasetsDraw: function (chart) {
-    var x = chart.scales.x, a = chart.chartArea, ctx = chart.ctx;
-    d.settingChanges.forEach(function (c) {
-      var px = (x.getPixelForValue(c.index - 1) + x.getPixelForValue(c.index)) / 2;
-      ctx.save(); ctx.strokeStyle = settingColor; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
-      ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); ctx.restore();
+  var settingLines = verticalLines("settingLines", function () { return d.settingChanges; },
+    function () { return settingColor; }, [5, 4], function (x, c) {
+      return (x.getPixelForValue(c.index - 1) + x.getPixelForValue(c.index)) / 2;
     });
-  } };
   function changeAt(index) {
     return d.settingChanges.filter(function (c) { return c.index === index; })[0];
   }
