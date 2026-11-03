@@ -238,6 +238,15 @@ class TimelinePoint:
 
 
 @dataclass(frozen=True)
+class ModelEffort:
+    """One model + Effort combination a timeline's requests used."""
+    model: str
+    effort: str  # "" when not recorded
+    requests: int
+    cost: float
+
+
+@dataclass(frozen=True)
 class CompactionMark:
     ts: float
     trigger: str  # manual | auto
@@ -298,6 +307,16 @@ class SessionTimeline:
     total_requests: int | None = None
     subagent_cost: float = 0.0
     setting_changes: tuple[SettingChange, ...] = ()
+
+    @property
+    def combinations(self) -> tuple[ModelEffort, ...]:
+        """The model + Effort combinations of this timeline's own requests, in order of first use."""
+        seen: dict[tuple[str, str], list] = {}
+        for p in self.points:
+            n = seen.setdefault((p.model, p.effort), [0, 0.0])
+            n[0] += 1
+            n[1] += p.cost
+        return tuple(ModelEffort(m, e, n, c) for (m, e), (n, c) in seen.items())
 
     @property
     def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
