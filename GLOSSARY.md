@@ -62,6 +62,14 @@ _Avoid_: thread, sidechain, transcript
 The kind of a subagent, such as Explore or Plan, as named in its transcript metadata; requests made by the session itself have none.
 _Avoid_: agent type, agent
 
+**Effort**:
+The reasoning effort level a request was made with, such as low, medium or high; older transcripts do not record it.
+_Avoid_: thinking level, reasoning budget
+
+**Setting change**:
+A request whose model or effort differs from the previous request in its stream; the first request is never one, and a request whose effort is not recorded does not change effort.
+_Avoid_: switch, model swap
+
 ## Money
 
 **Cost**:
