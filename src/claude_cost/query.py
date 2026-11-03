@@ -311,12 +311,13 @@ class SessionTimeline:
     @property
     def combinations(self) -> tuple[ModelEffort, ...]:
         """The model + Effort combinations of this timeline's own requests, in order of first use."""
-        seen: dict[tuple[str, str], list] = {}
+        requests: dict[tuple[str, str], int] = {}
+        costs: dict[tuple[str, str], float] = {}
         for p in self.points:
-            n = seen.setdefault((p.model, p.effort), [0, 0.0])
-            n[0] += 1
-            n[1] += p.cost
-        return tuple(ModelEffort(m, e, n, c) for (m, e), (n, c) in seen.items())
+            key = (p.model, p.effort)
+            requests[key] = requests.get(key, 0) + 1
+            costs[key] = costs.get(key, 0.0) + p.cost
+        return tuple(ModelEffort(m, e, requests[m, e], costs[m, e]) for m, e in requests)
 
     @property
     def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:

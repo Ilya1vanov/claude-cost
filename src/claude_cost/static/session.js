@@ -5,7 +5,6 @@
   }
   var line = theme.token("--text"), cold = theme.token("--up"), idle = theme.token("--warn"),
       late = theme.token("--late"), mark = theme.token("--compact"), lateMark = theme.token("--late-compact");
-  // Vertical line at every compaction, between the requests before and after it
   // Vertical line at each given point, in the given colour and dash pattern
   function verticalLines(id, list, color, dash, pixel) {
     return { id: id, afterDatasetsDraw: function (chart) {

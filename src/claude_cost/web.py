@@ -96,7 +96,6 @@ def create_app(service_factory: Callable[[], QueryService],
                       f'class="id" title="{sid}">{label}</a>')
 
     app.add_template_global(short_model)
-    app.add_template_global(setting_label)
     app.add_template_global(setting_change_label)
 
     @app.template_global()
