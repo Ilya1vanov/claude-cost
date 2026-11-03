@@ -234,6 +234,16 @@ class TimelinePoint:
     cache_event: str  # cold | warm | none (a Cold write is marked)
     cold_resume: bool = False  # Cold resume per its configured thresholds
     threshold: int | None = None  # Compact threshold of this request's model (None: unknown)
+    effort: str = ""  # Effort the request was made with ("" when not recorded)
+
+
+@dataclass(frozen=True)
+class ModelEffort:
+    """One model + Effort combination a timeline's requests used."""
+    model: str
+    effort: str  # "" when not recorded
+    requests: int
+    cost: float
 
 
 @dataclass(frozen=True)
@@ -245,6 +255,17 @@ class CompactionMark:
     before_index: int  # number of timeline points before the compaction
     threshold: int | None = None  # Compact threshold of the model it ran on
     late: bool = False  # Late compact: came after a request above the threshold
+
+
+@dataclass(frozen=True)
+class SettingChange:
+    """A request whose model or Effort differs from the previous request's in its Stream."""
+    before_index: int  # index of the request it happens before
+    ts: float  # that request's time
+    from_model: str
+    from_effort: str  # "" when not recorded
+    to_model: str
+    to_effort: str
 
 
 @dataclass(frozen=True)
@@ -285,6 +306,18 @@ class SessionTimeline:
     total_cost: float | None = None
     total_requests: int | None = None
     subagent_cost: float = 0.0
+    setting_changes: tuple[SettingChange, ...] = ()
+
+    @property
+    def combinations(self) -> tuple[ModelEffort, ...]:
+        """The model + Effort combinations of this timeline's own requests, in order of first use."""
+        requests: dict[tuple[str, str], int] = {}
+        costs: dict[tuple[str, str], float] = {}
+        for p in self.points:
+            key = (p.model, p.effort)
+            requests[key] = requests.get(key, 0) + 1
+            costs[key] = costs.get(key, 0.0) + p.cost
+        return tuple(ModelEffort(m, e, requests[m, e], costs[m, e]) for m, e in requests)
 
     @property
     def sequence(self) -> tuple[tuple[str, TimelinePoint | CompactionMark], ...]:
@@ -611,8 +644,10 @@ class QueryService:
         or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
         rows = self._conn.execute(
             f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
-            f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event "
+            f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event, "
+            "COALESCE(d.effort, '') AS effort "
             f"FROM requests r {SESSION_JOIN} "
+            "LEFT JOIN request_dims d ON d.message_id = r.message_id "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN request_cache c ON c.message_id = r.message_id "
             f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
@@ -629,7 +664,8 @@ class QueryService:
             points.append(TimelinePoint(
                 r["message_id"], r["ts_epoch"], r["model"], r["ctx"], r["cost"], gap,
                 gap is not None and gap > idle_gap, r["event"],
-                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx)))
+                cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx),
+                effort=r["effort"]))
         analysis = self.compact_thresholds()
 
         def threshold(model: str) -> int | None:
@@ -660,7 +696,16 @@ class QueryService:
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
-              if parent and agent_id is None else ()))
+              if parent and agent_id is None else ()),
+            setting_changes=self._setting_changes(points))
+
+    @staticmethod
+    def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:
+        """Model changes, and Effort changes between two recorded Efforts; both at once is one."""
+        return tuple(
+            SettingChange(i, b.ts, a.model, a.effort, b.model, b.effort)
+            for i, (a, b) in enumerate(zip(points, points[1:]), 1)
+            if a.model != b.model or (a.effort and b.effort and a.effort != b.effort))
 
     @staticmethod
     def _mark(c, before: int, points: list[TimelinePoint]) -> CompactionMark:

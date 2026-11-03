@@ -1,6 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -32,6 +33,25 @@ def _short_day(d: date) -> str:
 def short_id(id: str, n: int = 8) -> str:
     """The leading characters of an id, as the `ui.sid` template macro shows it (minus the ellipsis)."""
     return id[:n]
+
+
+_MODEL_ID = re.compile(r"claude-([a-z]+)-(\d+(?:-\d{1,2})*)(?:-\d{8})?")
+
+
+def short_model(model_id: str) -> str:
+    """A model ID by its display name (`claude-opus-5-5` -> "Opus 5.5"); an ID of another shape unchanged."""
+    m = _MODEL_ID.fullmatch(model_id)
+    return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
+
+
+def setting_change_label(change) -> str:
+    return (f"{setting_label(change.from_model, change.from_effort)} → "
+            f"{setting_label(change.to_model, change.to_effort)}")
+
+
+def setting_label(model: str, effort: str) -> str:
+    """A model and Effort as shown in a Setting change ("Opus 5.5 high"; the model alone when no Effort)."""
+    return f"{short_model(model)} {effort}" if effort else short_model(model)
 
 
 HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a running instance
@@ -74,6 +94,9 @@ def create_app(service_factory: Callable[[], QueryService],
         args = {"from": period.start.isoformat(), "to": period.end.isoformat()} if period else {}
         return Markup(f'<a href="{escape(url_for("session_timeline", session_id=session_id, **args))}" '
                       f'class="id" title="{sid}">{label}</a>')
+
+    app.add_template_global(short_model)
+    app.add_template_global(setting_change_label)
 
     @app.template_global()
     def project_name(key: str) -> str:
@@ -444,7 +467,11 @@ def create_app(service_factory: Callable[[], QueryService],
                                   "pre": c.pre_tokens, "post": c.post_tokens, "late": c.late}
                                  for c in timeline.compactions],
                  "late": [{"index": c.before_index, "pre": c.pre_tokens}
-                          for c in timeline.compactions if c.late]}
+                          for c in timeline.compactions if c.late],
+                 "settingChanges": [
+                     {"index": c.before_index,
+                      "label": setting_change_label(c)}
+                     for c in timeline.setting_changes]}
         return render_template("session.html", t=timeline, chart_data=chart,
                                period=period, in_period=in_period,
                                suggested_keys=service.session_suggestions(session_id) if agent_id is None else [],
