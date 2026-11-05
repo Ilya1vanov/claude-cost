@@ -92,6 +92,75 @@ def test_card_has_baseline_and_deltas(root, service_for):
     assert card.baseline.cold_cost == pytest.approx(100_000 * 5 / 1e6)
 
 
+# --- Cache loss: a Cold write's cost beyond reading the same tokens ----------------------------
+
+def _loss(root, service_for, *reqs):
+    root.write_transcript("p", "s1", list(reqs))
+    return service_for(root).cache_card("last7", NOW)
+
+
+def test_cold_write_loses_its_cost_beyond_a_read_of_the_same_tokens(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", write_1h=100_000),   # warm
+                 req("b", "2026-10-29T14:00:00Z", write_1h=100_000))   # cold: 1h write $8/M, read $0.2/M
+    assert card.current.cache_loss == pytest.approx(100_000 * (8 - 0.2) / 1e6)
+
+
+@pytest.mark.parametrize("ttl, write_rate", [("write_5m", 5), ("write_1h", 8)])
+def test_5m_and_1h_cold_writes_of_equal_size_lose_different_amounts(root, service_for, ttl, write_rate):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", **{ttl: 100_000}),
+                 req("b", "2026-10-29T12:00:00Z", **{ttl: 100_000}))
+    assert card.current.cache_loss == pytest.approx(100_000 * (write_rate - 0.2) / 1e6)
+
+
+def test_a_cold_write_above_the_prompt_tier_uses_the_tiered_read_rate(root, service_for):
+    """claude-haiku-5-5: 1h write $0.2/M, read $0.01/M; both x5 above a 100K prompt."""
+    haiku = "claude-haiku-5-5"
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", model=haiku, write_1h=1_000),
+                 req("b", "2026-10-29T14:00:00Z", model=haiku, write_1h=150_000),   # tiered
+                 req("c", "2026-10-29T18:00:00Z", model=haiku, write_1h=50_000))    # flat
+    assert card.current.cache_loss == pytest.approx(
+        150_000 * (1.0 - 0.05) / 1e6 + 50_000 * (0.2 - 0.01) / 1e6)
+
+
+def test_warm_writes_reads_and_uncached_input_are_not_cache_loss(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", input=5_000, write_1h=100_000),
+                 req("b", "2026-10-29T10:01:00Z", input=5_000, cache_read=100_000, write_1h=2_000))
+    assert card.current.cache_loss == 0
+    assert card.current.cache_loss_share == 0
+
+
+def test_cache_loss_share_is_of_the_periods_total_cost_including_output(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", write_1h=100_000),                  # $0.80
+                 req("b", "2026-10-29T14:00:00Z", write_1h=100_000, output=100_000))  # $0.80 + $2.00
+    assert card.current.cache_loss == pytest.approx(0.78)
+    assert card.current.cache_loss_share == pytest.approx(0.78 / 3.6)
+
+
+def test_cache_loss_share_is_none_without_cost(root, service_for):
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.current.cache_loss == 0
+    assert card.current.cache_loss_share is None
+    assert card.delta_cache_loss_share is None
+
+
+def test_cache_loss_share_change_vs_baseline(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("a", "2026-10-20T10:00:00Z", write_1h=100_000),
+        req("b", "2026-10-20T14:00:00Z", write_1h=100_000),   # baseline: loss 0.78 of 1.6
+    ])
+    root.write_transcript("p", "s2", [
+        req("c", "2026-10-29T10:00:00Z", write_1h=100_000),   # current: no loss
+    ])
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.baseline.cache_loss_share == pytest.approx(0.78 / 1.6)
+    assert card.delta_cache_loss_share == pytest.approx(0 - 0.78 / 1.6)
+
+
 def test_spend_by_cache_event_dimension(root, service_for):
     root.write_transcript("p", "s1", [
         req("a", "2026-10-29T10:00:00Z", write_1h=100_000),
@@ -132,3 +201,23 @@ def test_dashboard_shows_cache_card(root, configure):
     assert 'id="cache-card"' in html
     for label in ("Hit ratio", "Cold writes", "Warm writes", "5m writes", "1h writes"):
         assert label in html
+
+
+def test_dashboard_kpi_row_has_a_cache_loss_tile_and_the_card_a_cache_loss_row(root, configure):
+    root.write_transcript("p", "s1", [
+        req("a", "2026-10-29T10:00:00Z", write_1h=100_000),
+        req("b", "2026-10-29T14:00:00Z", write_1h=100_000),
+    ])
+    env = configure(root)
+    cfg = cli.load_config(env)
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    html = create_app(factory, lambda: NOW).test_client().get("/").get_data(as_text=True)
+    kpis = html.split('class="kpis"')[1].split('class="card"')[0]
+    assert "Cache loss" in kpis and "of spend" in kpis and "$0.78" in kpis
+    assert "Cache hit ratio" not in kpis and "Cold writes" not in kpis
+    card = html.split('id="cache-card"')[1].split("</table>")[0]
+    for label in ("Hit ratio", "Cache loss", "Cold writes"):
+        assert label in card
