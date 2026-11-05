@@ -66,6 +66,12 @@ def test_page_lists_rows_linked_to_session_view_with_short_id(client):
     assert "2026-10-29 11:00" in html
 
 
+def test_whole_row_opens_the_session_view_and_the_name_stays_a_link(client):
+    html = client.get("/sessions").get_data(as_text=True)
+    assert 'data-href="/session/s1aaaaaaaa-1111"' in html
+    assert 'href="/session/s1aaaaaaaa-1111"' in html
+
+
 def test_nav_shows_sessions(client):
     assert ">Sessions</a>" in client.get("/").get_data(as_text=True)
 
@@ -74,7 +80,7 @@ def test_chart_and_csv_respect_filters(client):
     html = client.get("/sessions?project=proj-b").get_data(as_text=True)
     assert "Login work" not in html and "Cart" in html
     assert "/sessions.csv?" in html and "project=proj-b" in html
-    assert 'id="explore-chart"' in html
+    assert 'id="cost-chart"' in html
     res = client.get("/sessions.csv?project=proj-b")
     assert res.mimetype == "text/csv"
     lines = res.get_data(as_text=True).strip().splitlines()

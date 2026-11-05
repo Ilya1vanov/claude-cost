@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta
 from typing import Callable
 
 from .findings import all_findings
+from .spotlights import match_score
 from .sql import COMPONENTS, SESSION_ID_SQL, SESSION_JOIN
 
 NONE = "(none)"
@@ -33,6 +34,7 @@ DEFAULT_GROUP = "date"
 ROW_CAP = 200  # rows a page shows; the rest is reached by narrowing the filters
 SESSION_SORTS = ("session", "project", "last_activity", "cost", "requests", "share")
 BREAKDOWN_SORTS = ("value", "cost", "requests", "share")
+DESC_FIRST = ("last_activity", "cost", "requests", "share")  # columns whose first click sorts descending
 
 
 def _resolve_sort(sort: str | None, allowed: tuple[str, ...], default: str) -> tuple[str, str]:
@@ -85,7 +87,7 @@ class Dimension:
         return out
 
     def load_with(self, conn: sqlite3.Connection, findings: Callable[[], list] | None,
-                  labels: dict[str, str] | None = None) -> dict[str, list[str]]:
+                  labels: dict[str, str] | None) -> dict[str, list[str]]:
         """`load`, for dimensions that also need the findings (`findings()` -> list[Finding])
         or the Session labels (logical Session id -> label)."""
         return self.load(conn)
@@ -193,7 +195,7 @@ class FindingDimension(Dimension):
     def titles(self) -> list[str]:
         return [d.title for d in all_findings() if d.kind == self.kind]
 
-    def load_with(self, conn, findings, labels=None):
+    def load_with(self, conn, findings, labels):
         out: dict[str, list[str]] = {}
         for f in findings() if findings else []:
             if f.kind == self.kind:
@@ -208,7 +210,7 @@ class SessionNameDimension(Dimension):
     key, label, groupable = "session_name", "Session name", False
     sql = f"SELECT r.message_id, {SESSION_ID_SQL} FROM requests r {SESSION_JOIN}"
 
-    def load_with(self, conn, findings, labels=None):
+    def load_with(self, conn, findings, labels):
         labels = labels or {}
         return {mid: [f"{labels.get(sid, sid)}\n{sid}" for sid in sids]
                 for mid, sids in self.load(conn).items()}
@@ -280,10 +282,11 @@ class ExploreSpec:
     @classmethod
     def from_query(cls, pairs) -> "ExploreSpec":
         group, filters, sort = DEFAULT_GROUP, {}, None
+        groupable = breakdowns()
         for key, value in pairs:
             if key == "group":
-                if value not in breakdowns():
-                    raise ValueError(f"group must be one of {', '.join(breakdowns())}")
+                if value not in groupable:
+                    raise ValueError(f"group must be one of {', '.join(groupable)}")
                 group = value
             elif key == "sort":
                 sort = value or None  # validated against the page's columns when it runs
@@ -303,15 +306,12 @@ class ExploreSpec:
         dates = tuple(resolve_date(v, today) for v in self.filters["date"])
         return replace(self, filters={**self.filters, "date": dates})
 
-    def with_group(self, group: str) -> "ExploreSpec":
-        return ExploreSpec(group, self.filters)  # the sort keys differ per group: back to default
-
     def drill(self, dim: str, value: str) -> "ExploreSpec":
         """The filters plus `dim = value`: the slice behind one Breakdown row, listed on Sessions."""
         return ExploreSpec(DEFAULT_GROUP, {**self.filters, dim: (value,)})
 
     def without_dim(self, dim: str) -> "ExploreSpec":
-        return ExploreSpec(self.group, {k: v for k, v in self.filters.items() if k != dim})
+        return ExploreSpec(self.group, {k: v for k, v in self.filters.items() if k != dim}, self.sort)
 
     def without(self, dim: str, value: str) -> "ExploreSpec":
         rest = tuple(v for v in self.filters.get(dim, ()) if v != value)
@@ -441,7 +441,8 @@ class FilterOption:
 
 def _session_name_options(conn, local_day, spec, q, session_labels, findings, limit):
     """Suggestions for the Session name filter: Sessions (among the requests the other filters
-    keep) whose label or id contains `q`, costliest first. The value is the label, to be filled in."""
+    keep) whose label or id contains `q` (the Spotlight session search's match), costliest
+    first. The value is the label, to be filled in."""
     narrowed = ExploreSpec(DEFAULT_GROUP, {k: v for k, v in spec.filters.items() if k != "session_name"})
     items, data = _slice(conn, local_day, narrowed, extra=("session",), findings=findings,
                          labels=session_labels)
@@ -449,23 +450,26 @@ def _session_name_options(conn, local_day, spec, q, session_labels, findings, li
     for item in items:
         sid = (data["session"].get(item.message_id) or [NONE])[0]
         cost[sid] = cost.get(sid, 0.0) + item.cost
-    needle = q.strip().lower()
+    query = q.strip()
     found = [(sid, session_labels.get(sid, sid), c) for sid, c in cost.items()
-             if not needle or needle in session_labels.get(sid, sid).lower() or needle in sid.lower()]
+             if match_score(query, session_labels.get(sid, sid)) is not None
+             or match_score(query, sid) is not None]
     found.sort(key=lambda f: (-f[2], f[1], f[0]))
     return [FilterOption(name, name, 1, sid, f"${fmt_cost(c)}") for sid, name, c in found[:limit]]
 
 
 def filter_options(conn, local_day, spec: ExploreSpec, key: str, q: str = "",
-                   labels: dict[str, str] | None = None, findings=None,
-                   limit: int = 100, session_labels: dict[str, str] | None = None) -> list[FilterOption]:
+                   value_names: Callable[[str], dict[str, str]] = lambda key: {}, findings=None,
+                   limit: int = 100) -> list[FilterOption]:
     """The values of dimension `key` for the filter popover: the top `limit` by Session count
     among the requests the *other* filters keep, narrowed by `q` (case-insensitive, on the
     readable label or the value). Values `spec` already selects for `key` are always listed,
-    at 0 when the other filters leave them nothing."""
+    at 0 when the other filters leave them nothing. `value_names(key)` maps a dimension's
+    values to readable names (`"session"` gives the Session labels)."""
+    session_labels = value_names("session")
     if key == "session_name":
-        return _session_name_options(conn, local_day, spec, q, session_labels or {}, findings, limit)
-    labels = labels or {}
+        return _session_name_options(conn, local_day, spec, q, session_labels, findings, limit)
+    labels = value_names(key)
     selected = spec.filters.get(key, ())
     narrowed = ExploreSpec(DEFAULT_GROUP, {k: v for k, v in spec.filters.items() if k != key})
     items, data = _slice(conn, local_day, narrowed, extra=(key, "session"), findings=findings,
@@ -532,21 +536,29 @@ def to_csv(result: ExploreResult) -> str:
     return buf.getvalue()
 
 
+@dataclass
+class _SessionTotals:
+    project: str
+    last_ts: float
+    cost: float = 0.0
+    requests: int = 0
+
+
 def sessions(conn, local_day, local_time: Callable[[float], datetime], labels: dict[str, str],
              spec: ExploreSpec, findings=None) -> SessionsResult:
     """One row per logical Session over the requests the filters keep, newest activity first by default."""
     key, sort = _resolve_sort(spec.sort, SESSION_SORTS, "-last_activity")
     reqs = requests(conn, local_day, spec, findings, labels)
-    groups: dict[str, list] = {}
+    acc: dict[str, _SessionTotals] = {}
     for r in reqs:
-        g = groups.setdefault(r.session_id, [r.project, r.ts_epoch, 0.0, 0])
-        g[1] = max(g[1], r.ts_epoch)
-        g[2] += r.cost
-        g[3] += 1
+        t = acc.setdefault(r.session_id, _SessionTotals(r.project, r.ts_epoch))
+        t.last_ts = max(t.last_ts, r.ts_epoch)
+        t.cost += r.cost
+        t.requests += 1
     total = sum(r.cost for r in reqs)
-    rows = [SessionRow(sid, labels.get(sid, sid), project, local_time(last), cost, n,
-                       cost / total if total else 0.0)
-            for sid, (project, last, cost, n) in groups.items()]
+    rows = [SessionRow(sid, labels.get(sid, sid), t.project, local_time(t.last_ts), t.cost, t.requests,
+                       t.cost / total if total else 0.0)
+            for sid, t in acc.items()]
     _sorted(rows, lambda r: r.name if key == "session" else getattr(r, key),
             lambda r: r.session_id, sort.startswith("-"))
     return SessionsResult(tuple(rows), total, len(reqs), sort)

@@ -14,14 +14,14 @@
 
   {% if result.rows %}
   <section class="card">
-    <div class="card-head"><h2>Cost by session</h2><a id="csv-link" href="{{ explore_url('sessions_csv', spec) }}">Export CSV</a></div>
-    <div class="chart"><canvas id="explore-chart" aria-label="Cost by Session"></canvas></div>
+    <div class="card-head"><h2>Cost by session</h2><a id="csv-link" href="{{ page_url('sessions_csv', spec) }}">Export CSV</a></div>
+    <div class="chart"><canvas id="cost-chart" aria-label="Cost by Session"></canvas></div>
   </section>
   <section class="card">
     <div class="table-wrap"><table id="sessions-table">
       <tr>{{ ui.sort_th('sessions_page', spec, result.sort, 'session', 'Session') }}{{ ui.sort_th('sessions_page', spec, result.sort, 'project', 'Project') }}{{ ui.sort_th('sessions_page', spec, result.sort, 'last_activity', 'Last activity') }}{{ ui.sort_th('sessions_page', spec, result.sort, 'cost', 'Cost', 'num') }}{{ ui.sort_th('sessions_page', spec, result.sort, 'requests', 'Requests', 'num') }}{{ ui.sort_th('sessions_page', spec, result.sort, 'share', 'Share %', 'num') }}</tr>
       {% for r in result.shown %}
-      <tr><td><a href="{{ url_for('session_timeline', session_id=r.session_id) }}">{{ r.name }}</a><br><small>{{ short_id(r.session_id) }}</small></td>
+      <tr class="row-link" data-href="{{ url_for('session_timeline', session_id=r.session_id) }}"><td><a href="{{ url_for('session_timeline', session_id=r.session_id) }}">{{ r.name }}</a><br><small>{{ short_id(r.session_id) }}</small></td>
         <td>{{ project_name(r.project) }}</td>
         <td>{{ r.last_activity.strftime("%Y-%m-%d %H:%M") }}</td>
         <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td></tr>
@@ -32,6 +32,7 @@
   {% else %}<p class="card empty">No requests match.</p>{% endif %}
 {% endblock %}
 {% block scripts %}{% if result.rows %}
-  <script id="explore-data" type="application/json">{{ chart_data|tojson }}</script>
-  {{ ui.chart_scripts('explore.js') }}
+  <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
+  {{ ui.chart_scripts('cost_chart.js') }}
+  <script src="{{ url_for('static', filename='session_rows.js') }}"></script>
 {% endif %}{% endblock %}

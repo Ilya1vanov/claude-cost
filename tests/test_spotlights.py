@@ -469,10 +469,11 @@ def test_search_with_an_empty_query_suggests_unpicked_forks_costliest_first(root
     assert got[0].label == "bb flow" and got[0].cost == pytest.approx(40.0)
 
 
-def test_search_matches_label_and_id_as_a_case_insensitive_subsequence(root, desktop, service_for):
+def test_search_matches_label_and_id_as_a_case_insensitive_substring(root, desktop, service_for):
     svc = picked_service(root, desktop, service_for)
-    assert [c.session_id for c in svc.search_sessions("BLPG", "w")] == ["bill"]  # label: BiLling PaGe
-    assert [c.session_id for c in svc.search_sessions("fkh", "w")] == ["fork-hi"]  # id: Fork-Hi
+    assert [c.session_id for c in svc.search_sessions("LLING PA", "w")] == ["bill"]  # label: biLLING PAge
+    assert [c.session_id for c in svc.search_sessions("RK-H", "w")] == ["fork-hi"]  # id: foRK-Hi
+    assert svc.search_sessions("blpg", "w") == [] and svc.search_sessions("fkh", "w") == []  # not a subsequence
     assert svc.search_sessions("zzz", "w") == []
     assert svc.search_sessions("bb", "w")[0].kind == "Fork"
 
@@ -498,11 +499,11 @@ def test_search_ranks_suggested_forks_then_match_quality_then_cost(root, desktop
     assert [c.suggested for c in got] == [True, True, False]
 
 
-def test_search_prefers_contiguous_and_earlier_matches_over_cost(root, service_for):
+def test_search_prefers_earlier_matches_over_cost_and_ignores_scattered_letters(root, service_for):
     for sid, prompt, out in (("a", "x login", M * 3), ("b", "l-o-g-i-n", M * 2), ("c", "login", M)):
         root.write_transcript("p", sid, [req(f"m{sid}", "2026-10-30T01:00:00Z", output=out)], prompt=prompt)
     svc = service_for(root)
-    assert [c.session_id for c in svc.search_sessions("login", "none")] == ["c", "a", "b"]
+    assert [c.session_id for c in svc.search_sessions("login", "none")] == ["c", "a"]
 
 
 def test_search_returns_at_most_ten(root, service_for):
