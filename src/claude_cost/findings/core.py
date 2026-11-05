@@ -172,8 +172,11 @@ class FindingContext:
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
                  compare_model: str = DEFAULT_COMPARE_MODEL, *,
-                 median_first_context: float | None, graph=None):
+                 median_first_context: float | None, graph=None,
+                 period_start: float | None = None, period_end: float | None = None):
         self.rows = rows
+        # the Period's own bounds (end exclusive); None on a side that is all history
+        self.period_start, self.period_end = period_start, period_end
         # lifetime, not per Period; None when the store has not stored it (Cold resume then reports nothing)
         self.median_first_context = median_first_context
         if graph is None and conn is not None:
@@ -196,16 +199,23 @@ class FindingContext:
             inference_geo=r.inference_geo, table=self.price_table)
 
 
+def ts_where(column: str, lo: float | None, hi: float | None) -> tuple[str, list[float]]:
+    """A `WHERE` clause (empty when both are None) keeping `column` from `lo` up to `hi`, end
+    exclusive, and its args. Plain comparisons, so SQLite can use the column's index."""
+    where, args = [], []
+    if lo is not None:
+        where.append(f"{column} >= ?")
+        args.append(lo)
+    if hi is not None:
+        where.append(f"{column} < ?")
+        args.append(hi)
+    return ("WHERE " + " AND ".join(where) + " " if where else ""), args
+
+
 def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
               hi: float | None) -> list[RequestRow]:
     """The Requests from `lo` up to `hi` (all when None), oldest first, with their stored Stream facts."""
-    where, args = [], []
-    if lo is not None:
-        where.append("r.ts_epoch >= ?")
-        args.append(lo)
-    if hi is not None:
-        where.append("r.ts_epoch < ?")
-        args.append(hi)
+    where, args = ts_where("r.ts_epoch", lo, hi)
     sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
@@ -218,7 +228,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
            "LEFT JOIN request_stream st ON st.message_id = r.message_id "
            "LEFT JOIN request_attrs a ON a.message_id = r.message_id "
            "LEFT JOIN request_surface sv ON sv.message_id = r.message_id "
-           + ("WHERE " + " AND ".join(where) + " " if where else "")
+           + where
            + "ORDER BY r.ts_epoch, r.message_id")
     found = conn.execute(sql, args).fetchall()
     agents = json.dumps(sorted({x["agent_id"] for x in found if x["agent_id"]}))

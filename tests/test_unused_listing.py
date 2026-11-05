@@ -83,6 +83,77 @@ def test_use_outside_the_period_does_not_count(root, service_for):
     assert _by_id(svc.findings())["unused-listing"].requests == ()  # all history: it was used
 
 
+def test_use_before_the_first_period_request_on_its_first_day_counts(root, service_for):
+    # the Period starts at its first local day's start, not at its first Request (10:00)
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    early = tool_use_line("2026-10-30T08:00:00Z", "t0", "Skill", {"skill": "tdd"})
+    _session(root, "p", "s1", listing)
+    root.write_transcript("p", "early", [req("e1", "2026-10-30T10:20:00Z")], extra_lines=[early])
+    day = __import__("datetime").date(2026, 10, 30)
+    assert _by_id(service_for(root).findings(day, day))["unused-listing"].requests == ()
+
+
+def test_use_after_the_period_does_not_count_on_a_past_period(root, service_for):
+    import datetime
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    after = tool_use_line("2026-10-31T10:06:00Z", "t0", "Skill", {"skill": "tdd"})
+    _session(root, "p", "s1", listing)
+    root.write_transcript("p", "later", [req("l1", "2026-10-31T10:00:00Z", write_1h=1000)],
+                          extra_lines=[after])
+    svc = service_for(root)
+    day = datetime.date(2026, 10, 30)
+    assert _by_id(svc.findings(day, day))["unused-listing"].avoidable == pytest.approx(0.004)
+    assert _by_id(svc.findings(day))["unused-listing"].requests == ()  # from day on: it was used
+    assert _by_id(svc.findings())["unused-listing"].requests == ()  # all history: it was used
+
+
+def test_used_elsewhere_ignores_a_use_in_another_project_after_the_period(root, service_for):
+    import datetime
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    after = tool_use_line("2026-10-31T10:06:00Z", "t0", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing)
+    root.write_transcript("proj-b", "b1", [req("b-1", "2026-10-31T10:00:00Z", write_1h=1000)],
+                          extra_lines=[after])
+    day = datetime.date(2026, 10, 30)
+    (row,) = _by_id(service_for(root).findings(day, day))["unused-listing"].table.rows
+    assert row[3] == "0"
+
+
+def test_used_elsewhere_counts_a_use_in_another_project_inside_the_period(root, service_for):
+    import datetime
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing + [use])
+    _session(root, "proj-b", "b1", listing)
+    day = datetime.date(2026, 10, 30)
+    (row,) = _by_id(service_for(root).findings(day, day))["unused-listing"].table.rows
+    assert row[3] == "1"
+
+
+def test_current_period_counts_a_use_inside_it(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", {**_skill("tdd", 10_000),
+                                                           **_skill("big", 10_000)})]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "p", "s1", listing + [use])
+    top = {f.id: f for f in service_for(root).top_findings("last7", NOW)}
+    assert [r[0] for r in top["unused-listing"].table.rows] == ["big"]
+
+
+def test_slash_command_use_after_the_period_does_not_count(root, service_for):
+    import datetime
+    import json
+    from helpers import assistant_lines
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("plug:tdd", 10_000))]
+    rec = assistant_lines(req("slash", "2026-10-31T10:07:00Z", output=10), "a1")[0]
+    rec["attributionSkill"] = "tdd"
+    _session(root, "proj-a", "a1", listing + [json.dumps(rec)])
+    svc = service_for(root)
+    day = datetime.date(2026, 10, 30)
+    (row,) = _by_id(svc.findings(day, day))["unused-listing"].table.rows
+    assert row[3] == "0"
+    assert _by_id(svc.findings(day))["unused-listing"].requests == ()
+
+
 def test_subagent_listing_is_read_only_by_that_subagents_requests(root, service_for):
     root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", write_1h=1000),
                                       req("m2", "2026-10-30T10:05:00Z", cache_read=1000)])
