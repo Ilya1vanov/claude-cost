@@ -1,6 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -42,6 +43,15 @@ def short_model(model_id: str) -> str:
     """A model ID by its display name (`claude-opus-5-5` -> "Opus 5.5"); an ID of another shape unchanged."""
     m = _MODEL_ID.fullmatch(model_id)
     return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
+
+
+MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+
+
+def model_family(model_id: str) -> str:
+    """The color family of a model ID ("opus", "sonnet", "haiku", "fable"); "unknown" for an old or other ID."""
+    m = _MODEL_ID.fullmatch(model_id)
+    return m[1] if m and m[1] in MODEL_FAMILIES else "unknown"
 
 
 def setting_change_label(change) -> str:
@@ -96,6 +106,7 @@ def create_app(service_factory: Callable[[], QueryService],
                       f'class="id" title="{sid}">{label}</a>')
 
     app.add_template_global(short_model)
+    app.add_template_global(model_family)
     app.add_template_global(setting_change_label)
 
     @app.template_global()
@@ -504,6 +515,30 @@ def create_app(service_factory: Callable[[], QueryService],
         spec = page_spec()
         service = page_service()
         return csv_response(explore.to_csv(run_page(service, service.explore, spec)), spec.group)
+
+    @app.get("/api/session/<session_id>/timeline")
+    @app.get("/api/session/<session_id>/agent/<agent_id>/timeline")
+    def session_timeline_rows(session_id: str, agent_id: str | None = None):
+        """The Timeline's rows as JSON: each a dict tagged by `kind`, with a local `time`."""
+        service = service_factory()
+        timeline = service.session_timeline(session_id, agent_id, with_rows=True)
+        if timeline is None:
+            abort(404)
+
+        def encode(row) -> dict:
+            flat = dataclasses.replace(row, rows=()) if row.kind == "subagent" else row
+            out = dataclasses.asdict(flat)
+            out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
+            if row.kind in ("request", "subagent"):
+                out["modelLabel"] = short_model(row.model)
+                out["modelFamily"] = model_family(row.model)
+            elif row.kind == "setting_change":
+                out["label"] = setting_change_label(row)
+            if row.kind == "subagent":
+                out["rows"] = [encode(r) for r in row.rows]
+            return out
+        rows = [encode(r) for r in timeline.rows]
+        return jsonify(rows=rows)
 
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")

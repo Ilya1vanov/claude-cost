@@ -16,6 +16,7 @@ from . import compact as compact_mod
 from . import explore
 from . import findings as findings_mod
 from . import pricing, session_graph, spotlights, store
+from . import timeline_rows as timeline_rows_mod
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
 from .projects import project_display_names
@@ -307,6 +308,9 @@ class SessionTimeline:
     total_requests: int | None = None
     subagent_cost: float = 0.0
     setting_changes: tuple[SettingChange, ...] = ()
+    # The Timeline: rows (tagged by `kind`) in time order. Read from the transcripts, so only
+    # filled when asked for (`session_timeline(with_rows=True)`).
+    rows: tuple[timeline_rows_mod.Row, ...] = ()
 
     @property
     def combinations(self) -> tuple[ModelEffort, ...]:
@@ -639,9 +643,11 @@ class QueryService:
         """How old the last ingest may be before a page load re-ingests (config)."""
         return self._threshold("refresh_stale_seconds")
 
-    def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
+    def session_timeline(self, session_id: str, agent_id: str | None = None,
+                         with_rows: bool = False) -> SessionTimeline | None:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
-        or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
+        or of one Subagent with `agent_id`. None when the Session or Subagent is unknown.
+        `with_rows` also reads the transcripts for the Timeline rows (ADR 0005)."""
         rows = self._conn.execute(
             f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
             f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event, "
@@ -691,13 +697,124 @@ class QueryService:
                                       s.link_kind)
                       for s, first in self._child_sessions(session_id)) if agent_id is None else ()
         parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
-        return SessionTimeline(
+        timeline = SessionTimeline(
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
               if parent and agent_id is None else ()),
             setting_changes=self._setting_changes(points))
+        if not with_rows:
+            return timeline
+        main_paths = [] if agent_id else self._main_paths(stems)
+        content, prompts = timeline_rows_mod.read_content(
+            self._copies(self._tree_message_ids(timeline)), main_paths)
+        return dataclasses.replace(
+            timeline, rows=self._timeline_rows(timeline, stems, main_paths, content, prompts))
+
+    def _main_paths(self, stems: list[str]) -> list[str]:
+        """The Session's own transcripts (not its Subagents')."""
+        return [r["path"] for r in self._conn.execute(
+            f"SELECT path FROM ingest_files WHERE file_stem IN ({','.join('?' * len(stems))}) "
+            "AND path NOT IN (SELECT path FROM subagent_files) ORDER BY path", stems)]
+
+    def _copies(self, ids: list[str]) -> dict[str, list[str]]:
+        """Message id -> the transcript paths holding it, best copy first."""
+        copies: dict[str, list[str]] = {}
+        for i in range(0, len(ids), 500):  # stay under SQLite's variable limit
+            chunk = ids[i:i + 500]
+            for c in self._conn.execute(
+                    "SELECT message_id, path FROM request_copies "
+                    f"WHERE message_id IN ({','.join('?' * len(chunk))}) "
+                    "ORDER BY is_copy, path", chunk):
+                copies.setdefault(c["message_id"], []).append(c["path"])
+        return copies
+
+    def _tree_message_ids(self, t: SessionTimeline) -> list[str]:
+        """The message ids of `t`'s requests and of every Subagent under it, so one Timeline
+        request reads each transcript once (ADR 0005)."""
+        parent = {a.agent_id: a.parent_agent_id for a, _ in self._subagent_starts(t.session_id)}
+
+        def under(agent: str | None) -> bool:
+            while agent is not None and agent != t.agent_id:
+                agent = parent.get(agent)
+            return t.agent_id is None or agent == t.agent_id
+        return [r["message_id"] for r in self._conn.execute(
+            f"SELECT r.message_id, a.agent_id FROM requests r {SESSION_JOIN} "
+            "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+            f"WHERE {SESSION_ID_SQL} = ?", (t.session_id,)) if under(r["agent_id"])]
+
+    def _timeline_rows(self, t: SessionTimeline, stems: list[str], main_paths: list[str],
+                       content: dict[str, timeline_rows_mod.Content],
+                       prompts: list[timeline_rows_mod.PromptRow]) -> tuple:
+        """Prompt and request rows: each request with its content, each prompt before the
+        requests it answers. Prompts are the Session's own; a Subagent's stream has none."""
+        requests = [
+            timeline_rows_mod.RequestRow(
+                p.ts, p.message_id, p.model, p.effort,
+                content[p.message_id].text if p.message_id in content else "",
+                content[p.message_id].tools if p.message_id in content else (),
+                p.context_tokens, p.cost, p.gap_seconds, p.idle,
+                p.cache_event == cache.COLD, p.cold_resume,
+                p.threshold is not None and p.context_tokens > p.threshold, p.threshold,
+                p.message_id in content)
+            for p in t.points]
+        events = self._event_rows(t, stems, main_paths)
+        subagents = self._subagent_rows(t, stems, content)
+        return tuple(sorted([*prompts, *requests, *events, *subagents],
+                            key=timeline_rows_mod.row_order))
+
+    def _event_rows(self, t: SessionTimeline, stems: list[str], main_paths: list[str]) -> list:
+        """Event rows from the timeline's marks. The Fork's opening row is the Session's own."""
+        out: list = [timeline_rows_mod.SettingChangeRow(
+            c.ts, c.from_model, c.from_effort, c.to_model, c.to_effort) for c in t.setting_changes]
+        if t.compactions:  # the same rows, in the same order, as the compactions' query
+            uuids = [r["uuid"] for r in self._conn.execute(
+                f"SELECT uuid FROM compactions WHERE stem IN ({','.join('?' * len(stems))}) "
+                "ORDER BY ts_epoch, uuid", stems)]
+            summaries = timeline_rows_mod.read_summaries(main_paths, set(uuids))
+            out += [timeline_rows_mod.CompactionRow(
+                c.ts, c.trigger, c.pre_tokens, c.post_tokens, c.late, summaries.get(u, ""))
+                for c, u in zip(t.compactions, uuids)]
+        out += [timeline_rows_mod.IdleGapRow(prev.ts, p.gap_seconds)
+                for prev, p in zip(t.points, t.points[1:]) if p.idle]
+        labels = self.session_labels() if t.side_sessions or t.parent_session_id else {}
+        out += [timeline_rows_mod.ChildSessionRow(
+            self._fork_point(s.session_id, s.ts) if s.kind == "fork" else s.ts, s.session_id,
+            labels.get(s.session_id, s.session_id), s.kind, s.requests, s.cost)
+            for s in t.side_sessions]
+        if t.link_kind == "fork" and t.points:
+            out.append(timeline_rows_mod.ForkedFromRow(
+                self._fork_point(t.session_id, t.points[0].ts), t.parent_session_id,
+                labels.get(t.parent_session_id, t.parent_session_id)))
+        return out
+
+    def _fork_point(self, session_id: str, first_own: float) -> float:
+        """Where a Fork left its Parent session: the last request of the copied history in its
+        transcripts; `first_own` (its first own request) when it holds no copies (a Desktop link)."""
+        stems = self.graph.transcripts(session_id)
+        last = self._conn.execute(
+            "SELECT MAX(c.ts_epoch) FROM request_copies c JOIN ingest_files f ON f.path = c.path "
+            f"WHERE c.is_copy = 1 AND f.file_stem IN ({','.join('?' * len(stems))}) "
+            "AND c.path NOT IN (SELECT path FROM subagent_files)", stems).fetchone()[0]
+        return first_own if last is None else last
+
+    def _subagent_rows(self, t: SessionTimeline, stems: list[str],
+                       content: dict[str, timeline_rows_mod.Content]
+                       ) -> list[timeline_rows_mod.SubagentRow]:
+        """One block per direct child launch, holding the child's own rows (so nested Subagents
+        resolve through the parent agent link, recursively), from the content already read."""
+        blocks = []
+        for a in t.subagents:
+            child = self.session_timeline(t.session_id, a.agent_id)
+            if child is None or not child.points:
+                continue
+            first = child.points[0]
+            blocks.append(timeline_rows_mod.SubagentRow(
+                a.ts, a.agent_id, a.agent_type, a.description, a.is_fork, first.model, first.effort,
+                a.requests, max(p.context_tokens for p in child.points), a.cost,
+                self._timeline_rows(child, stems, [], content, [])))
+        return blocks
 
     @staticmethod
     def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:

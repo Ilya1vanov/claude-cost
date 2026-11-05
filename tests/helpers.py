@@ -32,6 +32,8 @@ class Req:
     effort: str | None = None  # record effort ("low" | "medium" | "high")
     tools: tuple[str, ...] = ()  # tool_use blocks (names) on the first streamed line
     skills: tuple[str, ...] = ()  # Skill tool calls (input.skill) on the last streamed line
+    text: str = "x"  # assistant text block, on the first streamed line ("" = none)
+    tool_calls: tuple[tuple[str, dict], ...] = ()  # (name, input) tool_use blocks, last streamed line
 
 
 def req(message_id: str, ts: str, **kw) -> Req:
@@ -58,7 +60,8 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             "type": "assistant", "uuid": f"{r.message_id}-u{i}", "timestamp": r.ts,
             "sessionId": r.session_id or session_id,
             "message": {"id": r.message_id, "model": r.model, "role": "assistant",
-                        "content": [{"type": "text", "text": "x"}], "usage": usage},
+                        "content": [{"type": "text", "text": r.text}] if i == 0 and r.text else [],
+                        "usage": usage},
         }
         if r.entrypoint:
             rec["entrypoint"] = r.entrypoint
@@ -74,6 +77,9 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             rec["message"]["content"] += [
                 {"type": "tool_use", "id": f"s{n}", "name": "Skill", "input": {"skill": s}}
                 for n, s in enumerate(r.skills)]
+            rec["message"]["content"] += [
+                {"type": "tool_use", "id": f"c{n}", "name": name, "input": inp}
+                for n, (name, inp) in enumerate(r.tool_calls)]
         if r.forked_from:
             rec["forkedFrom"] = {"sessionId": r.forked_from, "messageUuid": f"{r.message_id}-u{i}"}
         out.append(rec)
@@ -121,10 +127,11 @@ def block_prompt_line(uuid: str, ts: str, text: str = "look at this", image: boo
     return _user(uuid, ts, blocks, origin={"kind": "human"})
 
 
-def compact_summary_line(uuid: str, ts: str) -> str:
-    """The user record holding a compaction summary: not a prompt."""
-    return _user(uuid, ts, "This session is being continued from a previous conversation...",
-                 isCompactSummary=True)
+def compact_summary_line(uuid: str, ts: str, parent_uuid: str | None = None,
+                         text: str = "This session is being continued from a previous conversation...") -> str:
+    """The user record holding a compaction summary: not a prompt. `parent_uuid` is the uuid of
+    the compact boundary it follows."""
+    return _user(uuid, ts, text, isCompactSummary=True, parentUuid=parent_uuid)
 
 
 def queued_prompt_line(uuid: str, ts: str, text: str = "also do this") -> str:

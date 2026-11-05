@@ -8,13 +8,15 @@
   <div class="page-head">
     <div>
       <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ session_label(t.session_id) }}</small>{% else %}Session {{ session_label(t.session_id, link=False) }}{% endif %}</h1>
+      {% set full_id = t.agent_id or t.session_id %}<p class="id-row"><code class="full-id">{{ full_id }}</code>
+        <button type="button" class="ghost copy-id" data-copy="{{ full_id }}" aria-label="Copy id">Copy</button></p>
       {% if in_period %}<p class="sub">{{ in_period[1] }} requests, <strong>${{ "%.2f"|format(in_period[0]) }}</strong> in {{ period.start }} to {{ period.end }};
         all time: {{ t.total_requests }} requests, ${{ "%.2f"|format(t.total_cost) }}{% if t.subagent_cost %}
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }}){% endif %}</p>
       {% elif t.total_cost is not none and t.subagent_cost %}<p class="sub">{{ t.total_requests }} requests, <strong>${{ "%.2f"|format(t.total_cost) }}</strong>
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }})</p>
       {% else %}<p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>{% endif %}
-      {% set combos = t.combinations %}{% if combos %}<p class="sub" id="combinations">{% for c in combos %}{% if not loop.first %}; {% endif %}{{ short_model(c.model) }}{% if c.effort %} · {{ c.effort }}{% endif %}{% if combos|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
+      {% set combos = t.combinations %}{% if combos %}<p class="sub" id="combinations">{% for c in combos %}{% if not loop.first %}; {% endif %}<span class="badge model-{{ model_family(c.model) }}">{{ short_model(c.model) }}</span>{% if c.effort %} <span class="badge effort-{{ c.effort }}">{{ c.effort }}</span>{% endif %}{% if combos|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
       {% if t.points %}<p class="sub">{{ when(t.points[0].ts) }} to {{ when(t.points[-1].ts) }}</p>{% endif %}
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
@@ -47,38 +49,15 @@
   </section>
 
   <section class="card">
-    <h2>Events</h2>
-    <div class="table-wrap"><table id="events">
-      <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
-      {% for c in t.compactions %}<tr class="compaction{% if c.late %} late-compact{% endif %}"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td>
-        <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
-          (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
-      {% for c in t.setting_changes %}<tr class="setting-change"><td>{{ when(c.ts) }}</td><td>Setting change</td>
-        <td>{{ setting_change_label(c) }}</td></tr>{% endfor %}
-      {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
-        <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
-          {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
-      {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>{{ "Fork" if s.kind == "fork" else "Side session" }} started</td>
-        <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ session_label(s.session_id, link=False) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
-      {% if not (t.compactions or t.setting_changes or t.subagents or t.side_sessions) %}<tr><td colspan="3" class="empty">No events</td></tr>{% endif %}
-    </table></div>
-  </section>
-
-  <section class="card">
-    <h2>Requests</h2>
-    <div class="table-wrap"><table id="requests">
-      <tr><th>Time</th><th>Model</th><th>Effort</th><th class="num">Context</th><th class="num">Cost</th><th>Marks</th></tr>
-      {% for kind, p in t.sequence %}{% if kind == "compaction" %}<tr class="compaction{% if p.late %} late-compact{% endif %}"><td>{{ when(p.ts) }}</td>
-        <td colspan="5">Compaction ({{ p.trigger }}): {{ "{:,}".format(p.pre_tokens) }} to {{ "{:,}".format(p.post_tokens) }} tokens{% if p.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td></tr>
-      {% else %}<tr><td>{{ when(p.ts) }}</td><td>{{ short_model(p.model) }}</td><td>{{ p.effort or "—" }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
-        <td>{% if p.idle %}<span class="badge idle">idle gap {{ (p.gap_seconds / 60)|round|int }} min</span>{% endif %}
-          {% if p.cache_event == "cold" %}<span class="badge cold">Cold write</span>{% endif %}
-          {% if p.cold_resume %}<span class="badge cold">Cold resume</span>{% endif %}
-          {% if p.threshold and p.context_tokens > p.threshold %}<span class="badge over">Oversized context (above {{ "{:,}".format(p.threshold) }})</span>{% endif %}</td></tr>{% endif %}{% endfor %}
-    </table></div>
+    <h2>Timeline</h2>
+    <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
+      <div class="tl-head"><span>Prompts, requests and events <span id="timeline-setting" class="tl-setting"></span> <label class="tl-collapse"><input type="checkbox" id="timeline-collapse"> Collapse text</label> <input type="search" id="timeline-search" class="tl-search" placeholder="Search" aria-label="Search the Timeline"> <span class="tl-search-count num" id="timeline-search-count" aria-live="polite"></span></span><span class="num">Context</span><span class="num">Cost</span></div>
+      <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
+    </div>
   </section>
 {% endblock %}
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
-  {{ ui.chart_scripts('session.js') }}
+  {{ ui.chart_scripts('session.js', module=True) }}
+  <script type="module" src="{{ url_for('static', filename='timeline_window.js') }}"></script>
 {% endblock %}
