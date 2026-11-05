@@ -12,8 +12,8 @@
   <div class="kpis">
     <div class="kpi"><div class="label">Attributed spend</div><div class="value">${{ "%.2f"|format(f.attributed) }}</div>
       <div class="meta">{{ f.requests|length }} requests in {{ f.sessions|length }} sessions</div></div>
-    <div class="kpi"><div class="label">Avoidable spend (lower bound)</div>
-      <div class="value">{% if f.avoidable is none %}not estimated{% else %}${{ "%.2f"|format(f.avoidable) }}{% endif %}</div>
+    <div class="kpi"><div class="label">Avoidable spend</div>
+      <div class="value">{% if f.avoidable is none %}not estimated{% else %}{{ avoidable(f.avoidable, f.avoidable_high) }}{% endif %}</div>
       <div class="meta">{% if f.formula %}Formula: {{ f.formula }}{% else %}&nbsp;{% endif %}</div></div>
   </div>
   {% if f.detail %}<p class="note">{{ f.detail }}</p>{% endif %}
@@ -34,7 +34,7 @@
     <div class="table-wrap"><table id="sessions">
       <tr><th>Session</th><th class="num">Requests</th><th class="num">Attributed</th>{% if f.formula %}<th class="num">Avoidable</th>{% endif %}</tr>
       {% for s in f.sessions %}<tr><td>{{ session_label(s.session_id) }}</td><td class="num">{{ s.requests }}</td>
-        <td class="num">${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td class="num">${{ "%.2f"|format(s.avoidable) }}</td>{% endif %}</tr>
+        <td class="num">${{ "%.2f"|format(s.attributed) }}</td>{% if f.formula %}<td class="num">{{ avoidable(s.avoidable, s.avoidable_high) }}</td>{% endif %}</tr>
       {% else %}<tr><td colspan="4" class="empty">None</td></tr>{% endfor %}
     </table></div>
   </section>
@@ -53,7 +53,7 @@
     <div class="table-wrap"><table id="requests">
       <tr><th>Request</th><th>Session</th><th>Model</th><th class="num">Cost</th>{% if f.formula %}<th class="num">Avoidable (before $0 floor)</th>{% endif %}</tr>
       {% for r in f.requests %}<tr><td>{{ ui.sid(r.message_id, 14) }}</td><td>{{ session_label(r.session_id) }}</td><td>{{ r.model }}</td>
-        <td class="num">${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td class="num">{{ "%.2f"|format(r.avoidable) }}</td>{% endif %}</tr>
+        <td class="num">${{ "%.2f"|format(r.cost) }}</td>{% if f.formula %}<td class="num">{% if r.avoidable_high is none %}{{ "%.2f"|format(r.avoidable) }}{% else %}{{ avoidable(r.avoidable, r.avoidable_high) }}{% endif %}</td>{% endif %}</tr>
       {% endfor %}
     </table></div>
   </section>

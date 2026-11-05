@@ -14,7 +14,7 @@ from . import explore
 from .cache import COLD
 from .explore import ExploreSpec
 from .localtime import parse_since
-from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY
+from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY, format_avoidable
 from .query import COMPARISON_MODES, CUSTOM_MODE, PERIOD_MODES, Period, QueryService, resolve_periods
 from .spotlights import SpotlightError
 from .tooltips import TOOLTIPS
@@ -73,6 +73,7 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
+    app.jinja_env.globals["avoidable"] = format_avoidable
     app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory
 

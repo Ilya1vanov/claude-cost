@@ -7,7 +7,7 @@ import pkgutil
 
 from .core import (DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY, Covered, Detection, Finding,  # noqa: F401
                    CORE_THRESHOLDS, DEFAULT_COMPARE_MODEL, FindingContext, FindingDef, RequestRow, Threshold, build_finding,
-                   load_rows)
+                   format_avoidable, load_rows)
 
 
 def all_findings() -> list[FindingDef]:

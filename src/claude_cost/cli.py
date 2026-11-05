@@ -20,7 +20,7 @@ from . import pricing
 from . import store
 from . import config as config_mod
 from .config import Config, ConfigError, load_config
-from .findings import DRAIN, all_thresholds, NOT_ADDITIVE_NOTE, OPPORTUNITY
+from .findings import DRAIN, all_thresholds, format_avoidable, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
 from .spotlights import SpotlightError
 
@@ -62,7 +62,7 @@ def format_findings(findings) -> str:
         lines.append(f"{heading}:")
         group = [f for f in findings if f.kind == kind]
         for f in group:
-            avoid = "n/a" if f.avoidable is None else f"${f.avoidable:.2f}"
+            avoid = "n/a" if f.avoidable is None else format_avoidable(f.avoidable, f.avoidable_high)
             lines.append(f"  {f.title}: attributed ${f.attributed:.2f}, avoidable {avoid} "
                          f"({len(f.requests)} requests, {len(f.sessions)} sessions)")
             if f.formula:
