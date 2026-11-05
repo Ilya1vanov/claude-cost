@@ -272,7 +272,7 @@ tr.baseline td { background: var(--surface-2); }
 /* Timeline: one box a viewport tall (less the top bar) that scrolls on its own */
 .timeline { height: calc(100vh - 52px); display: flex; flex-direction: column; border: 1px solid var(--border);
   border-radius: var(--radius); overflow: hidden; }
-.tl-head, .tl-request { display: grid; grid-template-columns: 1fr 90px 80px; gap: 12px; align-items: start; padding: 8px 12px; }
+.tl-head, .tl-request { display: grid; grid-template-columns: minmax(0, 1fr) 90px 80px; gap: 12px; align-items: start; padding: 8px 12px; }
 .tl-head { background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600;
   color: var(--muted); }
 .tl-head .num, .tl-request .num { text-align: right; font-variant-numeric: tabular-nums; }
