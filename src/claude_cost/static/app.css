@@ -24,6 +24,8 @@
   --compact: #0b66c3;
   --compact-soft: #e3f0fc;
   --setting: #8e44ad;
+  --command: #1b5e20;     /* a slash command in the Timeline */
+  --command-soft: #e3f3e6;
   --up-soft: #fbe6e6;
   --bar-soft: rgba(93, 103, 118, 0.35);
 
@@ -79,6 +81,8 @@
     --compact: #6cb0f5;
     --compact-soft: #132a40;
     --setting: #c58be0;
+    --command: #7fd49a;
+    --command-soft: #14301c;
     --up-soft: #3a1818;
     --bar-soft: rgba(154, 163, 176, 0.35);
 
@@ -289,6 +293,9 @@ tr.baseline td { background: var(--surface-2); }
 .tl-text.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .tl-tool { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
+.tl-tool[title] { cursor: pointer; }
+.tl-tool.open { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tl-bubble.command { background: var(--command-soft); color: var(--command); font-family: var(--mono); }
 .tl-collapse { font-weight: 400; margin-left: 12px; cursor: pointer; }
 .tl-search { margin-left: 12px; width: 160px; font-size: 12px; }
 .tl-search-count { display: inline-block; min-width: 48px; text-align: left; font-weight: 400; }

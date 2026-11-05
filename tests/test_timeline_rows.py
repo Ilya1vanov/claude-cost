@@ -63,6 +63,30 @@ def test_tool_lines_summarise_the_main_argument_of_known_tools(root, service_for
     assert [(t.name, t.summary) for t in row.tools] == [(name, summary)]
 
 
+def test_tool_line_carries_the_full_main_argument_for_expanding(root, service_for):
+    command = "cat <<'X' > f\n" + "y" * 400 + "\nX"
+    root.write_transcript("p", "s1", [
+        req("m1", "2026-10-30T01:00:00Z", output=1, tool_calls=(("Bash", {"command": command}),))])
+    (row,) = service_for(root).session_timeline("s1", with_rows=True).rows
+    (tool,) = row.tools
+    assert tool.summary == "cat <<'X' > f" and tool.full == command
+
+
+@pytest.mark.parametrize("raw, text", [
+    ("<command-name>/reload-plugins</command-name>\n<command-message>reload-plugins</command-message>\n"
+     "<command-args></command-args>", "/reload-plugins"),
+    ("<command-message>review</command-message>\n<command-name>/review</command-name>\n"
+     "<command-args>78 --strict</command-args>", "/review 78 --strict"),
+])
+def test_slash_command_prompt_is_shown_as_the_command_without_tags(root, service_for, raw, text):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:10Z", output=1)],
+                          extra_lines=[prompt_line("u1", "2026-10-30T01:00:00Z", raw),
+                                       prompt_line("u2", "2026-10-30T01:00:05Z", "plain")])
+    prompts = [r for r in service_for(root).session_timeline("s1", with_rows=True).rows
+               if r.kind == "prompt"]
+    assert [(p.text, p.command) for p in prompts] == [(text, True), ("plain", False)]
+
+
 def test_text_and_tools_of_a_streamed_request_are_joined_across_its_lines(root, service_for):
     root.write_transcript("p", "s1", [
         req("m1", "2026-10-30T01:00:00Z", output=1, lines=2, text="Reading it.",
@@ -133,7 +157,7 @@ def test_json_endpoint_returns_the_rows_tagged_by_kind(root, configure):
                                          "request"]
     assert rows[0]["text"] == "fix the bug" and rows[0]["time"] == "2026-10-30 01:00:00"
     first = rows[1]
-    assert first["text"] == "I will look." and first["tools"] == [{"name": "Read", "summary": "/src/a.py"}]
+    assert first["text"] == "I will look." and first["tools"] == [{"name": "Read", "summary": "/src/a.py", "full": "/src/a.py"}]
     assert first["time"] == "2026-10-30 01:00:10" and first["modelLabel"] == "Opus 5.5"
     assert set(first) >= {"cost", "context_tokens", "idle", "cold_write", "cold_resume",
                           "oversized", "content_available", "effort"}
