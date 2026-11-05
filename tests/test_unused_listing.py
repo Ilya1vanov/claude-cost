@@ -24,7 +24,7 @@ def _by_id(findings):
 def _session(root, project, sid, extra, reads=1_000_000):
     """A session with a first (writing) request and two later requests reading `reads` tokens."""
     root.write_transcript(project, sid, [
-        req(f"{sid}-1", "2026-10-30T10:00:00Z", write_1h=1000),
+        req(f"{sid}-1", "2026-10-30T10:00:00Z", write_1h=100_000),  # writes the whole Listing
         req(f"{sid}-2", "2026-10-30T10:05:00Z", cache_read=reads),
         req(f"{sid}-3", "2026-10-30T10:10:00Z", cache_read=reads),
     ], extra_lines=extra)
@@ -238,7 +238,8 @@ def test_projects_cell_lists_each_projects_cost_and_session_count(root, service_
     _session(root, "proj-a", "a2", listing)
     _session(root, "proj-b", "b1", listing)
     (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
-    assert row[2].items == ("proj-a: $0.80–$16.80, 2 sessions", "proj-b: $0.40–$8.40, 1 session")
+    # each writer wrote 100K of the 1M-token Listing: 100K x $8/M on top of the reads
+    assert row[2].items == ("proj-a: $0.80–$2.40, 2 sessions", "proj-b: $0.40–$1.20, 1 session")
 
 
 def test_detail_page_shows_table_not_run_on_text(root, configure):
@@ -368,7 +369,7 @@ def test_listing_in_a_resumed_sessions_second_transcript_is_attributed_to_that_s
         root, desktop, service_for):
     root.write_transcript("p", "a-old", [req("o1", "2026-10-30T09:00:00Z", write_1h=1000)])
     root.write_transcript("p", "b-new", [
-        req("n1", "2026-10-30T10:00:00Z", write_1h=1000),
+        req("n1", "2026-10-30T10:00:00Z", write_1h=10_000),
         req("n2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
         req("n3", "2026-10-30T10:10:00Z", cache_read=1_000_000),
     ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
@@ -460,7 +461,7 @@ def test_writer_request_raises_only_the_upper_bound_by_the_listings_write(root, 
 
 def test_write_price_is_the_writers_own_5m_1h_mix(root, service_for):
     root.write_transcript("p", "s1", [
-        req("w", "2026-10-30T10:00:00Z", write_5m=500, write_1h=500),
+        req("w", "2026-10-30T10:00:00Z", write_5m=5_000, write_1h=5_000),
         req("r", "2026-10-30T10:05:00Z", cache_read=1_000_000),
     ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
     f = _by_id(service_for(root).findings())["unused-listing"]
@@ -549,7 +550,7 @@ HAIKU = "claude-haiku-5-5"
 
 def _tier_drop_session(root, reader_model, reader_read, extra, **reader_kw):
     root.write_transcript("p", "s1", [
-        req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_1h=1000),
+        req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_1h=40_000),
         req("r", "2026-10-30T10:05:00Z", model=reader_model, cache_read=reader_read, **reader_kw),
     ], extra_lines=extra)
 
@@ -597,9 +598,9 @@ def test_listings_sharing_a_tier_drop_split_it_by_token_share_and_the_request_co
 
 def _cold_session(root, extra):
     root.write_transcript("p", "s1", [
-        req("w", "2026-10-30T10:00:00Z", write_5m=1000),
+        req("w", "2026-10-30T10:00:00Z", write_5m=10_000),
         req("r1", "2026-10-30T10:04:00Z", cache_read=1_000_000),
-        req("c", "2026-10-30T10:20:00Z", write_5m=1000),            # idle past the 5m TTL: Cold write
+        req("c", "2026-10-30T10:20:00Z", write_5m=10_000),            # idle past the 5m TTL: Cold write
         req("r2", "2026-10-30T10:24:00Z", cache_read=1_000_000),
     ], extra_lines=extra)
 
@@ -650,3 +651,38 @@ def test_a_cold_write_and_a_tier_drop_in_one_listings_range_sum_to_the_upper_bou
     assert sum(h for _, h in got.values()) == pytest.approx(f.avoidable_high)
     (row,) = f.table.rows
     assert row[-1] == "$0.00–$0.12" and row[2].items == ("p: $0.00–$0.12, 1 session",)
+
+
+# --- a write is charged only for the Listing tokens the Request actually wrote ------------------
+def test_a_cold_write_smaller_than_the_listing_swaps_only_what_it_wrote(root, service_for):
+    """The 'Cold' request wrote 1K tokens: the rest of the 10K Listing came from the cache, so it
+    keeps its read; only the 1K pay the write in place of the read."""
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", write_5m=10_000),
+        req("r1", "2026-10-30T10:04:00Z", cache_read=1_000_000),
+        req("c", "2026-10-30T10:20:00Z", cache_read=1_000_000, write_5m=1000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    got = _ranged(_by_id(service_for(root).findings())["unused-listing"])
+    assert got["c"] == (pytest.approx(0.002), pytest.approx(0.002 + 1000 * (5 - 0.2) / 1e6))
+
+
+def test_a_writer_that_wrote_less_than_the_listing_is_charged_only_what_it_wrote(root, service_for):
+    """A resumed stream's first request reads the Listing from the cache and writes 1K new tokens."""
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", cache_read=1_000_000, write_1h=1000),
+        req("r", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    got = _ranged(_by_id(service_for(root).findings())["unused-listing"])
+    assert got["w"] == (pytest.approx(0.0), pytest.approx(1000 * 8 / 1e6))
+
+
+def test_a_listing_never_read_still_counts_toward_its_writers_tier_drop(root, service_for):
+    """The last request writes a 105K prompt holding a 10K unused Listing: 95K without it."""
+    root.write_transcript("p", "s1", [req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_5m=105_000)],
+                          extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    drop = 105_000 * 0.625 / 1e6 * 4 / 5                    # no read, so no write either: the drop alone
+    assert _ranged(f)["w"] == (pytest.approx(0.0), pytest.approx(drop))
+    assert (f.avoidable, f.avoidable_high) == (pytest.approx(0.0), pytest.approx(drop))
+    (row,) = f.table.rows
+    assert row[0] == "a" and row[-1] == f"$0.00–${drop:.2f}"

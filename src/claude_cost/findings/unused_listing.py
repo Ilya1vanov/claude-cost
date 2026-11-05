@@ -103,6 +103,11 @@ class _Stream:
         if writer_in_period:
             lo += 1  # skip the writer
         hi = len(self.reqs) if gone is None else bisect_left(self.ts, gone)
+        if writer is not None and writer < hi:
+            # the Listing sits in the writer's prompt, read or not: it leaves it too (tier drop)
+            self.reads.append((writer, writer + 1, tokens, key))
+            self.sitting[writer] += tokens
+            self.sitting[writer + 1] -= tokens
         if lo >= hi:
             return None
         self.delta[lo] += tokens
@@ -112,20 +117,22 @@ class _Stream:
         self.sitting[hi] -= tokens
         write = 0.0
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
-            write = tokens * self.write_rates[writer]
+            write = self._written(writer, tokens) * self.write_rates[writer]
             self._add_upper(writer, write)
-            # the Listing sits in the writer's cache writes: it leaves its prompt too (tier drop)
-            self.reads.append((writer, writer + 1, tokens, key))
-            self.sitting[writer] += tokens
-            self.sitting[writer + 1] -= tokens
-        # a Cold write rebuilds the Listing too: it pays the write in place of the read
+        # a Cold write rebuilds the Listing too: what it wrote pays the write in place of the read
         for j in self.cold[bisect_left(self.cold, lo):bisect_left(self.cold, hi)]:
-            rebuild = tokens * (self.write_rates[j] - self.rates[j])
+            rebuild = self._written(j, tokens) * (self.write_rates[j] - self.rates[j])
             self._add_upper(j, rebuild)
             write += rebuild
         # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
         reads = tokens * sum(self.rates[lo:hi])
         return reads, reads + write
+
+    def _written(self, i: int, tokens: int) -> int:
+        """How many of a Listing's `tokens` request i can have written: no more than it wrote (the
+        rest came from the cache)."""
+        r = self.reqs[i]
+        return min(tokens, r.write_5m + r.write_1h)
 
     def _add_upper(self, i: int, dollars: float) -> None:
         self.extra[i] += dollars
@@ -226,9 +233,11 @@ def detect(ctx: FindingContext) -> Detection:
         it["sessions"].add(sid)
         it["cost"] += cost
         it["high"] += high
-    for st in streams.values():
-        for key, dollars in st.split_tier_drops():
-            items[key]["high"] += dollars
+    for (sid, _), st in streams.items():
+        for key, dollars in st.split_tier_drops():  # a Listing never read has only its writer's drop
+            it = items.setdefault(key, {"sessions": set(), "cost": 0.0, "high": 0.0})
+            it["sessions"].add(sid)
+            it["high"] += dollars
     covered = [c for st in streams.values() for c in st.covered()]
     if not items:
         return Detection(covered)
@@ -263,7 +272,7 @@ FINDING = FindingDef(
     formula="avoidable = lower bound: Listing tokens (text length / 3.6) x cache read price, for "
             "every request after the one that wrote the Listing; upper bound: the lower bound "
             "plus the Listing's tokens at write price on the Period request that wrote it, and on each "
-            "Cold-write request in place of its read, plus "
+            "Cold-write request in place of its read (never more tokens than the request wrote), plus "
             "(tier multiplier - 1) / tier multiplier of a request's whole cost when removing all its "
             "unused Listings takes its prompt from above its model's Prompt tier threshold to at or "
             "below it (split across those Listings by token share)",
