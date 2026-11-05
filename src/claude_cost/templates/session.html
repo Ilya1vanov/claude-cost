@@ -68,17 +68,11 @@
   </section>
 
   <section class="card">
-    <h2>Requests</h2>
-    <div class="table-wrap"><table id="requests">
-      <tr><th>Time</th><th>Model</th><th>Effort</th><th class="num">Context</th><th class="num">Cost</th><th>Marks</th></tr>
-      {% for kind, p in t.sequence %}{% if kind == "compaction" %}<tr class="compaction{% if p.late %} late-compact{% endif %}"><td>{{ when(p.ts) }}</td>
-        <td colspan="5">Compaction ({{ p.trigger }}): {{ "{:,}".format(p.pre_tokens) }} to {{ "{:,}".format(p.post_tokens) }} tokens{% if p.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td></tr>
-      {% else %}<tr><td>{{ when(p.ts) }}</td><td>{{ short_model(p.model) }}</td><td>{{ p.effort or "—" }}</td><td class="num">{{ "{:,}".format(p.context_tokens) }}</td><td class="num">${{ "%.4f"|format(p.cost) }}</td>
-        <td>{% if p.idle %}<span class="badge idle">idle gap {{ (p.gap_seconds / 60)|round|int }} min</span>{% endif %}
-          {% if p.cache_event == "cold" %}<span class="badge cold">Cold write</span>{% endif %}
-          {% if p.cold_resume %}<span class="badge cold">Cold resume</span>{% endif %}
-          {% if p.threshold and p.context_tokens > p.threshold %}<span class="badge over">Oversized context (above {{ "{:,}".format(p.threshold) }})</span>{% endif %}</td></tr>{% endif %}{% endfor %}
-    </table></div>
+    <h2>Timeline</h2>
+    <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
+      <div class="tl-head"><span>Prompts and requests</span><span class="num">Context</span><span class="num">Cost</span></div>
+      <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
+    </div>
   </section>
 {% endblock %}
 {% block scripts %}

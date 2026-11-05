@@ -1,6 +1,7 @@
 """Web server: thin Flask adapter over the query service. Server-rendered pages."""
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import date, datetime, timedelta
 from typing import Callable
@@ -437,6 +438,23 @@ def create_app(service_factory: Callable[[], QueryService],
         return render_template(
             "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
             requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
+
+    @app.get("/api/session/<session_id>/timeline")
+    @app.get("/api/session/<session_id>/agent/<agent_id>/timeline")
+    def session_timeline_rows(session_id: str, agent_id: str | None = None):
+        """The Timeline's rows as JSON: each a dict tagged by `kind`, with a local `time`."""
+        service = service_factory()
+        timeline = service.session_timeline(session_id, agent_id, with_rows=True)
+        if timeline is None:
+            abort(404)
+        rows = []
+        for row in timeline.rows:
+            out = dataclasses.asdict(row)
+            out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
+            if row.kind == "request":
+                out["modelLabel"] = short_model(row.model)
+            rows.append(out)
+        return jsonify(rows=rows)
 
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")

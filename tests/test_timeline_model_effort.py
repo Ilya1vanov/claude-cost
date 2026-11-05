@@ -32,34 +32,20 @@ def test_timeline_points_carry_effort_empty_when_not_recorded(root, service_for)
     assert [p.effort for p in sub.points] == ["medium"]
 
 
-def _rows(page):
-    table = page.split('id="requests"')[1].split("</table>")[0]
-    return [r for r in table.split("<tr")[1:] if "<td" in r]
+def _rows(root, tmp_path, url="/api/session/s1/timeline"):
+    import json
+    return json.loads(_page(root, tmp_path, url))["rows"]
 
 
-def test_requests_table_shows_short_model_and_effort(root, tmp_path):
+def test_timeline_rows_show_short_model_and_effort(root, tmp_path):
     _session(root)
-    page = _page(root, tmp_path)
-    table = page.split('id="requests"')[1].split("</table>")[0]
-    assert "<th>Model</th>" in table and "<th>Effort</th>" in table
-    r1, r2, r3 = _rows(page)
-    assert "Opus 5.5" in r1 and "high" in r1
-    assert "Sonnet 5.5" in r2 and "—" in r2
-    assert "claude-mystery-model" in r3 and "low" in r3
+    r1, r2, r3 = _rows(root, tmp_path)
+    assert (r1["modelLabel"], r1["effort"]) == ("Opus 5.5", "high")
+    assert (r2["modelLabel"], r2["effort"]) == ("Sonnet 5.5", "")
+    assert (r3["modelLabel"], r3["effort"]) == ("claude-mystery-model", "low")
 
 
-def test_subagent_page_shows_the_same_columns(root, tmp_path):
+def test_subagent_rows_show_the_same_fields(root, tmp_path):
     _session(root)
-    page = _page(root, tmp_path, "/session/s1/agent/a1")
-    (r1,) = _rows(page)
-    assert "Haiku 4.5" in r1 and "medium" in r1
-
-
-def test_compaction_rows_span_the_full_width(root, tmp_path):
-    from helpers import compact_line
-    root.write_transcript("p", "s1", [
-        req("m1", "2026-10-30T01:00:00Z", input=10, output=5),
-        req("m2", "2026-10-30T01:10:00Z", input=10, output=5)],
-        extra_lines=[compact_line("c1", "2026-10-30T01:05:00Z", 500, 80, "manual")])
-    page = _page(root, tmp_path)
-    assert 'colspan="5"' in page.split('id="requests"')[1]
+    (r1,) = _rows(root, tmp_path, "/api/session/s1/agent/a1/timeline")
+    assert (r1["modelLabel"], r1["effort"]) == ("Haiku 4.5", "medium")

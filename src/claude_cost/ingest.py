@@ -135,7 +135,13 @@ def _typed_text(text: object) -> bool:
 
 
 def _turn(rec: dict) -> tuple[str, float] | None:
-    """(uuid, ts) when the record is a prompt the user typed: a `user` record or a
+    """(uuid, ts) of a typed prompt; see `typed_prompt`."""
+    prompt = typed_prompt(rec)
+    return prompt[:2] if prompt else None
+
+
+def typed_prompt(rec: dict) -> tuple[str, float, str] | None:
+    """(uuid, ts, text) when the record is a prompt the user typed: a `user` record or a
     `queued_command` attachment (sent while Claude was working). Tool results, compaction
     summaries, hook/system injections, task notifications and Subagent messages are not."""
     kind = rec.get("type")
@@ -158,7 +164,7 @@ def _turn(rec: dict) -> tuple[str, float] | None:
     if not _typed_text(text) or not isinstance(rec.get("uuid"), str):
         return None
     try:
-        return rec["uuid"], _parse_ts(rec["timestamp"]).timestamp()
+        return rec["uuid"], _parse_ts(rec["timestamp"]).timestamp(), text
     except (KeyError, TypeError, ValueError):
         return None
 

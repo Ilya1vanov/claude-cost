@@ -233,6 +233,28 @@ tr.baseline td { background: var(--surface-2); }
 .chart { position: relative; height: 300px; }
 .chart.tall { height: 380px; }
 
+/* Timeline: one box a viewport tall (less the top bar) that scrolls on its own */
+.timeline { height: calc(100vh - 52px); display: flex; flex-direction: column; border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; }
+.tl-head, .tl-request { display: grid; grid-template-columns: 1fr 90px 80px; gap: 12px; align-items: start; padding: 8px 12px; }
+.tl-head { background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600;
+  color: var(--muted); }
+.tl-head .num, .tl-request .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tl-body { flex: 1; overflow-y: auto; position: relative; }
+.tl-body .empty { padding: 12px; }
+.tl-row { border-bottom: 1px solid var(--border); }
+.tl-prompt { display: flex; padding: 10px 12px; }
+.tl-bubble { background: var(--accent-soft); color: var(--text); border-radius: var(--radius); padding: 8px 12px;
+  max-width: 80%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tl-time { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.tl-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0; }
+.tl-text.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.tl-tool { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tl-tool b { color: var(--text); font-weight: 600; }
+.tl-gone { color: var(--muted); font-style: italic; }
+.tl-request.oversized .ctx { color: var(--late); font-weight: 600; }
+
 /* Forms */
 input, select, button { font: inherit; color: inherit; }
 input[type="text"], input[type="date"], input:not([type]), select {

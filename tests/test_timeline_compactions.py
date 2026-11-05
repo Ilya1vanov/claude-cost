@@ -53,15 +53,10 @@ def test_session_page_has_a_legend_with_one_entry_per_mark(root, tmp_path):
     assert legend.count("<li") == 6  # incl. Setting change
 
 
-def test_requests_table_interleaves_compaction_rows_and_highlights_late_compact(root, tmp_path):
+def test_timeline_rows_flag_the_request_above_the_compact_threshold_as_oversized(root, service_for):
     _session(root)
-    page = _page(root, tmp_path)
-    rows = page.split('id="requests"')[1].split("</table>")[0]
-    assert rows.index("01:00:00") < rows.index("Compaction (manual)") < rows.index("01:10:00") \
-        < rows.index("Compaction (auto)") < rows.index("01:20:00")
-    assert "500,000 to 8,000 tokens" in rows and "1,000 to 800 tokens" in rows
-    assert rows.count("Late compact") == 1
-    assert rows.index("Compaction (manual)") < rows.index("Late compact") < rows.index("01:10:00")
+    rows = service_for(root).session_timeline("s1", with_rows=True).rows
+    assert [r.oversized for r in rows if r.kind == "request"] == [True, False, False]
 
 
 def test_chart_data_carries_compaction_positions(root, tmp_path):
