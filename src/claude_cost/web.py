@@ -407,14 +407,33 @@ def create_app(service_factory: Callable[[], QueryService],
             params.setdefault(key, []).append(value)
         return url_for(endpoint, **{**params, **extra})
 
+    def filter_ui(service: QueryService, spec: ExploreSpec) -> dict:
+        """What the filter popover and chips need: the chips, and the filters the popover lists."""
+        names = {k: service.value_names(k) for k in ("project", "session")}
+        chips = explore.chips(spec, names)
+        summary = {c.key: c.text for c in chips}
+        return {"chips": chips,
+                "dims": [{"key": k, "label": d.label, "kind": "text" if k == "date" else "options",
+                          "values": spec.filters.get(k, ()), "summary": summary.get(k, "")}
+                         for k, d in explore.DIMENSIONS.items()]}
+
+    @app.get("/filter-options")
+    def filter_options():
+        key = request.args.get("dimension", "")
+        if key not in explore.DIMENSIONS:
+            abort(400, f"dimension must be one of {', '.join(explore.DIMENSIONS)}")
+        options = explore_service().filter_options(explore_spec(), key, request.args.get("q", ""))
+        return jsonify({"dimension": key, "options": [
+            {"value": o.value, "label": o.label, "count": o.count} for o in options]})
+
     @app.get("/breakdowns")
     def breakdowns_page():
         spec = explore_spec()
         service = explore_service()
         result = service.explore(spec)
         return render_template(
-            "breakdowns.html", spec=spec, result=result, dims=explore.DIMENSIONS, breakdown_dims=explore.breakdowns(),
-            options=service.explore_options(), fmt_cost=explore.fmt_cost,
+            "breakdowns.html", spec=spec, result=result, breakdown_dims=explore.breakdowns(),
+            filters=filter_ui(service, spec), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share,
             chart_data={"label": result.label,
                         "labels": [project_name(r.value) if result.group == "project" else r.value
@@ -428,8 +447,8 @@ def create_app(service_factory: Callable[[], QueryService],
         result = service.sessions(spec)
         labels = [r.name for r in result.rows[:CHART_ROWS]]
         return render_template(
-            "sessions.html", spec=spec, result=result, dims=explore.DIMENSIONS,
-            options=service.explore_options(), fmt_cost=explore.fmt_cost,
+            "sessions.html", spec=spec, result=result,
+            filters=filter_ui(service, spec), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share, short_id=short_id,
             chart_data={"label": "Session", "labels": labels,
                         "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})

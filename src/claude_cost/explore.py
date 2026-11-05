@@ -235,6 +235,9 @@ class ExploreSpec:
         """The filters plus `dim = value`: the slice behind one Breakdown row, listed on Sessions."""
         return ExploreSpec(DEFAULT_GROUP, {**self.filters, dim: (value,)})
 
+    def without_dim(self, dim: str) -> "ExploreSpec":
+        return ExploreSpec(self.group, {k: v for k, v in self.filters.items() if k != dim})
+
     def without(self, dim: str, value: str) -> "ExploreSpec":
         rest = tuple(v for v in self.filters.get(dim, ()) if v != value)
         filters = {k: v for k, v in self.filters.items() if k != dim}
@@ -339,23 +342,63 @@ def requests(conn, local_day, spec: ExploreSpec, findings=None) -> list[ExploreR
                            one("model", i), i.cost) for i in items]
 
 
-def options(conn, limit: int = 100) -> dict[str, list[str]]:
-    """Most frequent values of each dimension (for form suggestions); dates are free text.
-    Finding dimensions suggest every registered finding without running the pipeline."""
-    out = {}
+@dataclass(frozen=True)
+class FilterOption:
+    """One value a filter can take: `count` is the Sessions that have it in the narrowed slice."""
+    value: str
+    label: str
+    count: int
+
+
+def filter_options(conn, local_day, spec: ExploreSpec, key: str, q: str = "",
+                   labels: dict[str, str] | None = None, findings=None,
+                   limit: int = 100) -> list[FilterOption]:
+    """The values of dimension `key` for the filter popover: the top `limit` by Session count
+    among the requests the *other* filters keep, narrowed by `q` (case-insensitive, on the
+    readable label or the value). Values `spec` already selects for `key` are always listed,
+    at 0 when the other filters leave them nothing."""
+    labels = labels or {}
+    selected = spec.filters.get(key, ())
+    narrowed = ExploreSpec(DEFAULT_GROUP, {k: v for k, v in spec.filters.items() if k != key})
+    items, data = _slice(conn, local_day, narrowed, extra=(key, "session"), findings=findings)
+    sessions: dict[str, set[str]] = {}
+    for item in items:
+        sid = (data["session"].get(item.message_id) or [NONE])[0]
+        for value, _ in DIMENSIONS[key].parts(item, data[key]):
+            sessions.setdefault(value, set()).add(sid)
+    needle = q.strip().lower()
+    options = [FilterOption(v, labels.get(v, v), len(s)) for v, s in sessions.items()
+               if not needle or needle in labels.get(v, v).lower() or needle in v.lower()]
+    options.sort(key=lambda o: (-o.count, o.label, o.value))
+    options = options[:limit]
+    have = {o.value for o in options}
+    options += [FilterOption(v, labels.get(v, v), 0) for v in selected if v not in have]
+    return options
+
+
+def chip_summary(names: list[str]) -> str:
+    """A chip's value text: `A, B`, or `A +N` once it has more than 2 values or 40 characters
+    (a lone value is never cut)."""
+    joined = ", ".join(names)
+    return joined if len(names) == 1 or (len(names) == 2 and len(joined) <= 40) else f"{names[0]} +{len(names) - 1}"
+
+
+@dataclass(frozen=True)
+class Chip:
+    key: str
+    label: str  # the dimension's label
+    text: str  # chip_summary of the readable values
+    full: str  # `Label: A, B, C`, for the hover title
+
+
+def chips(spec: ExploreSpec, names: dict[str, dict[str, str]]) -> list[Chip]:
+    """One chip per applied filter, in registry order; `names[key]` maps values to readable names."""
+    out = []
     for key, dim in DIMENSIONS.items():
-        if isinstance(dim, (DateDimension, SplitDimension)):
-            continue
-        if isinstance(dim, FindingDimension):
-            out[key] = dim.titles()
-            continue
-        counts: dict[str, int] = {}
-        for values in dim.load(conn).values():
-            for v in values:
-                counts[v] = counts.get(v, 0) + 1
-        out[key] = [v for v, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
-    out["component"] = [name for name, _ in COMPONENT_KEYS]
-    out["cache_event"] = ["cold write", "warm write", "cache read", "uncached"]
+        values = spec.filters.get(key)
+        if values:
+            shown = [names.get(key, {}).get(v, v) for v in values]
+            out.append(Chip(key, dim.label, chip_summary(shown), f"{dim.label}: {', '.join(shown)}"))
     return out
 
 

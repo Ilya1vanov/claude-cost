@@ -1666,6 +1666,16 @@ class QueryService:
         return explore.sessions(self._conn, self._local_day, self.local_time,
                                 self.session_labels(), spec, self.findings)
 
-    def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
-        """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit)
+    def value_names(self, key: str) -> dict[str, str]:
+        """Readable names of a dimension's values: Project names and Session labels."""
+        if key == "project":
+            return self.project_names()
+        if key == "session":
+            return self.session_labels()
+        return {}
+
+    def filter_options(self, spec: explore.ExploreSpec, key: str, q: str = "",
+                       limit: int = 100) -> list[explore.FilterOption]:
+        """Values of dimension `key` for the filter popover (see `explore.filter_options`)."""
+        return explore.filter_options(self._conn, self._local_day, spec, key, q,
+                                      self.value_names(key), self.findings, limit)

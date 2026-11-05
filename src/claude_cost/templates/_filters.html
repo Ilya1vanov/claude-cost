@@ -1,0 +1,16 @@
+{# The "+ Filter" popover and the chips of the applied filters (filters.js). Import with context.
+   `filters` comes from web.filter_ui; `endpoint` is the page the chips' remove links go back to. #}
+{% macro bar(endpoint, spec, filters) %}
+<div class="filterbar" id="filterbar" data-options-url="{{ url_for('filter_options') }}">
+  <button type="button" class="filter-add" aria-haspopup="dialog" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg> Filter</button>
+  {% for c in filters.chips %}
+  <span class="chip" data-dim="{{ c.key }}">
+    <button type="button" class="chip-open" data-dim="{{ c.key }}" title="{{ c.full }}"><span class="chip-label">{{ c.label }}:</span> <strong>{{ c.text }}</strong></button>
+    <a class="chip-x" href="{{ explore_url(endpoint, spec.without_dim(c.key)) }}" aria-label="Remove {{ c.label }} filter">&times;</a>
+  </span>
+  {% endfor %}
+  <div class="filter-pop" role="dialog" hidden></div>
+  <script id="filter-dims" type="application/json">{{ filters.dims|tojson }}</script>
+</div>
+<script src="{{ url_for('static', filename='filters.js') }}"></script>
+{% endmacro %}
