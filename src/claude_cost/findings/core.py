@@ -172,8 +172,11 @@ class FindingContext:
                  defs: Mapping[str, Threshold], price_table: Mapping | None,
                  conn: sqlite3.Connection | None = None, compact=None,
                  compare_model: str = DEFAULT_COMPARE_MODEL, *,
-                 median_first_context: float | None, graph=None):
+                 median_first_context: float | None, graph=None,
+                 period_start: float | None = None, period_end: float | None = None):
         self.rows = rows
+        # the Period's own bounds (end exclusive); None on a side that is all history
+        self.period_start, self.period_end = period_start, period_end
         # lifetime, not per Period; None when the store has not stored it (Cold resume then reports nothing)
         self.median_first_context = median_first_context
         if graph is None and conn is not None:

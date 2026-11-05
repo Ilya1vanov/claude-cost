@@ -1007,7 +1007,7 @@ class QueryService:
                                           self._table, self._conn,
                                           self.compact_thresholds(), self._compare_model,
                                           median_first_context=cache.median_first_context(self._conn),
-                                          graph=self.graph)
+                                          graph=self.graph, period_start=lo, period_end=hi)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
     def top_findings(self, mode: str, now: datetime, include_today: bool = True,
