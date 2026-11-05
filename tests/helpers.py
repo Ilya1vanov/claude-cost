@@ -127,10 +127,11 @@ def block_prompt_line(uuid: str, ts: str, text: str = "look at this", image: boo
     return _user(uuid, ts, blocks, origin={"kind": "human"})
 
 
-def compact_summary_line(uuid: str, ts: str) -> str:
-    """The user record holding a compaction summary: not a prompt."""
-    return _user(uuid, ts, "This session is being continued from a previous conversation...",
-                 isCompactSummary=True)
+def compact_summary_line(uuid: str, ts: str, parent_uuid: str | None = None,
+                         text: str = "This session is being continued from a previous conversation...") -> str:
+    """The user record holding a compaction summary: not a prompt. `parent_uuid` is the uuid of
+    the compact boundary it follows."""
+    return _user(uuid, ts, text, isCompactSummary=True, parentUuid=parent_uuid)
 
 
 def queued_prompt_line(uuid: str, ts: str, text: str = "also do this") -> str:

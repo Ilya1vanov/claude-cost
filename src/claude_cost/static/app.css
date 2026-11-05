@@ -256,6 +256,13 @@ tr.baseline td { background: var(--surface-2); }
 .tl-tool b { color: var(--text); font-weight: 600; }
 .tl-gone { color: var(--muted); font-style: italic; }
 .tl-request.oversized .ctx { color: var(--late); font-weight: 600; }
+.tl-badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0; }
+.tl-event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 12px;
+  background: var(--surface-2); font-size: 13px; }
+.tl-event-label { font-weight: 600; }
+.tl-event.late-compact .tl-event-label { color: var(--late-compact); }
+.tl-summary { flex-basis: 100%; }
+.tl-summary summary { cursor: pointer; color: var(--muted); }
 
 /* Forms */
 input, select, button { font: inherit; color: inherit; }

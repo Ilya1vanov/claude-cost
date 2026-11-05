@@ -87,19 +87,24 @@ def _switching(root):
         dict(model="claude-sonnet-5-5", effort="high")))
 
 
-def test_events_table_has_a_row_per_change_with_from_to(root, tmp_path):
+def _change_rows(root, tmp_path):
+    import json
+    rows = json.loads(_page(root, tmp_path, "/api/session/s1/timeline"))["rows"]
+    return [r for r in rows if r["kind"] == "setting_change"]
+
+
+def test_timeline_has_a_setting_change_row_per_change_with_from_to(root, tmp_path):
     _switching(root)
-    events = _page(root, tmp_path).split('id="events"')[1].split("</table>")[0]
-    assert "Setting change" in events
-    assert "Opus 5.5 medium → Sonnet 5.5 high" in events
-    assert "01:01:00" in events
+    [change] = _change_rows(root, tmp_path)
+    assert change["label"] == "Opus 5.5 medium → Sonnet 5.5 high"
+    assert change["time"].endswith("01:01:00")
 
 
-def test_events_label_omits_a_missing_effort(root, tmp_path):
+def test_setting_change_label_omits_a_missing_effort(root, tmp_path):
     root.write_transcript("p", "s1", _reqs(
         dict(model="claude-opus-5-5"), dict(model="claude-mystery-model")))
-    events = _page(root, tmp_path).split('id="events"')[1].split("</table>")[0]
-    assert "Opus 5.5 → claude-mystery-model" in events
+    [change] = _change_rows(root, tmp_path)
+    assert change["label"] == "Opus 5.5 → claude-mystery-model"
 
 
 def test_chart_data_carries_change_positions_and_labels(root, tmp_path):

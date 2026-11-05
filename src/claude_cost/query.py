@@ -735,8 +735,31 @@ class QueryService:
                        p.threshold is not None and p.context_tokens > p.threshold,
                        p.message_id in content)
             for p in t.points]
-        # A prompt comes before the request made at the same time
-        return tuple(sorted([*prompts, *requests], key=lambda r: (r.ts, r.kind != "prompt")))
+        events = self._event_rows(t, stems, main_paths)
+        return tuple(sorted([*prompts, *requests, *events], key=timeline_rows_mod.row_order))
+
+    def _event_rows(self, t: SessionTimeline, stems: list[str], main_paths: list[str]) -> list:
+        """Event rows from the timeline's marks. The Fork's opening row is the Session's own."""
+        out: list = [timeline_rows_mod.SettingChangeRow(
+            c.ts, c.from_model, c.from_effort, c.to_model, c.to_effort) for c in t.setting_changes]
+        if t.compactions:  # the same rows, in the same order, as the compactions' query
+            uuids = [r["uuid"] for r in self._conn.execute(
+                f"SELECT uuid FROM compactions WHERE stem IN ({','.join('?' * len(stems))}) "
+                "ORDER BY ts_epoch, uuid", stems)]
+            summaries = timeline_rows_mod.read_summaries(main_paths, set(uuids))
+            out += [timeline_rows_mod.CompactionRow(
+                c.ts, c.trigger, c.pre_tokens, c.post_tokens, c.late, summaries.get(u, ""))
+                for c, u in zip(t.compactions, uuids)]
+        out += [timeline_rows_mod.IdleGapRow(prev.ts, p.gap_seconds)
+                for prev, p in zip(t.points, t.points[1:]) if p.idle]
+        labels = self.session_labels() if t.side_sessions or t.parent_session_id else {}
+        out += [timeline_rows_mod.ChildSessionRow(s.ts, s.session_id, labels.get(s.session_id, s.session_id),
+                                                  s.kind, s.requests, s.cost) for s in t.side_sessions]
+        if t.link_kind == "fork" and t.points:
+            out.append(timeline_rows_mod.ForkedFromRow(
+                t.points[0].ts, t.parent_session_id,
+                labels.get(t.parent_session_id, t.parent_session_id)))
+        return out
 
     @staticmethod
     def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:

@@ -1,7 +1,8 @@
 """Timeline rows: the session's prompts and requests with the text and tool calls read from its
 transcripts when the Session view is opened (ADR 0005). Nothing here is stored at ingest.
 
-Rows are a tagged union on `kind` ("prompt", "request"); a new kind is a new dataclass with its
+Rows are a tagged union on `kind` ("prompt", "request", and the event kinds "setting_change",
+"compaction", "idle_gap", "child_session", "forked_from"); a new kind is a new dataclass with its
 own `kind`, so consumers dispatch on it and never see the old rows change shape.
 """
 from __future__ import annotations
@@ -53,6 +54,65 @@ class RequestRow:
     oversized: bool  # context above the Compact threshold of its model
     content_available: bool  # False: "transcript no longer on disk"
     kind: str = "request"
+
+
+@dataclass(frozen=True)
+class SettingChangeRow:
+    ts: float  # of the request that made the change
+    from_model: str
+    from_effort: str  # "" when not recorded
+    to_model: str
+    to_effort: str
+    kind: str = "setting_change"
+
+
+@dataclass(frozen=True)
+class CompactionRow:
+    ts: float
+    trigger: str  # manual | auto
+    pre_tokens: int
+    post_tokens: int
+    late: bool  # a Late compact
+    summary: str  # "" when the transcript is gone or holds no summary
+    kind: str = "compaction"
+
+
+@dataclass(frozen=True)
+class IdleGapRow:
+    ts: float  # of the request before the gap
+    gap_seconds: float
+    kind: str = "idle_gap"
+
+
+@dataclass(frozen=True)
+class ChildSessionRow:
+    """A Side session or Fork started from this Session; `session_id` is its own Timeline."""
+    ts: float  # its first request
+    session_id: str
+    label: str
+    link_kind: str  # "side" | "fork"
+    requests: int
+    cost: float
+    kind: str = "child_session"
+
+
+@dataclass(frozen=True)
+class ForkedFromRow:
+    """Opens a Fork's Timeline."""
+    ts: float  # its first request
+    parent_session_id: str
+    parent_label: str
+    kind: str = "forked_from"
+
+
+# Order of rows with the same time: a Fork's opening row, then the prompt that starts a turn, then
+# events (any other kind), then the request, then the idle gap that follows it
+ROW_RANK = {"forked_from": 0, "prompt": 1, "request": 3, "idle_gap": 4}
+DEFAULT_RANK = 2
+
+
+def row_order(row) -> tuple[float, int]:
+    return row.ts, ROW_RANK.get(row.kind, DEFAULT_RANK)
 
 
 @dataclass(frozen=True)
@@ -131,3 +191,30 @@ def read_content(copies: dict[str, list[str]], main_paths: Iterable[str] = ()
         for uuid, ts, text in typed:
             prompts.setdefault(uuid, PromptRow(ts, text))
     return content, list(prompts.values())
+
+
+def read_summaries(paths: Iterable[str], boundary_uuids: set[str]) -> dict[str, str]:
+    """Compaction summary text by the uuid of the compact boundary it follows (the summary
+    record's parentUuid)."""
+    found: dict[str, str] = {}
+    for path in dict.fromkeys(paths):
+        if not os.path.exists(path):
+            continue
+        with open(path, "rb") as fh:
+            for raw in fh:
+                if b"isCompactSummary" not in raw:
+                    continue
+                try:
+                    rec = json.loads(raw.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                parent = rec.get("parentUuid") if isinstance(rec, dict) else None
+                msg = rec.get("message") if isinstance(rec, dict) else None
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, list):
+                    content = "\n\n".join(b.get("text", "") for b in content
+                                          if isinstance(b, dict) and b.get("type") == "text")
+                if rec.get("isCompactSummary") and parent in boundary_uuids \
+                        and isinstance(content, str):
+                    found.setdefault(parent, content)
+    return found

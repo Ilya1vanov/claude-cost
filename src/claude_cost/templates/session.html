@@ -50,27 +50,9 @@
   </section>
 
   <section class="card">
-    <h2>Events</h2>
-    <div class="table-wrap"><table id="events">
-      <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
-      {% for c in t.compactions %}<tr class="compaction{% if c.late %} late-compact{% endif %}"><td>{{ when(c.ts) }}</td><td>Compaction ({{ c.trigger }}){% if c.late %} <span class="badge late-compact">Late compact</span>{% endif %}</td>
-        <td>{{ "{:,}".format(c.pre_tokens) }} to {{ "{:,}".format(c.post_tokens) }} tokens{% if c.threshold %}
-          (Compact threshold {{ "{:,}".format(c.threshold) }}){% endif %}</td></tr>{% endfor %}
-      {% for c in t.setting_changes %}<tr class="setting-change"><td>{{ when(c.ts) }}</td><td>Setting change</td>
-        <td>{{ setting_change_label(c) }}</td></tr>{% endfor %}
-      {% for a in t.subagents %}<tr class="subagent"><td>{{ when(a.ts) }}</td><td>{{ "Fork subagent" if a.is_fork else "Subagent" }} launched</td>
-        <td><a href="{{ url_for('session_timeline', session_id=t.session_id, agent_id=a.agent_id) }}">{% if a.agent_type %}{{ a.agent_type }}{% else %}{{ ui.sid(a.agent_id) }}{% endif %}</a>
-          {% if a.description %}({{ a.description }}){% endif %}: ${{ "%.2f"|format(a.cost) }}, {{ a.requests }} requests</td></tr>{% endfor %}
-      {% for s in t.side_sessions %}<tr class="side-session"><td>{{ when(s.ts) }}</td><td>{{ "Fork" if s.kind == "fork" else "Side session" }} started</td>
-        <td><a href="{{ url_for('session_timeline', session_id=s.session_id) }}">{{ session_label(s.session_id, link=False) }}</a>: ${{ "%.2f"|format(s.cost) }}, {{ s.requests }} requests</td></tr>{% endfor %}
-      {% if not (t.compactions or t.setting_changes or t.subagents or t.side_sessions) %}<tr><td colspan="3" class="empty">No events</td></tr>{% endif %}
-    </table></div>
-  </section>
-
-  <section class="card">
     <h2>Timeline</h2>
     <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
-      <div class="tl-head"><span>Prompts and requests</span><span class="num">Context</span><span class="num">Cost</span></div>
+      <div class="tl-head"><span>Prompts, requests and events</span><span class="num">Context</span><span class="num">Cost</span></div>
       <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
     </div>
   </section>
