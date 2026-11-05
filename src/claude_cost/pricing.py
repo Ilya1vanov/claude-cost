@@ -122,6 +122,16 @@ def _find_price(model: str, on: date, table: Mapping[str, list[PriceEntry]]) -> 
     return None
 
 
+def modifier(speed: str | None, inference_geo: str | None) -> float:
+    """Fast mode and US-only inference: the multiplier on every Cost component of a request."""
+    mult = 1.0
+    if speed == "fast":
+        mult *= FAST_MULT
+    if inference_geo == "us":
+        mult *= US_MULT
+    return mult
+
+
 def price_request(model: str, on: date, *, input: int, output: int,
                   cache_read: int, write_5m: int, write_1h: int, speed: str | None = None,
                   inference_geo: str | None = None,
@@ -133,10 +143,7 @@ def price_request(model: str, on: date, *, input: int, output: int,
     mult = 1.0
     if p.tier_threshold is not None and input + cache_read + write_5m + write_1h > p.tier_threshold:
         mult *= p.tier_mult
-    if speed == "fast":
-        mult *= FAST_MULT
-    if inference_geo == "us":
-        mult *= US_MULT
+    mult *= modifier(speed, inference_geo)
     m = 1_000_000 / mult
     return CostComponents(
         input=input * p.input / m,

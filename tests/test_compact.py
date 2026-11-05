@@ -228,10 +228,10 @@ def test_min_sample_and_step_are_configurable(root, service_for):
 
 def test_replay_resets_at_a_real_compaction_and_never_goes_negative():
     from datetime import date  # noqa: F401
-    from claude_cost.compact import _Req, replay
+    from claude_cost.compact import Rates, _Req, replay
     # contexts 100K, 150K, real compaction to 20K, 30K; T=120K, post=10K; read $1/token, post $0
     ctxs = [100_000, 150_000, 20_000, 30_000]
-    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, 1.0, 0.0) for i, c in enumerate(ctxs)]
+    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, Rates(1.0, 0.0)) for i, c in enumerate(ctxs)]
     # the 150K request is hypothetically compacted to 10K; the real drop to 20K resets that
     assert replay(reqs, 120_000, 10_000) == 100_000 + 10_000 + 20_000 + 30_000
 
@@ -384,3 +384,45 @@ def test_read_with_other_prices_equals_a_live_analysis_and_writes_nothing(root, 
     assert got == compact.analyze(conn, table)
     assert got != QueryService(conn, "UTC").compact_thresholds()
     assert _meta(conn) == before
+
+
+# claude-haiku-5-5: read $0.01/M, compaction (0.5 + 0.2)/M per post token; both x5 above a 100K
+# prompt. Ramping 5K a request and compacting to 50K, T=90K compacts at 95K (flat, $0.035) for
+# ~$0.0046 a request; T=100K compacts at 105K (tiered, $0.175) for ~$0.017; above it reads are x5.
+
+
+def test_a_tiered_model_learns_a_threshold_that_keeps_compactions_under_the_tier(root, service_for):
+    _ramp_sessions(root, 20, model="claude-haiku-5-5", post=50_000)
+    [m] = service_for(root).compact_thresholds().models
+    assert m.threshold == 90_000
+
+
+def test_replay_reads_a_compacted_context_at_the_tier_it_drops_to():
+    from claude_cost.compact import Rates, _Req, replay
+    rates = Rates(1.0, 0.0, tier_threshold=100_000, tier_mult=5.0)
+    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, rates) for i, c in enumerate([90_000, 150_000])]
+    assert replay(reqs, 120_000, 10_000) == 90_000 + 10_000
+    assert replay(reqs, 200_000, 10_000) == 90_000 + 150_000 * 5
+
+
+def test_oversized_context_avoidable_is_reads_above_the_threshold_at_the_prompt_tier(root, service_for):
+    _ramp_sessions(root, 20, model="claude-haiku-5-5", post=50_000)
+    root.write_transcript("p", "big", [req(f"b{k}", f"2026-10-20T10:0{k}:00Z", model="claude-haiku-5-5",
+                                           cache_read=600_000) for k in range(2)])
+    f = {f.id: f for f in service_for(root).findings()}["oversized-context"]
+    got = {r.message_id: r.avoidable for r in f.requests if r.session_id == "big"}
+    excess = 600_000 * 0.05e-6 - 90_000 * 0.01e-6  # at T=90K the context is back under the tier
+    assert got == {"b0": pytest.approx(excess - 50_000 * 0.7e-6), "b1": pytest.approx(excess)}
+
+
+@pytest.mark.parametrize("kw, mult", [({"speed": "fast"}, 2.0), ({"inference_geo": "us"}, 1.1)])
+def test_oversized_context_avoidable_pays_fast_mode_and_region(root, service_for, kw, mult):
+    _ramp_sessions(root, 20)
+    root.write_transcript("p", "big", [req(f"b{k}", f"2026-10-20T10:0{k}:00Z", cache_read=600_000, **kw)
+                                       for k in range(2)])
+    svc = service_for(root)
+    t = svc.compact_thresholds().for_model("claude-opus-5-5").threshold
+    f = {f.id: f for f in svc.findings()}["oversized-context"]
+    got = {r.message_id: r.avoidable for r in f.requests if r.session_id == "big"}
+    excess = (600_000 - t) * 0.2e-6 * mult
+    assert got == {"b0": pytest.approx(excess - 0.28 * mult), "b1": pytest.approx(excess)}

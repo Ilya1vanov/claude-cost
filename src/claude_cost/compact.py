@@ -9,7 +9,8 @@ than MIN_SAMPLE compactions uses the global T (all models, same method).
 
 Assumptions (stated in the UI): a request's carrying cost is its context at the cache-read
 price; a compaction costs `postTokens` of summary output plus writing `postTokens` at the
-1h cache-write price.
+1h cache-write price. Both at the request's speed and region, and at the Prompt tier of the
+context read or compacted, so compacting can take a stream back under the tier.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
-FORMAT = 1  # shape of the stored analysis (`to_json`); bump it whenever that shape changes
+FORMAT = 2  # shape and method of the stored analysis (`to_json`); bump it whenever either changes
 
 # Autocompact fires at autoCompactWindow - 33,000: the window minus an output reserve, minus a
 # buffer. Read from the Claude Code 2.1.314 bundle; re-check when autocompacts fire elsewhere.
@@ -93,14 +94,43 @@ class ModelThreshold:
 
 
 @dataclass(frozen=True)
+class Rates:
+    """A request's prices at its speed and region; a context above `tier_threshold` pays
+    `tier_mult` x them (its Prompt tier)."""
+    read: float  # $ per token of context
+    per_post: float  # $ per post token of one compaction
+    tier_threshold: int | None = None
+    tier_mult: float = 1.0
+
+    def _mult(self, context: int) -> float:
+        return self.tier_mult if self.tier_threshold is not None and context > self.tier_threshold else 1.0
+
+    def read_cost(self, context: int) -> float:
+        return context * self.read * self._mult(context)
+
+    def compaction_cost(self, context: int, post: int) -> float:
+        """Compacting `context` down to `post`: the summary request's prompt is `context`."""
+        return post * self.per_post * self._mult(context)
+
+
+def rates(model: str, day: date, speed: str | None = None, inference_geo: str | None = None,
+          table=None) -> Rates | None:
+    p = pricing.find_price(model, day, table)
+    if p is None:
+        return None
+    m = pricing.modifier(speed, inference_geo) / 1_000_000
+    return Rates(p.cache_read * m, (p.output + p.input * pricing.WRITE_1H_MULT) * m,
+                 p.tier_threshold, p.tier_mult)
+
+
+@dataclass(frozen=True)
 class _Req:
     message_id: str
     stream: tuple[str, str | None]
     ts: float
     model: str
     context: int
-    read_price: float  # $ per token of context
-    cost_per_post: float  # $ per post token of one compaction on this model
+    rates: Rates
 
 
 @dataclass(frozen=True)
@@ -154,16 +184,16 @@ def replay(reqs: list[_Req], threshold: int, post: int) -> float:
         ctx = max(0, r.context - offset.get(r.stream, 0))
         if ctx > threshold:
             offset[r.stream] = offset.get(r.stream, 0) + ctx - post
+            total += r.rates.compaction_cost(ctx, post)
             ctx = post
-            total += post * r.cost_per_post
-        total += ctx * r.read_price
+        total += r.rates.read_cost(ctx)  # at the tier of the context left, not the observed one
     return total
 
 
 def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
          step: int = STEP) -> ModelThreshold:
     post = p75(posts)
-    actual = sum(r.context * r.read_price for r in reqs)
+    actual = sum(r.rates.read_cost(r.context) for r in reqs)
     top = max((r.context for r in reqs), default=0)
     lo = (post // step + 1) * step  # a threshold must be above what a compaction leaves
     hi = max(lo, math.ceil(top / step) * step + step)
@@ -175,11 +205,12 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
 
 
 def _cost_and_payback(reqs: list[_Req], post: int, threshold: int) -> tuple[float, float | None]:
-    """Compaction cost and payback at `threshold`, priced at the average prices of `reqs`."""
+    """Compaction cost and payback at `threshold`, priced at the average prices of `reqs`
+    (below any Prompt tier)."""
     if not reqs:
         return 0.0, None
-    cost_per_post = sum(r.cost_per_post for r in reqs) / len(reqs)
-    read = sum(r.read_price for r in reqs) / len(reqs)
+    cost_per_post = sum(r.rates.per_post for r in reqs) / len(reqs)
+    read = sum(r.rates.read for r in reqs) / len(reqs)
     saved_per_request = (threshold - post) * read
     cost = post * cost_per_post
     return cost, cost / saved_per_request if saved_per_request > 0 else None
@@ -189,19 +220,19 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
             step: int = STEP) -> CompactAnalysis:
     rows = conn.execute(
         f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, a.agent_id, "
-        f"r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx FROM requests r "
+        f"r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, ra.speed, ra.inference_geo FROM requests r "
         f"{SESSION_JOIN} "
         "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+        "LEFT JOIN request_attrs ra ON ra.message_id = r.message_id "
         "ORDER BY r.ts_epoch, r.message_id").fetchall()
     reqs: list[_Req] = []
     last_model: dict[str, list[tuple[float, str]]] = {}
     for x in rows:
-        p = pricing.find_price(x["model"], price_day(x["ts_epoch"]), table)
-        if p is None:
+        rs = rates(x["model"], price_day(x["ts_epoch"]), x["speed"], x["inference_geo"], table)
+        if rs is None:
             continue
-        out_per_token = (p.output + p.input * pricing.WRITE_1H_MULT) / 1_000_000
         reqs.append(_Req(x["message_id"], (x["sid"], x["agent_id"]), x["ts_epoch"], x["model"],
-                         x["ctx"], p.cache_read / 1_000_000, out_per_token))
+                         x["ctx"], rs))
         if x["agent_id"] is None:
             last_model.setdefault(x["sid"], []).append((x["ts_epoch"], x["model"]))
 
@@ -216,8 +247,8 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
     own_prices: dict[str, tuple[float, float]] = {}
     for model in {r.model for r in reqs}:
         mine = [r for r in reqs if r.model == model]
-        own_prices[model] = (sum(r.cost_per_post for r in mine) / len(mine),
-                             sum(r.read_price for r in mine) / len(mine))
+        own_prices[model] = (sum(r.rates.per_post for r in mine) / len(mine),
+                             sum(r.rates.read for r in mine) / len(mine))
     if not all_posts:
         return CompactAnalysis((), None, own_prices)
 
@@ -274,8 +305,3 @@ def from_json(text: str) -> CompactAnalysis:
         tuple(threshold(m) for m in d["models"]),
         None if d["global"] is None else threshold(d["global"]),
         {m: tuple(p) for m, p in d["own_prices"].items()})
-
-
-def read_price(model: str, day: date, table=None) -> float | None:
-    p = pricing.find_price(model, day, table)
-    return None if p is None else p.cache_read / 1_000_000
