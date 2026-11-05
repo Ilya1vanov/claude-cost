@@ -168,6 +168,10 @@ _Avoid_: context limit, compact window
 The text describing a skill or MCP server that is loaded into a session's context whether or not it is used.
 _Avoid_: tool definitions, manifest
 
+**Unused listing**:
+A Listing never invoked in its project during the Period.
+_Avoid_: dead listing, idle skill
+
 **Oversized context**:
 Requests whose context is above the compact threshold, whether or not the session later compacts.
 _Avoid_: overflow, context bloat
