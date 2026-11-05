@@ -92,6 +92,14 @@ def test_suggestions_are_sessions_whose_name_or_id_contains_the_text(client):
     assert [o["id"] for o in everything] == ["s1aaaaaaaa-1111", "s2bbbbbbbb-2222", "s3cccccccc-3333"]
 
 
+def test_suggestions_match_a_substring_not_a_subsequence(client):
+    def ids(q):
+        return [o["id"] for o in client.get("/filter-options", query_string={
+            "dimension": "session_name", "q": q}).get_json()["options"]]
+    assert ids("ogin w") == ["s1aaaaaaaa-1111"]
+    assert ids("lgnk") == [] and ids("lgn") == []  # letters of "Login work" in order, but not contiguous
+
+
 def test_suggestions_are_narrowed_by_the_other_filters(client):
     opts = client.get("/filter-options?dimension=session_name&project=proj-b").get_json()["options"]
     assert [o["id"] for o in opts] == ["s3cccccccc-3333"]

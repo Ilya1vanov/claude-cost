@@ -80,6 +80,16 @@ def test_options_are_the_top_100_by_count_plus_selected(root, configure):
     assert len(picked) == 101 and "b99" in {o["value"] for o in picked}
 
 
+def test_date_options_are_the_presets_not_day_values(client):
+    r = client.get("/filter-options?dimension=date")
+    assert r.status_code == 200
+    options = r.get_json()["options"]
+    assert [(o["value"], o["label"]) for o in options] == [
+        ("last-7", "Last 7 days"), ("last-30", "Last 30 days"), ("last-90", "Last 90 days"),
+        ("this-week", "This week"), ("last-week", "Last week"),
+        ("this-month", "This month"), ("last-month", "Last month")]
+
+
 def test_unknown_dimension_is_a_400(client):
     assert client.get("/filter-options?dimension=nope").status_code == 400
 

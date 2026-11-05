@@ -194,7 +194,7 @@ def test_breakdowns_page_filters_in_url_drill_down_and_csv(root, configure):
     root.write_transcript("proj-b", "s2", [req("m3", "2026-10-30T01:00:00Z", output=500_000)])
     client = _client(configure(root))
     html = client.get("/breakdowns").get_data(as_text=True)
-    assert 'id="explore-chart"' in html and "2026-10-29" in html
+    assert 'id="cost-chart"' in html and "2026-10-29" in html
     assert "Breakdown by" in html and "Group by" not in html
     assert '<option value="date" selected>' in html  # defaults to Date
     assert 'value="session"' not in html  # session is not a breakdown
@@ -203,7 +203,7 @@ def test_breakdowns_page_filters_in_url_drill_down_and_csv(root, configure):
     page = client.get("/breakdowns?group=model&project=proj-a&project=proj-b&tool=Bash")
     html = page.get_data(as_text=True)
     assert page.status_code == 200 and "<strong>proj-a, proj-b</strong>" in html and 'title="Tool: Bash"' in html
-    table = html.split('id="explore-table"')[1]
+    table = html.split('id="breakdowns-table"')[1]
     assert "claude-opus-5-5" in table and "claude-sonnet-5" not in table  # filtered slice
     # each row opens Sessions with its value added to the current filters
     link = re.search(r'href="(/sessions\?[^"]*model=claude-opus-5-5[^"]*)"', table).group(1)

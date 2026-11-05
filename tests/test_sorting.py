@@ -1,4 +1,6 @@
 """Seam: sorting and the 200-row cap on Sessions and Breakdowns (QueryService + /sessions, /breakdowns, CSVs)."""
+import json
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -111,13 +113,12 @@ def test_unknown_breakdown_sort_key_is_rejected(svc):
         svc.explore(ExploreSpec("project", sort="last_activity"))
 
 
-def test_sort_round_trips_in_the_url_and_resets_on_drill_and_group_change():
+def test_sort_round_trips_in_the_url_and_resets_on_drill():
     spec = ExploreSpec.from_query([("group", "model"), ("sort", "-requests")])
     assert spec.sort == "-requests"
     assert ("sort", "-requests") in spec.to_query()
     assert ("sort", "-requests") in spec.without("project", "x").to_query()
     assert spec.drill("project", "p").sort is None
-    assert spec.with_group("date").sort is None
     assert all(k != "sort" for k, _ in ExploreSpec().to_query())
 
 
@@ -132,7 +133,7 @@ def test_pages_return_400_for_an_unknown_sort_key(client):
 def test_headers_link_to_sorts_and_the_active_one_shows_its_direction(client):
     html = client.get("/sessions").get_data(as_text=True)
     assert 'aria-sort="descending"' in html and html.count("aria-sort=") == 1
-    assert "sort=last_activity" in html and "sort=cost" in html  # active flips; inactive sorts ascending
+    assert "sort=last_activity" in html and "sort=-cost" in html  # active flips; inactive numbers sort descending
     html = client.get("/sessions?sort=cost").get_data(as_text=True)
     assert 'aria-sort="ascending"' in html and "sort=-cost" in html
     html = client.get("/breakdowns?group=project").get_data(as_text=True)
@@ -171,3 +172,54 @@ def test_cap_shows_at_most_200_rows_with_the_total(root, configure, service_for)
         assert "Showing 200 of 201, narrow with filters." in html
     assert client.get("/sessions").get_data(as_text=True).count('<a href="/session/') == 200
     assert "Showing" not in client.get("/sessions?date=2026-01-01").get_data(as_text=True)
+
+
+def test_removing_a_filter_keeps_the_sort():
+    spec = ExploreSpec.from_query([("group", "model"), ("project", "p"), ("sort", "-requests")])
+    assert spec.without_dim("project").sort == "-requests"
+    assert ("sort", "-requests") in spec.without_dim("project").to_query()
+
+
+def test_chip_remove_link_keeps_the_sort(client):
+    html = client.get("/sessions?project=proj-a&sort=-requests").get_data(as_text=True)
+    chip_x = html.split('class="chip-x" href="')[1].split('"')[0]
+    assert "sort=-requests" in chip_x and "project=" not in chip_x
+
+
+def _sort_links(html):
+    return re.findall(r'class="sort" href="([^"]*)"', html)
+
+
+@pytest.mark.parametrize("key", ["last_activity", "cost", "requests", "share"])
+def test_first_click_on_a_numeric_sessions_column_sorts_descending(client, key):
+    html = client.get("/sessions?sort=session").get_data(as_text=True)
+    assert f"sort=-{key}" in " ".join(_sort_links(html))
+
+
+@pytest.mark.parametrize("key", ["session", "project"])
+def test_first_click_on_a_text_sessions_column_sorts_ascending(client, key):
+    html = client.get("/sessions?sort=-cost").get_data(as_text=True)
+    links = " ".join(_sort_links(html))
+    assert f"sort={key}" in links and f"sort=-{key}" not in links
+
+
+def test_clicking_the_active_column_toggles(client):
+    asc = " ".join(_sort_links(client.get("/sessions?sort=cost").get_data(as_text=True)))
+    desc = " ".join(_sort_links(client.get("/sessions?sort=-cost").get_data(as_text=True)))
+    assert "sort=-cost" in asc and "sort=cost" in desc
+
+
+def test_first_click_on_breakdown_columns_follows_the_same_rule(client):
+    links = " ".join(_sort_links(client.get("/breakdowns?group=project&sort=value").get_data(as_text=True)))
+    assert "sort=-cost" in links and "sort=-requests" in links and "sort=-share" in links
+    links = " ".join(_sort_links(client.get("/breakdowns?group=project&sort=cost").get_data(as_text=True)))
+    assert "sort=value" in links and "sort=-value" not in links
+
+
+def _chart_costs(html):
+    return json.loads(html.split('id="chart-data" type="application/json">')[1].split("</script>")[0])["costs"]
+
+
+def test_breakdowns_chart_is_costliest_first_whatever_the_table_sort(client):
+    html = client.get("/breakdowns?group=project&sort=cost").get_data(as_text=True)  # table: cheapest first
+    assert _chart_costs(html) == [40.0, 10.0]

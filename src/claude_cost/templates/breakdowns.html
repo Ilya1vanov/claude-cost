@@ -11,7 +11,7 @@
     <a href="{{ url_for('breakdowns_page') }}">Reset</a>
   </div>
   <div class="card">
-    <form method="get" action="{{ url_for('breakdowns_page') }}" id="explore-form" class="form-row">
+    <form method="get" action="{{ url_for('breakdowns_page') }}" id="breakdown-form" class="form-row">
       <label>Breakdown by
         <select name="group" onchange="this.form.submit()">{% for key, d in breakdown_dims.items() %}
           <option value="{{ key }}" {{ "selected" if key == spec.group }}>{{ d.label }}</option>{% endfor %}
@@ -24,16 +24,16 @@
   {% if result.overlapping %}<p class="callout">A request can use several {{ result.label|lower }} values, so rows can add up to more than the total.</p>{% endif %}
   {% if result.rows %}
   <section class="card">
-    <div class="card-head"><h2>Cost by {{ result.label|lower }}</h2><a id="csv-link" href="{{ explore_url('breakdowns_csv', spec) }}">Export CSV</a></div>
-    <div class="chart"><canvas id="explore-chart" aria-label="Cost by {{ result.label }}"></canvas></div>
+    <div class="card-head"><h2>Cost by {{ result.label|lower }}</h2><a id="csv-link" href="{{ page_url('breakdowns_csv', spec) }}">Export CSV</a></div>
+    <div class="chart"><canvas id="cost-chart" aria-label="Cost by {{ result.label }}"></canvas></div>
   </section>
   <section class="card">
-    <div class="table-wrap"><table id="explore-table">
+    <div class="table-wrap"><table id="breakdowns-table">
       <tr>{{ ui.sort_th('breakdowns_page', spec, result.sort, 'value', result.label) }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'cost', 'Cost', 'num') }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'requests', 'Requests', 'num') }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'share', 'Share %', 'num') }}<th></th></tr>
       {% for r in result.shown %}
       <tr><td>{% if result.group == "component" %}{{ ui.component(r.value) }}{% elif result.group == "project" %}{{ project_name(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
         <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td>
-        <td class="num"><a href="{{ explore_url('sessions_page', spec.drill(result.group, r.value)) }}">sessions</a></td></tr>
+        <td class="num"><a href="{{ page_url('sessions_page', spec.drill(result.group, r.value)) }}">sessions</a></td></tr>
       {% endfor %}
     </table></div>
     {{ ui.cap_note(result) }}
@@ -41,6 +41,6 @@
   {% else %}<p class="card empty">No requests match.</p>{% endif %}
 {% endblock %}
 {% block scripts %}{% if result.rows %}
-  <script id="explore-data" type="application/json">{{ chart_data|tojson }}</script>
-  {{ ui.chart_scripts('explore.js') }}
+  <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
+  {{ ui.chart_scripts('cost_chart.js') }}
 {% endif %}{% endblock %}

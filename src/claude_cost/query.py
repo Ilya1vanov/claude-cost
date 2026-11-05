@@ -1621,7 +1621,7 @@ class QueryService:
 
         Candidates are every Session except the Spotlight's direct members and `exclude`. An empty
         query returns the suggested Forks (unpicked Forks of members), costliest first. Otherwise
-        the query is matched as a case-insensitive subsequence of the label or the id; suggested
+        the query is matched as a case-insensitive substring of the label or the id; suggested
         Forks rank first, then the better match, then the costlier Session; at most 10 are returned.
         """
         infos, defs, member = self._spotlight_state()
@@ -1656,7 +1656,7 @@ class QueryService:
         ranked.sort(key=lambda r: r[:4])
         return [r[4] for r in ranked[:self.SEARCH_LIMIT]]
 
-    # Explore (ticket #11): the dimension registry and slicing live in explore.py
+    # Sessions and Breakdowns: the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
         return explore.run(self._conn, self._local_day, spec, self.findings, self.session_labels())
@@ -1678,5 +1678,4 @@ class QueryService:
                        limit: int = 100) -> list[explore.FilterOption]:
         """Values of dimension `key` for the filter popover (see `explore.filter_options`)."""
         return explore.filter_options(self._conn, self._local_day, spec, key, q,
-                                      self.value_names(key), self.findings, limit,
-                                      self.session_labels())
+                                      self.value_names, self.findings, limit)

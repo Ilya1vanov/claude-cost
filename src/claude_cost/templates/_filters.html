@@ -6,7 +6,7 @@
   {% for c in filters.chips %}
   <span class="chip" data-dim="{{ c.key }}">
     <button type="button" class="chip-open" data-dim="{{ c.key }}" title="{{ c.full }}"><span class="chip-label">{{ c.label }}:</span> <strong>{{ c.text }}</strong></button>
-    <a class="chip-x" href="{{ explore_url(endpoint, spec.without_dim(c.key)) }}" aria-label="Remove {{ c.label }} filter">&times;</a>
+    <a class="chip-x" href="{{ page_url(endpoint, spec.without_dim(c.key)) }}" aria-label="Remove {{ c.label }} filter">&times;</a>
   </span>
   {% endfor %}
   <div class="filter-pop" role="dialog" hidden></div>
