@@ -1661,10 +1661,6 @@ class QueryService:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
         return explore.run(self._conn, self._local_day, spec, self.findings)
 
-    def explore_requests(self, spec: explore.ExploreSpec) -> list[explore.ExploreRequest]:
-        """The individual requests of the slice, oldest first."""
-        return explore.requests(self._conn, self._local_day, spec, self.findings)
-
     def sessions(self, spec: explore.ExploreSpec) -> explore.SessionsResult:
         """One row per logical Session over the requests the filters keep (the group-by is ignored)."""
         return explore.sessions(self._conn, self._local_day, self.local_time,

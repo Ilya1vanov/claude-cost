@@ -19,8 +19,7 @@ from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
 MAX_DAILY_COST_DAYS = 400  # longest span /api/daily-cost will serve
-CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
-REQUEST_ROWS = 1000
+CHART_ROWS = 25  # Breakdown and Sessions charts show the top groups; the table and CSV show all
 
 
 PERIOD_LABELS = {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}
@@ -408,13 +407,13 @@ def create_app(service_factory: Callable[[], QueryService],
             params.setdefault(key, []).append(value)
         return url_for(endpoint, **{**params, **extra})
 
-    @app.get("/explore")
-    def explore_page():
+    @app.get("/breakdowns")
+    def breakdowns_page():
         spec = explore_spec()
         service = explore_service()
         result = service.explore(spec)
         return render_template(
-            "explore.html", spec=spec, result=result, dims=explore.DIMENSIONS,
+            "breakdowns.html", spec=spec, result=result, dims=explore.DIMENSIONS, breakdown_dims=explore.breakdowns(),
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share,
             chart_data={"label": result.label,
@@ -441,21 +440,12 @@ def create_app(service_factory: Callable[[], QueryService],
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": 'attachment; filename="claude-cost-sessions.csv"'})
 
-    @app.get("/explore.csv")
-    def explore_csv():
+    @app.get("/breakdowns.csv")
+    def breakdowns_csv():
         spec = explore_spec()
         body = explore.to_csv(explore_service().explore(spec))
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": f'attachment; filename="claude-cost-{spec.group}.csv"'})
-
-    @app.get("/explore/requests")
-    def explore_requests():
-        spec = explore_spec()
-        service = explore_service()
-        reqs = service.explore_requests(spec)
-        return render_template(
-            "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
-            requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
 
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")

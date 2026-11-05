@@ -138,18 +138,18 @@ def test_spec_url_round_trip_and_drill_down():
     assert spec.group == "model" and spec.filters == {"project": ("a", "b"), "tool": ("mcp__x:y",)}
     assert ExploreSpec.from_query(spec.to_query()) == spec
     d = spec.drill("model", "opus")
-    assert d.group == "session" and d.filters["model"] == ("opus",) and d.filters["project"] == ("a", "b")
+    assert d.filters["model"] == ("opus",) and d.filters["project"] == ("a", "b")
     assert spec.drill("project", "a").filters["project"] == ("a",)  # replaces, not adds
     assert spec.without("project", "a").filters["project"] == ("b",)
     with pytest.raises(ValueError):
         ExploreSpec.from_query([("group", "bogus")])
+    with pytest.raises(ValueError):
+        ExploreSpec.from_query([("group", "session")])  # a Session is listed, not a Breakdown
+    assert ExploreSpec.from_query([("session", "s1")]).filters["session"] == ("s1",)  # still a filter
     assert ExploreSpec.from_query([]).group == "date"
 
 
-def test_requests_of_a_slice_and_csv(svc):
-    reqs = svc.explore_requests(_spec("session", session=["s1"]))
-    assert [r.message_id for r in reqs] == ["m1", "m2", "m5"]
-    assert reqs[0].session_id == "s1" and reqs[0].cost == pytest.approx(20.0)
+def test_csv_of_a_breakdown(svc):
     csv_text = explore.to_csv(svc.explore(_spec("project")))
     lines = csv_text.strip().splitlines()
     assert lines[0] == "Project,Cost,Requests,Share %"

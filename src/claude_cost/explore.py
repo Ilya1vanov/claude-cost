@@ -200,6 +200,11 @@ for _d in (
     register(_d)
 
 
+def breakdowns() -> dict[str, Dimension]:
+    """The dimensions a Breakdown can split by: all but Session, which the Sessions page lists."""
+    return {k: d for k, d in DIMENSIONS.items() if k != "session"}
+
+
 @dataclass(frozen=True)
 class ExploreSpec:
     """A view: the group-by and the filters. `from_query`/`to_query` are the URL encoding
@@ -212,8 +217,8 @@ class ExploreSpec:
         group, filters = DEFAULT_GROUP, {}
         for key, value in pairs:
             if key == "group":
-                if value not in DIMENSIONS:
-                    raise ValueError(f"group must be one of {', '.join(DIMENSIONS)}")
+                if value not in breakdowns():
+                    raise ValueError(f"group must be one of {', '.join(breakdowns())}")
                 group = value
             elif key in DIMENSIONS and value != "":
                 if value not in filters.setdefault(key, ()):
@@ -227,8 +232,8 @@ class ExploreSpec:
         return ExploreSpec(group, self.filters)
 
     def drill(self, dim: str, value: str) -> "ExploreSpec":
-        """Narrow to one group and show its Sessions (a Session row stays a Session view)."""
-        return ExploreSpec("session", {**self.filters, dim: (value,)})
+        """The filters plus `dim = value`: the slice behind one Breakdown row, listed on Sessions."""
+        return ExploreSpec(DEFAULT_GROUP, {**self.filters, dim: (value,)})
 
     def without(self, dim: str, value: str) -> "ExploreSpec":
         rest = tuple(v for v in self.filters.get(dim, ()) if v != value)
