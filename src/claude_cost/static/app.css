@@ -37,6 +37,18 @@
   /* Series in multi-line charts */
   --s1: #4f46e5; --s2: #e8833a; --s3: #2a9d8f; --s4: #b8962e; --s5: #a865a0; --s6: #8a6d3b;
 
+  --model-opus: #ede9fe; --model-opus-fg: #5b21b6;
+  --model-sonnet: #d5f5ee; --model-sonnet-fg: #0f5e57;
+  --model-haiku: #fdf0c8; --model-haiku-fg: #8a4a06;
+  --model-fable: #fce4f1; --model-fable-fg: #9d174d;
+  --model-unknown: #eef0f3; --model-unknown-fg: #4a5361;
+  /* Effort: a lightness scale, low (palest) to max (darkest) */
+  --effort-low: #f6f7f9; --effort-low-fg: #4a5361;
+  --effort-medium: #dfe3e9; --effort-medium-fg: #3d4552;
+  --effort-high: #b8c0cc; --effort-high-fg: #1a1d23;
+  --effort-xhigh: #5d6776; --effort-xhigh-fg: #ffffff;
+  --effort-max: #1a1d23; --effort-max-fg: #ffffff;
+
   --radius: 10px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -75,6 +87,17 @@
     --c-cache-write-5m: #4fc1b2;
     --c-cache-write-1h: #c487bc;
     --c-cache-read: #6cbf72;
+
+    --model-opus: #2e2756; --model-opus-fg: #c9bdfb;
+    --model-sonnet: #0f3a35; --model-sonnet-fg: #7fdccb;
+    --model-haiku: #3d2f0a; --model-haiku-fg: #f2c970;
+    --model-fable: #4a1a36; --model-fable-fg: #f5a3cc;
+    --model-unknown: #262b34; --model-unknown-fg: #9aa3b0;
+    --effort-low: #1c2028; --effort-low-fg: #9aa3b0;
+    --effort-medium: #2f3541; --effort-medium-fg: #c4cad4;
+    --effort-high: #4a5262; --effort-high-fg: #e5e8ec;
+    --effort-xhigh: #8a94a6; --effort-xhigh-fg: #0f1115;
+    --effort-max: #e5e8ec; --effort-max-fg: #0f1115;
 
     --s1: #8b85f7; --s2: #f29a55; --s3: #4fc1b2; --s4: #d9bb5f; --s5: #c487bc; --s6: #c9a66b;
     --shadow: none;
@@ -212,6 +235,18 @@ tr.baseline td { background: var(--surface-2); }
 .badge.opportunity { background: var(--info-soft); color: var(--info); }
 .badge.late-compact { background: var(--late-compact-soft); color: var(--late-compact); font-weight: 600; }
 .badge.over { background: var(--late-soft); color: var(--late); }
+.badge.model-opus { background: var(--model-opus); color: var(--model-opus-fg); font-weight: 650; }
+.badge.model-sonnet { background: var(--model-sonnet); color: var(--model-sonnet-fg); font-weight: 650; }
+.badge.model-haiku { background: var(--model-haiku); color: var(--model-haiku-fg); font-weight: 650; }
+.badge.model-fable { background: var(--model-fable); color: var(--model-fable-fg); font-weight: 650; }
+.badge.model-unknown { background: var(--model-unknown); color: var(--model-unknown-fg); font-weight: 650; }
+.badge.effort-low { background: var(--effort-low); color: var(--effort-low-fg); box-shadow: inset 0 0 0 1px var(--border); }
+.badge.effort-medium { background: var(--effort-medium); color: var(--effort-medium-fg); }
+.badge.effort-high { background: var(--effort-high); color: var(--effort-high-fg); }
+.badge.effort-xhigh { background: var(--effort-xhigh); color: var(--effort-xhigh-fg); }
+.badge.effort-max { background: var(--effort-max); color: var(--effort-max-fg); }
+.tl-setting { margin-left: 8px; font-weight: 400; }
+.tl-setting .badge { margin-left: 4px; }
 .badge.cold, .badge.idle { background: var(--warn-soft); color: var(--warn); }
 .card.drain { border-top: 3px solid var(--warn); }
 .card.opportunity { border-top: 3px solid var(--info); }

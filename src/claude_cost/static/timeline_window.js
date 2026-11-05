@@ -15,6 +15,20 @@ if (api) {
   let firstVisible = -1;
   const nodes = new Map();  // row index -> its wrapper element, for the rows currently drawn
 
+  // The sticky badge in the Timeline header: the setting in effect for the first visible row
+  // (a Subagent's own while that row is inside its expanded block).
+  const settingBox = document.getElementById("timeline-setting");
+  let shownSetting = null;
+  function updateSettingBadge() {
+    if (!settingBox) { return; }
+    const s = firstVisible >= 0 ? api.settingAt(firstVisible) : null;
+    const key = s ? [s.model, s.effort].join("|") : "";
+    if (key === shownSetting) { return; }
+    shownSetting = key;
+    settingBox.textContent = "";
+    if (s) { api.settingBadges(s, settingBox); }
+  }
+
   function render() {
     const items = virtualizer.getVirtualItems();
     const wanted = new Set(items.map(function (i) { return i.index; }));
@@ -40,6 +54,7 @@ if (api) {
       firstVisible = start;
       firstVisibleListeners.slice().forEach(function (fn) { fn(start); });
     }
+    updateSettingBadge();
   }
 
   function mount(newRows) {

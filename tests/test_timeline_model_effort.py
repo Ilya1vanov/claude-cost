@@ -50,3 +50,47 @@ def test_subagent_rows_show_the_same_fields(root, tmp_path):
     _session(root)
     (r1,) = _rows(root, tmp_path, "/api/session/s1/agent/a1/timeline")
     assert (r1["modelLabel"], r1["effort"]) == ("Haiku 4.5", "medium")
+
+
+def test_model_family_names_the_color_token_of_a_model():
+    from claude_cost.web import model_family
+    assert [model_family(m) for m in (
+        "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-fable-5-1",
+        "claude-3-5-sonnet-20241022", "claude-mystery-model", "")] == [
+        "opus", "sonnet", "haiku", "fable", "unknown", "unknown", "unknown"]
+
+
+def test_timeline_rows_carry_the_model_family(root, tmp_path):
+    _session(root)
+    r1, block, r2, r3 = _rows(root, tmp_path)
+    assert [r["modelFamily"] for r in (r1, block, r2, r3)] == ["opus", "haiku", "sonnet", "unknown"]
+
+
+def test_header_combinations_use_family_and_effort_colors(root, tmp_path):
+    _session(root)
+    html = _page(root, tmp_path)
+    combos = html.split('id="combinations"')[1].split("</p>")[0]
+    assert 'class="badge model-opus"' in combos and 'class="badge effort-high"' in combos
+    assert 'class="badge model-unknown"' in combos and 'class="badge effort-low"' in combos
+    assert 'class="badge model-sonnet"' in combos
+
+
+def test_timeline_header_holds_the_sticky_setting_badge(root, tmp_path):
+    _session(root)
+    head = _page(root, tmp_path).split('class="tl-head"')[1].split("</div>")[0]
+    assert 'id="timeline-setting"' in head
+
+
+def test_stylesheet_defines_every_color_token_in_light_and_dark():
+    from pathlib import Path
+    import claude_cost
+    css = (Path(claude_cost.__file__).parent / "static" / "app.css").read_text()
+    dark = css.split("@media (prefers-color-scheme: dark)")[1]
+    for token in ("opus", "sonnet", "haiku", "fable", "unknown"):
+        for part in ("", "-fg"):
+            assert f"--model-{token}{part}:" in css.split("@media (prefers-color-scheme: dark)")[0]
+            assert f"--model-{token}{part}:" in dark
+    for token in ("low", "medium", "high", "xhigh", "max"):
+        for part in ("", "-fg"):
+            assert f"--effort-{token}{part}:" in css.split("@media (prefers-color-scheme: dark)")[0]
+            assert f"--effort-{token}{part}:" in dark

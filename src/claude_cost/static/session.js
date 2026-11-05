@@ -248,6 +248,16 @@
 
   // A Subagent block: collapsed by default. Its rows are not drawn inside it; expanding it adds
   // them to the flat windowed list right after it, one level deeper (see flatten below).
+  // The model and Effort badges for a setting; an Effort this stylesheet has no color for stays plain.
+  var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+  function settingBadges(setting, into) {
+    into.appendChild(el("span", "badge model-" + (setting.modelFamily || "unknown"), setting.modelLabel));
+    if (setting.effort) {
+      into.appendChild(document.createTextNode(" "));
+      into.appendChild(el("span", "badge" + (EFFORTS.indexOf(setting.effort) >= 0 ? " effort-" + setting.effort : ""), setting.effort));
+    }
+  }
+
   function renderSubagent(row) {
     var wrap = el("div", "tl-row tl-request tl-subagent");
     var main = el("div");
@@ -257,8 +267,10 @@
     head.addEventListener("click", function () { toggleSubagent(row.agent_id); });
     main.appendChild(head);
     if (row.description) { main.appendChild(el("span", "tl-text", " " + row.description)); }
-    main.appendChild(el("div", "tl-time", row.time + " · " + (row.is_fork ? "Fork subagent · " : "") + row.modelLabel +
-      (row.effort ? " · " + row.effort : "") + " · " + row.requests + " requests"));
+    var meta = el("div", "tl-time", row.time + " · " + (row.is_fork ? "Fork subagent · " : "") + "\u00a0");
+    settingBadges(row, meta);
+    meta.appendChild(document.createTextNode(" · " + row.requests + " requests"));
+    main.appendChild(meta);
     wrap.appendChild(main);
     wrap.appendChild(el("div", "num ctx", row.peak_context.toLocaleString() + " peak"));
     wrap.appendChild(el("div", "num", "$" + row.cost.toFixed(4)));
@@ -332,7 +344,7 @@
   function settingAt(index) {
     var row = flat[index];
     if (!row) { return null; }
-    if (row.model) { return { model: row.model, modelLabel: row.modelLabel, effort: row.effort }; }
+    if (row.model) { return { model: row.model, modelLabel: row.modelLabel, modelFamily: row.modelFamily, effort: row.effort }; }
     var near = null;
     for (var i = index + 1; i < flat.length && flat[i].depth >= row.depth; i++) {
       if (flat[i].depth === row.depth && flat[i].model) { near = flat[i]; break; }
@@ -340,7 +352,7 @@
     for (var j = index - 1; !near && j >= 0; j--) {
       if (flat[j].depth === row.depth && flat[j].model) { near = flat[j]; }
     }
-    return near && { model: near.model, modelLabel: near.modelLabel, effort: near.effort };
+    return near && { model: near.model, modelLabel: near.modelLabel, modelFamily: near.modelFamily, effort: near.effort };
   }
   function setTree(rows) { tree = rows; openAgents.clear(); hitRow = null; matches = []; refresh(true); }
 
@@ -426,7 +438,7 @@
   // timeline_window.js (a module script, so it runs after this one) windows these rows into view
   // and adds mountRows, updateRows, scrollToIndex, remeasure and onFirstVisibleChange to this object.
   window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el,
-    setRowExpanded: setRowExpanded,
+    setRowExpanded: setRowExpanded, settingBadges: settingBadges,
     setTree: setTree, expandSubagent: expandSubagent, collapseSubagent: collapseSubagent,
     rowAt: function (i) { return flat[i]; }, settingAt: settingAt };
 })();

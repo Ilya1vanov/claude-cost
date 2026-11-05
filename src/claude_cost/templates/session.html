@@ -17,7 +17,7 @@
       {% elif t.total_cost is not none and t.subagent_cost %}<p class="sub">{{ t.total_requests }} requests, <strong>${{ "%.2f"|format(t.total_cost) }}</strong>
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }})</p>
       {% else %}<p class="sub">{{ t.points|length }} requests, <strong>${{ "%.2f"|format(t.cost) }}</strong></p>{% endif %}
-      {% set combos = t.combinations %}{% if combos %}<p class="sub" id="combinations">{% for c in combos %}{% if not loop.first %}; {% endif %}{{ short_model(c.model) }}{% if c.effort %} · {{ c.effort }}{% endif %}{% if combos|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
+      {% set combos = t.combinations %}{% if combos %}<p class="sub" id="combinations">{% for c in combos %}{% if not loop.first %}; {% endif %}<span class="badge model-{{ model_family(c.model) }}">{{ short_model(c.model) }}</span>{% if c.effort %} <span class="badge effort-{{ c.effort }}">{{ c.effort }}</span>{% endif %}{% if combos|length > 1 %}: {{ c.requests }} request{{ "" if c.requests == 1 else "s" }}, ${{ "%.2f"|format(c.cost) }}{% endif %}{% endfor %}</p>{% endif %}
       {% if t.points %}<p class="sub">{{ when(t.points[0].ts) }} to {{ when(t.points[-1].ts) }}</p>{% endif %}
     </div>
     <a href="{{ url_for('compact') }}">Compact threshold</a>
@@ -52,8 +52,7 @@
   <section class="card">
     <h2>Timeline</h2>
     <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
-      <div class="tl-head"><span>Prompts, requests and events <label class="tl-collapse"><input type="checkbox" id="timeline-collapse"> Collapse text</label> <input type="search" id="timeline-search" class="tl-search" placeholder="Search" aria-label="Search the Timeline"> <span class="tl-search-count num" id="timeline-search-count" aria-live="polite"></span></span><span class="num">Context</span><span class="num">Cost</span></div>
-      <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
+      <div class="tl-head"><span>Prompts, requests and events <span id="timeline-setting" class="tl-setting"></span> <label class="tl-collapse"><input type="checkbox" id="timeline-collapse"> Collapse text</label> <input type="search" id="timeline-search" class="tl-search" placeholder="Search" aria-label="Search the Timeline"> <span class="tl-search-count num" id="timeline-search-count" aria-live="polite"></span></span><span class="num">Context</span><span class="num">Cost</span></div>
     </div>
   </section>
 {% endblock %}
