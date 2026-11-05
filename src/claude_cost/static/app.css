@@ -423,6 +423,15 @@ td.tree-node { min-width: 280px; }
 .fp-opt input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .fp-opt span { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fp-opt small { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fp-hint { margin: 6px 16px 0; font-size: 12px; color: var(--muted); }
+.fp-sugg { font: inherit; width: 100%; min-height: 44px; padding: 4px 10px; border: none; border-radius: 6px; background: transparent;
+  color: var(--text); display: flex; flex-direction: column; gap: 1px; text-align: left; cursor: pointer; }
+.fp-sugg:hover { background: var(--surface-2); filter: none; }
+.fp-sugg-top { display: flex; justify-content: space-between; gap: 12px; }
+.fp-sugg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-sugg-name mark { background: var(--accent-soft); color: inherit; font-weight: 650; border-radius: 2px; }
+.fp-sugg code { font-size: 12px; color: var(--muted); }
+.fp-sugg small { font-size: 12px; color: var(--muted); }
 .fp-empty { padding: 14px 10px; color: var(--muted); font-size: 13px; }
 .fp-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px;
   border-top: 1px solid var(--border); background: var(--surface-2); }

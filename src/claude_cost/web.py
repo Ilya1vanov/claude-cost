@@ -425,18 +425,20 @@ def create_app(service_factory: Callable[[], QueryService],
         chips = explore.chips(spec, names)
         summary = {c.key: c.text for c in chips}
         return {"chips": chips,
-                "dims": [{"key": k, "label": d.label, "kind": "text" if k == "date" else "options",
+                "dims": [{"key": k, "label": d.label, "kind": {"date": "text", "session_name": "contains"}.get(k, "options"),
                           "values": spec.filters.get(k, ()), "summary": summary.get(k, "")}
-                         for k, d in explore.DIMENSIONS.items()]}
+                         for k, d in explore.DIMENSIONS.items() if d.filterable]}
 
     @app.get("/filter-options")
     def filter_options():
         key = request.args.get("dimension", "")
-        if key not in explore.DIMENSIONS:
-            abort(400, f"dimension must be one of {', '.join(explore.DIMENSIONS)}")
+        filterable = [k for k, d in explore.DIMENSIONS.items() if d.filterable]
+        if key not in filterable:
+            abort(400, f"dimension must be one of {', '.join(filterable)}")
         options = explore_service().filter_options(explore_spec(), key, request.args.get("q", ""))
         return jsonify({"dimension": key, "options": [
-            {"value": o.value, "label": o.label, "count": o.count} for o in options]})
+            {"value": o.value, "label": o.label, "count": o.count, "id": o.id, "meta": o.meta}
+            for o in options]})
 
     @app.get("/breakdowns")
     def breakdowns_page():
