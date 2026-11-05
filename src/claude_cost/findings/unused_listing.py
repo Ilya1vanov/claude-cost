@@ -10,6 +10,7 @@ from functools import lru_cache
 from itertools import accumulate
 
 from .. import pricing
+from ..cache import COLD
 from ..projects import project_display_names
 from .core import (DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef,
                    format_avoidable, ts_where)
@@ -73,6 +74,7 @@ class _Stream:
         self.ts = [r.ts for r in reqs]
         self.rates = [_read_rate(ctx, r) for r in reqs]
         self.write_rates = [_write_rate(ctx, r) for r in reqs]
+        self.cold = [i for i, r in enumerate(reqs) if r.cache_event == COLD]  # indices, ascending
         self.extra = [0.0] * len(reqs)
         self.delta = [0] * (len(reqs) + 1)
         # the Stream's last Request before the Period, if any (its gap is stored at ingest)
@@ -83,7 +85,8 @@ class _Stream:
         """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
         the cache: those after the one that wrote it (the first at or after `ts`, possibly before
         the Period), before the removal. Returns its (lower, upper) $, or None when no request
-        read it. The upper bound adds the write when the writer is a Period Request."""
+        read it. The upper bound adds the write when the writer is a Period Request, and swaps the
+        read for the write on each Cold-write Request in the range."""
         lo = bisect_left(self.ts, ts)
         # a Period Request precedes the Listing, or no Request between the Listing and the
         # Period does: either way the writer is self.reqs[lo]
@@ -101,6 +104,11 @@ class _Stream:
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
             write = tokens * self.write_rates[writer]
             self._add_upper(writer, write)
+        # a Cold write rebuilds the Listing too: it pays the write in place of the read
+        for j in self.cold[bisect_left(self.cold, lo):bisect_left(self.cold, hi)]:
+            rebuild = tokens * (self.write_rates[j] - self.rates[j])
+            self._add_upper(j, rebuild)
+            write += rebuild
         # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
         reads = tokens * sum(self.rates[lo:hi])
         return reads, reads + write
@@ -241,7 +249,8 @@ FINDING = FindingDef(
                 "that project over the period.",
     formula="avoidable = lower bound: Listing tokens (text length / 3.6) x cache read price, for "
             "every request after the one that wrote the Listing; upper bound: the lower bound "
-            "plus the Listing's tokens at write price on the Period request that wrote it, plus "
+            "plus the Listing's tokens at write price on the Period request that wrote it, and on each "
+            "Cold-write request in place of its read, plus "
             "(tier multiplier - 1) / tier multiplier of a request's whole cost when removing all its "
             "unused Listings takes its prompt from above its model's Prompt tier threshold to at or "
             "below it (split across those Listings by token share)",

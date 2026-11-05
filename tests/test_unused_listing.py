@@ -590,3 +590,25 @@ def test_listings_sharing_a_tier_drop_split_it_by_token_share_and_the_request_co
     rows = {r[0]: r[4] for r in f.table.rows}
     assert rows == {"a": f"$0.00–${drop / 4 + 10_000 * 0.2 / 1e6:.2f}",
                     "b": f"$0.00–${drop * 3 / 4 + 30_000 * 0.2 / 1e6:.2f}"}
+# --- Cold writes in the read range replace the read in the upper bound (#97) -------------------
+
+def _cold_session(root, extra):
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", write_5m=1000),
+        req("r1", "2026-10-30T10:04:00Z", cache_read=1_000_000),
+        req("c", "2026-10-30T10:20:00Z", write_5m=1000),            # idle past the 5m TTL: Cold write
+        req("r2", "2026-10-30T10:24:00Z", cache_read=1_000_000),
+    ], extra_lines=extra)
+
+
+def test_a_cold_write_in_the_read_range_replaces_its_read_in_the_upper_bound(root, service_for):
+    _cold_session(root, [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert f.avoidable == pytest.approx(0.006)                       # three reads, as before
+    # writer's write + two reads + the Cold write in place of its read: 10K x ($5 + $5)/M + 2 x 10K x $0.2/M
+    assert f.avoidable_high == pytest.approx(0.05 + 0.004 + 0.05)
+    got = _ranged(f)
+    assert got["c"] == (pytest.approx(0.002), pytest.approx(0.05))   # write, not read + write
+    assert got["r1"] == (pytest.approx(0.002), pytest.approx(0.002))
+    assert sum(h for _, h in got.values()) == pytest.approx(f.avoidable_high)
+
