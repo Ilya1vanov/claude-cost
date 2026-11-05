@@ -418,6 +418,8 @@ class CacheStats:
     write_5m_cost: float
     write_1h_cost: float
     rebuilds: int  # requests whose write was Cold
+    cache_loss: float = 0.0  # $ Cold writes cost beyond reading the same tokens
+    cache_loss_share: float | None = None  # cache_loss / the Period's total Cost (None if no Cost)
 
 
 @dataclass(frozen=True)
@@ -429,6 +431,11 @@ class CacheCard:
     @property
     def delta_hit_ratio(self) -> float | None:
         a, b = self.current.hit_ratio, self.baseline.hit_ratio
+        return None if a is None or b is None else a - b
+
+    @property
+    def delta_cache_loss_share(self) -> float | None:
+        a, b = self.current.cache_loss_share, self.baseline.cache_loss_share
         return None if a is None or b is None else a - b
 
 
@@ -964,8 +971,17 @@ class QueryService:
             "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
         total = row["rd"] + row["wr"] + row["inp"]
+        loss = self._cache_loss(lo, hi)
+        spend = sum(self._sums(p).values())
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
-                          row["w5"], row["w1"], row["rebuilds"])
+                          row["w5"], row["w1"], row["rebuilds"], loss,
+                          loss / spend if spend else None)
+
+    def _cache_loss(self, lo: float, hi: float) -> float:
+        """Each Cold write's cost less the same tokens at that request's own read rate."""
+        return sum(r.write_cost - (r.write_5m + r.write_1h) * pricing.read_rate(r, self._table)
+                   for r in findings_mod.load_rows(self._conn, self._tz, lo, hi)
+                   if r.cache_event == cache.COLD)
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True,
                    custom: Period | None = None) -> CacheCard:
