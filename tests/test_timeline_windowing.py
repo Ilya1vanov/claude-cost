@@ -40,3 +40,9 @@ def test_vendored_virtual_core_is_self_contained_and_licensed(client):
     assert not re.search(r"^\s*import[\s{\"']", code, re.M) and "from\"" not in code.split("export{")[0]
     licence = client.get("/static/vendor/virtual-core-LICENSE").get_data(as_text=True)
     assert licence.startswith("MIT License") and "Tanner Linsley" in licence
+
+
+def test_timeline_header_has_collapse_text_toggle(client):
+    html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
+    head = html.split('class="tl-head"')[1].split("</div>")[0]
+    assert 'id="timeline-collapse"' in head and "Collapse text" in head

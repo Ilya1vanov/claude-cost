@@ -80,10 +80,52 @@
     return e;
   }
 
+  // Collapse text: a global flag (a class on the box, saved in localStorage) plus per-row overrides.
+  // Both live here, not in the DOM, because windowing redraws a row each time it scrolls into view.
+  var STORAGE_KEY = "timeline-collapse-text";
+  var expanded = new WeakSet();  // row objects the user opened while the flag is on
+
+  function readSaved() {
+    try { return window.localStorage.getItem(STORAGE_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  function setRowExpanded(row, on) {
+    if (on) { expanded.add(row); } else { expanded.delete(row); }
+  }
+
+  // Makes a text row (prompt or request) open on click while collapsing is on.
+  function collapsible(wrap, row) {
+    wrap.classList.toggle("expanded", expanded.has(row));
+    wrap.addEventListener("click", function (ev) {
+      if (!box.classList.contains("collapse-text") || ev.target.closest("button")) { return; }
+      setRowExpanded(row, !expanded.has(row));
+      wrap.classList.toggle("expanded", expanded.has(row));
+    });
+    return wrap;
+  }
+
+  function setCollapsed(on) {
+    var api = window.sessionTimeline;
+    var first = api.getFirstVisibleIndex ? api.getFirstVisibleIndex() : -1;
+    box.classList.toggle("collapse-text", on);
+    try { window.localStorage.setItem(STORAGE_KEY, on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+    if (first >= 0 && api.scrollToIndex) {  // rows resize after layout: hold the first row in view
+      requestAnimationFrame(function () { api.scrollToIndex(first, { align: "start" }); });
+    }
+  }
+
+  var toggle = document.getElementById("timeline-collapse");
+  if (toggle) {
+    var saved = readSaved();
+    toggle.checked = saved;
+    box.classList.toggle("collapse-text", saved);
+    toggle.addEventListener("change", function () { setCollapsed(toggle.checked); });
+  }
+
   function renderPrompt(row) {
     var wrap = el("div", "tl-row tl-prompt");
     wrap.appendChild(el("div", "tl-bubble", row.text));
-    return wrap;
+    return collapsible(wrap, row);
   }
 
   function renderText(text) {
@@ -121,7 +163,7 @@
     wrap.appendChild(main);
     wrap.appendChild(el("div", "num ctx", row.context_tokens.toLocaleString()));
     wrap.appendChild(el("div", "num", "$" + row.cost.toFixed(4)));
-    return wrap;
+    return collapsible(wrap, row);
   }
 
   var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest };
@@ -140,5 +182,6 @@
 
   // timeline_window.js (a module script, so it runs after this one) windows these rows into view
   // and adds scrollToIndex, remeasure and onFirstVisibleChange to this object.
-  window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el };
+  window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el,
+    setRowExpanded: setRowExpanded };
 })();
