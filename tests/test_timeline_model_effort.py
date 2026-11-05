@@ -34,7 +34,7 @@ def test_timeline_points_carry_effort_empty_when_not_recorded(root, service_for)
 
 def _rows(root, tmp_path, url="/api/session/s1/timeline"):
     import json
-    return json.loads(_page(root, tmp_path, url))["rows"]
+    return [r for r in json.loads(_page(root, tmp_path, url))["rows"] if r["kind"] == "request"]
 
 
 def test_timeline_rows_show_short_model_and_effort(root, tmp_path):

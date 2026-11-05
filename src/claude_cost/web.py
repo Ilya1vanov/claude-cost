@@ -453,6 +453,8 @@ def create_app(service_factory: Callable[[], QueryService],
             out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
             if row.kind == "request":
                 out["modelLabel"] = short_model(row.model)
+            elif row.kind == "setting_change":
+                out["label"] = setting_change_label(row)
             rows.append(out)
         return jsonify(rows=rows)
 

@@ -145,10 +145,21 @@
     return wrap;
   }
 
+  // The flags of a request, as badges
+  function requestBadges(row) {
+    var box = el("div", "tl-badges");
+    if (row.cold_write) { box.appendChild(el("span", "badge cold", "Cold write")); }
+    if (row.cold_resume) { box.appendChild(el("span", "badge cold", "Cold resume")); }
+    if (row.oversized) { box.appendChild(el("span", "badge over", "Oversized context")); }
+    return box;
+  }
+
   function renderRequest(row) {
     var wrap = el("div", "tl-row tl-request" + (row.oversized ? " oversized" : ""));
     var main = el("div");
     main.appendChild(el("div", "tl-time", row.time));
+    var badges = requestBadges(row);
+    if (badges.childNodes.length) { main.appendChild(badges); }
     if (!row.content_available) {
       main.appendChild(el("div", "tl-gone", "transcript no longer on disk"));
     } else {
@@ -166,7 +177,64 @@
     return collapsible(wrap, row);
   }
 
-  var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest };
+  // Events are dividers across the full width: a time, a label and a detail
+  function divider(row, cls, label, detail) {
+    var wrap = el("div", "tl-row tl-event " + cls);
+    wrap.appendChild(el("span", "tl-time", row.time));
+    wrap.appendChild(el("span", "tl-event-label", label));
+    if (detail) { wrap.appendChild(detail); }
+    return wrap;
+  }
+
+  function sessionLink(id, label) {
+    var a = el("a", null, label);
+    a.href = "/session/" + encodeURIComponent(id);
+    return a;
+  }
+
+  function span(children) {
+    var s = el("span", "tl-event-detail");
+    children.forEach(function (c) { s.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return s;
+  }
+
+  function renderSettingChange(row) {
+    return divider(row, "setting-change", "Setting change", span([row.label]));
+  }
+
+  function renderCompaction(row) {
+    var detail = span([row.pre_tokens.toLocaleString() + " to " + row.post_tokens.toLocaleString() +
+      " tokens (" + row.trigger + ") "]);
+    if (row.late) { detail.appendChild(el("span", "badge late-compact", "Late compact")); }
+    var wrap = divider(row, "compaction" + (row.late ? " late-compact" : ""), "Compaction", detail);
+    if (row.summary) {
+      var box = el("details", "tl-summary");
+      box.appendChild(el("summary", null, "Summary"));
+      box.appendChild(el("div", "tl-text", row.summary));
+      wrap.appendChild(box);
+    }
+    return wrap;
+  }
+
+  function renderIdleGap(row) {
+    var minutes = Math.round(row.gap_seconds / 60);
+    return divider(row, "idle-gap", "Idle gap", span([minutes + " min before the next request"]));
+  }
+
+  function renderChildSession(row) {
+    var kind = row.link_kind === "fork" ? "Fork" : "Side session";
+    return divider(row, "child-session", kind + " started", span([sessionLink(row.session_id, row.label),
+      ": $" + row.cost.toFixed(2) + ", " + row.requests + " requests"]));
+  }
+
+  function renderForkedFrom(row) {
+    return divider(row, "forked-from", "Forked from", span([sessionLink(row.parent_session_id, row.parent_label),
+      " at " + row.time]));
+  }
+
+  var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest,
+    setting_change: renderSettingChange, compaction: renderCompaction, idle_gap: renderIdleGap,
+    child_session: renderChildSession, forked_from: renderForkedFrom };
 
   function renderRow(row) {
     var render = ROW_RENDERERS[row.kind];

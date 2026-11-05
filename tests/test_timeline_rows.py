@@ -27,7 +27,7 @@ def test_rows_are_prompts_and_requests_grouped_into_turns_in_time_order(root, se
     rows = service_for(root).session_timeline("s1", with_rows=True).rows
     assert [(r.kind, getattr(r, "text", None)) for r in rows] == [
         ("prompt", "fix the bug"), ("request", "I will look."), ("request", "Done reading."),
-        ("prompt", "now the tests"), ("request", "Second answer.")]
+        ("idle_gap", None), ("prompt", "now the tests"), ("request", "Second answer.")]
 
 
 def test_request_row_carries_numbers_and_flags(root, service_for):
@@ -79,7 +79,8 @@ def test_only_typed_prompts_are_rows(root, service_for):
         compact_line("c1", "2026-10-30T01:00:06Z", 10, 5),
         compact_summary_line("cs1", "2026-10-30T01:00:07Z")])
     rows = service_for(root).session_timeline("s1", with_rows=True).rows
-    assert [r.kind for r in rows] == ["prompt", "request"]
+    assert [r.kind for r in rows] == ["prompt", "compaction", "request"]
+    assert rows[1].summary == ""  # the summary record is not linked to the boundary here
 
 
 def test_a_request_whose_transcript_is_gone_keeps_its_numbers(root, service_for):
@@ -128,7 +129,8 @@ def test_json_endpoint_returns_the_rows_tagged_by_kind(root, configure):
     resp = client.get("/api/session/s1/timeline")
     assert resp.status_code == 200
     rows = resp.get_json()["rows"]
-    assert [r["kind"] for r in rows] == ["prompt", "request", "request", "prompt", "request"]
+    assert [r["kind"] for r in rows] == ["prompt", "request", "request", "idle_gap", "prompt",
+                                         "request"]
     assert rows[0]["text"] == "fix the bug" and rows[0]["time"] == "2026-10-30 01:00:00"
     first = rows[1]
     assert first["text"] == "I will look." and first["tools"] == [{"name": "Read", "summary": "/src/a.py"}]

@@ -46,8 +46,6 @@ def test_fork_session_page_reads_fork_session_of_parent(root, tmp_path):
     fork_setup(root)
     html = page(root, tmp_path, "s9")
     assert "Fork session of" in html and 'href="/session/s1"' in html
-    parent = page(root, tmp_path, "s1")
-    assert "Fork started" in parent and "Side session started" not in parent
 
 
 def test_unknown_parent_session_is_plain_text_not_a_link(root, tmp_path):
