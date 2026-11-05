@@ -146,11 +146,18 @@
   }
 
   // The flags of a request, as badges
+  // One list of badge labels, used both to draw the badges and to search them
+  var LATE_COMPACT_LABEL = "Late compact";
+  function requestBadgeList(row) {
+    var list = [];
+    if (row.cold_write) { list.push({ cls: "cold", label: "Cold write" }); }
+    if (row.cold_resume) { list.push({ cls: "cold", label: "Cold resume" }); }
+    if (row.oversized) { list.push({ cls: "over", label: "Oversized context" }); }
+    return list;
+  }
   function requestBadges(row) {
     var box = el("div", "tl-badges");
-    if (row.cold_write) { box.appendChild(el("span", "badge cold", "Cold write")); }
-    if (row.cold_resume) { box.appendChild(el("span", "badge cold", "Cold resume")); }
-    if (row.oversized) { box.appendChild(el("span", "badge over", "Oversized context")); }
+    requestBadgeList(row).forEach(function (b) { box.appendChild(el("span", "badge " + b.cls, b.label)); });
     return box;
   }
 
@@ -198,15 +205,23 @@
     return s;
   }
 
+  // The label an event divider draws (also what the search matches)
+  var EVENT_LABELS = { setting_change: "Setting change", compaction: "Compaction", idle_gap: "Idle gap",
+    forked_from: "Forked from" };
+  function eventLabel(row) {
+    if (row.kind === "child_session") { return (row.link_kind === "fork" ? "Fork" : "Side session") + " started"; }
+    return EVENT_LABELS[row.kind];
+  }
+
   function renderSettingChange(row) {
-    return divider(row, "setting-change", "Setting change", span([row.label]));
+    return divider(row, "setting-change", eventLabel(row), span([row.label]));
   }
 
   function renderCompaction(row) {
     var detail = span([row.pre_tokens.toLocaleString() + " to " + row.post_tokens.toLocaleString() +
       " tokens (" + row.trigger + ") "]);
-    if (row.late) { detail.appendChild(el("span", "badge late-compact", "Late compact")); }
-    var wrap = divider(row, "compaction" + (row.late ? " late-compact" : ""), "Compaction", detail);
+    if (row.late) { detail.appendChild(el("span", "badge late-compact", LATE_COMPACT_LABEL)); }
+    var wrap = divider(row, "compaction" + (row.late ? " late-compact" : ""), eventLabel(row), detail);
     if (row.summary) {
       var box = el("details", "tl-summary");
       box.appendChild(el("summary", null, "Summary"));
@@ -218,17 +233,16 @@
 
   function renderIdleGap(row) {
     var minutes = Math.round(row.gap_seconds / 60);
-    return divider(row, "idle-gap", "Idle gap", span([minutes + " min before the next request"]));
+    return divider(row, "idle-gap", eventLabel(row), span([minutes + " min before the next request"]));
   }
 
   function renderChildSession(row) {
-    var kind = row.link_kind === "fork" ? "Fork" : "Side session";
-    return divider(row, "child-session", kind + " started", span([sessionLink(row.session_id, row.label),
+    return divider(row, "child-session", eventLabel(row), span([sessionLink(row.session_id, row.label),
       ": $" + row.cost.toFixed(2) + ", " + row.requests + " requests"]));
   }
 
   function renderForkedFrom(row) {
-    return divider(row, "forked-from", "Forked from", span([sessionLink(row.parent_session_id, row.parent_label),
+    return divider(row, "forked-from", eventLabel(row), span([sessionLink(row.parent_session_id, row.parent_label),
       " at " + row.time]));
   }
 
@@ -258,6 +272,7 @@
   function renderRow(row) {
     var render = ROW_RENDERERS[row.kind];
     var node = render ? render(row) : null;  // a kind this script does not know is not drawn
+    if (node && row === hitRow) { node.classList.add("tl-hit"); }  // search highlight lives in JS state
     if (node && row.depth) { node.style.marginLeft = (row.depth * 24) + "px"; }
     return node;
   }
@@ -327,7 +342,79 @@
     }
     return near && { model: near.model, modelLabel: near.modelLabel, effort: near.effort };
   }
-  function setTree(rows) { tree = rows; openAgents.clear(); refresh(true); }
+  function setTree(rows) { tree = rows; openAgents.clear(); hitRow = null; matches = []; refresh(true); }
+
+  // Search: over the whole row tree (not the DOM), so rows that are not drawn and rows inside
+  // collapsed Subagent blocks count. Each match is {row, agentId} (agentId: the innermost block
+  // holding it, null at the top level). The current match is kept in `hitRow`, applied by renderRow.
+  var matches = [];
+  var current = -1;
+  var hitRow = null;
+  function searchText(row) {
+    var parts = [];
+    if (row.kind === "prompt") { parts.push(row.text); }
+    if (row.kind === "request") {
+      parts.push(row.text);
+      requestBadgeList(row).forEach(function (b) { parts.push(b.label); });
+      if (row.content_available) { row.tools.forEach(function (t) { parts.push(t.name, t.summary); }); }
+    } else if (row.kind === "subagent") {
+      parts.push(row.agent_type, row.agent_id, row.description, row.modelLabel);
+    } else {
+      parts.push(eventLabel(row), row.label, row.parent_label, row.trigger, row.summary);
+      if (row.late) { parts.push(LATE_COMPACT_LABEL); }
+    }
+    return parts.filter(Boolean).join("\n").toLowerCase();
+  }
+  function findMatches(rows, needle, agentId, out) {
+    rows.forEach(function (row) {
+      if (searchText(row).indexOf(needle) >= 0) { out.push({ row: row, agentId: agentId }); }
+      if (row.kind === "subagent") { findMatches(row.rows, needle, row.agent_id, out); }
+    });
+    return out;
+  }
+  function markHit(index) {  // moves the highlight on the drawn rows; renderRow handles later redraws
+    var old = body.querySelector(".tl-hit");
+    if (old) { old.classList.remove("tl-hit"); }
+    var item = body.querySelector('[data-index="' + index + '"]');
+    if (item && item.firstChild) { item.firstChild.classList.add("tl-hit"); }
+  }
+  function showMatch(n) {
+    var m = matches[n];
+    current = n;
+    hitRow = m.row;
+    if (m.agentId && !flat.includes(m.row)) { expandSubagent(m.agentId); }  // reveal a match inside a collapsed block
+    var index = flat.indexOf(m.row);
+    if (index < 0) { return; }
+    if (box.classList.contains("collapse-text") && (m.row.kind === "prompt" || m.row.kind === "request")) {
+      window.sessionTimeline.expandText(index, true);
+    }
+    markHit(index);
+    window.sessionTimeline.scrollToIndex(index, { align: "center" });
+    updateCount();
+  }
+  var searchBox = document.getElementById("timeline-search");
+  var searchCount = document.getElementById("timeline-search-count");
+  function updateCount() {
+    if (searchCount) { searchCount.textContent = searchBox.value ? (matches.length ? (current + 1) + " / " + matches.length : "0 / 0") : ""; }
+  }
+  function runSearch() {
+    var needle = searchBox.value.trim().toLowerCase();
+    matches = needle ? findMatches(tree, needle, null, []) : [];
+    current = -1;
+    hitRow = null;
+    markHit(-1);
+    if (matches.length) { showMatch(0); } else { updateCount(); }
+  }
+  function step(delta) {
+    if (matches.length) { showMatch((current + delta + matches.length) % matches.length); }
+  }
+  if (searchBox) {
+    searchBox.addEventListener("input", runSearch);
+    searchBox.addEventListener("keydown", function (ev) {
+      if (ev.key === "ArrowDown" || (ev.key === "Enter" && !ev.shiftKey)) { ev.preventDefault(); step(1); }
+      else if (ev.key === "ArrowUp" || (ev.key === "Enter" && ev.shiftKey)) { ev.preventDefault(); step(-1); }
+    });
+  }
 
   function loadRows(url) {
     return fetch(url).then(function (r) {
