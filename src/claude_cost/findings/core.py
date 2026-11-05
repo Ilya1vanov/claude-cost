@@ -19,8 +19,16 @@ from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
 DEFAULT_COMPARE_MODEL = "claude-opus-5-5"  # Fable usage compares against it (fable_compare_model)
-NOT_ADDITIVE_NOTE = ("Avoidable figures are lower bounds and are not additive: findings overlap, "
-                     "so they are never summed.")
+NOT_ADDITIVE_NOTE = ("Avoidable figures are not additive: findings overlap, so they are never summed. "
+                     "A range is a conservative lower bound to an upper bound that adds effects "
+                     "the lower bound leaves out; findings rank by the lower bound.")
+
+
+def format_avoidable(low: float, high: float | None = None) -> str:
+    """`$low` or, when the upper bound shows a different figure, `$low–$high`."""
+    lo = f"${low:.2f}"
+    hi = None if high is None else f"${high:.2f}"
+    return lo if hi is None or hi == lo else f"{lo}–{hi}"
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,7 @@ class Covered:
     """A request a finding covers; `avoidable` is its raw avoidable $ (may be negative)."""
     message_id: str
     avoidable: float | None = None
+    avoidable_high: float | None = None  # upper bound; None = no upper bound (a single figure)
 
 
 @dataclass(frozen=True)
@@ -124,6 +133,7 @@ class SessionCoverage:
     attributed: float
     avoidable: float | None  # clamped at 0
     requests: int
+    avoidable_high: float | None = None  # upper bound; None = none
 
 
 @dataclass(frozen=True)
@@ -136,6 +146,7 @@ class CoveredRequest:
     cost: float
     avoidable: float | None  # raw, may be negative
     agent_id: str | None = None
+    avoidable_high: float | None = None  # upper bound; None = none
 
 
 @dataclass(frozen=True)
@@ -162,6 +173,7 @@ class Finding:
     requests: tuple[CoveredRequest, ...]
     subagents: tuple[SubagentCoverage, ...] = ()
     table: DetailTable | None = None
+    avoidable_high: float | None = None  # upper bound; None = a single figure
 
 
 class FindingContext:
@@ -253,13 +265,22 @@ def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow])
     for r, c in covered:
         by_session.setdefault(r.session_id, []).append((r, c))
     has_avoidable = d.formula is not None
+
+    def high(cs) -> float | None:
+        """Upper bound of `cs`: None when none of them has one, else a Covered without its own
+        counts at its lower figure."""
+        if not has_avoidable or all(c.avoidable_high is None for c in cs):
+            return None
+        return max(0.0, sum((c.avoidable if c.avoidable_high is None else c.avoidable_high) or 0.0
+                            for c in cs))
     sessions = tuple(sorted(
         (SessionCoverage(sid, sum(r.cost for r, _ in rc),
                          max(0.0, sum(c.avoidable or 0.0 for _, c in rc)) if has_avoidable else None,
-                         len(rc)) for sid, rc in by_session.items()),
+                         len(rc), high([c for _, c in rc])) for sid, rc in by_session.items()),
         key=lambda s: (-s.attributed, s.session_id)))
     requests = tuple(CoveredRequest(r.message_id, r.session_id, r.project, r.ts, r.model, r.cost,
-                                    c.avoidable if has_avoidable else None, r.agent_id)
+                                    c.avoidable if has_avoidable else None, r.agent_id,
+                                    high([c]))
                      for r, c in sorted(covered, key=lambda rc: (rc[0].ts, rc[0].message_id)))
     agents: dict[str, list[RequestRow]] = {}
     for r, _ in covered:
@@ -273,4 +294,4 @@ def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow])
         d.id, d.kind, d.title, d.description, d.formula, det.detail,
         sum(r.cost for r, _ in covered),
         max(0.0, sum(c.avoidable or 0.0 for _, c in covered)) if has_avoidable else None,
-        sessions, requests, subagents, det.table)
+        sessions, requests, subagents, det.table, high([c for _, c in covered]))

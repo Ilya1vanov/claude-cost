@@ -48,7 +48,7 @@ def test_used_here_unused_there(root, service_for):
     assert [s.session_id for s in f.sessions] == ["b1"]
     assert f.avoidable == pytest.approx(0.004)
     (row,) = f.table.rows
-    assert row[0] == "tdd" and row[2].items == ("proj-b: $0.00, 1 session",) and row[3] == "1"
+    assert row[0] == "tdd" and row[2].items == ("proj-b: $0.00–$0.08, 1 session",) and row[3] == "1"
 
 
 def test_used_in_another_session_of_the_project_is_not_unused(root, service_for):
@@ -164,7 +164,7 @@ def test_subagent_listing_is_read_only_by_that_subagents_requests(root, service_
     with sub.open("a") as fh:
         fh.write(skill_listing_line("2026-10-30T10:00:30Z", _skill("tdd", 10_000)) + "\n")
     f = _by_id(service_for(root).findings())["unused-listing"]
-    assert [r.message_id for r in f.requests] == ["x2"]
+    assert [r.message_id for r in f.requests if r.avoidable] == ["x2"]
 
 
 def test_drains_command_lists_unused_listing(root, configure):
@@ -217,10 +217,10 @@ def test_listing_unused_in_two_projects_is_one_row(root, service_for):
     f = _by_id(service_for(root).findings())["unused-listing"]
     (row,) = f.table.rows
     assert row[:2] == ("tdd", "skill")
-    assert row[2].summary == "2 projects" and row[2].items == ("proj-a: $0.00, 1 session", "proj-b: $0.00, 1 session")
+    assert row[2].summary == "2 projects" and row[2].items == ("proj-a: $0.00–$0.08, 1 session", "proj-b: $0.00–$0.08, 1 session")
     assert row[3] == "1"
     assert f.avoidable == pytest.approx(0.008)  # unchanged: per (project, listing)
-    assert row[4] == "$0.01"
+    assert row[4] == "$0.01–$0.17"
 
 
 def test_used_elsewhere_counts_invocations_under_the_unprefixed_skill_name(root, service_for):
@@ -238,7 +238,7 @@ def test_projects_cell_lists_each_projects_cost_and_session_count(root, service_
     _session(root, "proj-a", "a2", listing)
     _session(root, "proj-b", "b1", listing)
     (row,) = _by_id(service_for(root).findings())["unused-listing"].table.rows
-    assert row[2].items == ("proj-a: $0.80, 2 sessions", "proj-b: $0.40, 1 session")
+    assert row[2].items == ("proj-a: $0.80–$16.80, 2 sessions", "proj-b: $0.40–$8.40, 1 session")
 
 
 def test_detail_page_shows_table_not_run_on_text(root, configure):
@@ -274,7 +274,7 @@ def test_per_request_amounts_with_overlapping_listings_models_and_removal(root, 
                     mcp_listing_line("2026-10-30T10:06:00Z", srv),
                     mcp_listing_line("2026-10-30T10:12:00Z", {}, uuid="rm", removed=("srv",))])
     f = _by_id(service_for(root).findings())["unused-listing"]
-    got = {r.message_id: r.avoidable for r in f.requests}
+    got = {r.message_id: r.avoidable for r in f.requests if r.avoidable}
     # read per M: opus-5-5 $0.20, sonnet-5-5 $0.10, fast opus-5-5 x2 = $0.40
     assert got == {"r2": pytest.approx(0.002), "r3": pytest.approx(0.001),
                    "r4": pytest.approx((10_000 + 10_002) * 0.40 / 1e6, rel=1e-3),
@@ -312,7 +312,7 @@ def test_table_shows_top_25_then_one_row_for_the_rest(root, service_for):
     assert f.detail == "27 unused listings in 1 project"
     assert len(f.table.rows) == 26
     assert f.table.rows[0][0] == "s27" and f.table.rows[24][0] == "s3"
-    assert f.table.rows[25] == ("2 more listings", "", "", "", "$0.03")
+    assert f.table.rows[25] == ("2 more listings", "", "", "", "$0.03–$0.63")
 
 
 def test_listing_written_before_the_period_is_charged_to_its_active_streams_period_requests(
@@ -344,7 +344,7 @@ def test_listing_written_by_the_first_period_request_is_not_charged_to_it(root, 
     ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("new", 10_000))])
     since = __import__("datetime").date(2026, 10, 30)
     f = _by_id(service_for(root).findings(since))["unused-listing"]
-    assert [r.message_id for r in f.requests] == ["p2", "p3"]
+    assert [r.message_id for r in f.requests if r.avoidable] == ["p2", "p3"]
     assert f.avoidable == pytest.approx(0.004)
 
 
@@ -376,7 +376,7 @@ def test_listing_in_a_resumed_sessions_second_transcript_is_attributed_to_that_s
     f = _by_id(service_for(root, desktop=desktop).findings())["unused-listing"]
     assert [s.session_id for s in f.sessions] == ["a-old"]
     assert f.avoidable == pytest.approx(0.004)
-    assert f.table.rows[0][2].items == ("p: $0.00, 1 session",)
+    assert f.table.rows[0][2].items == ("p: $0.00–$0.08, 1 session",)
 
 
 def test_detector_loads_the_session_graph_when_given_a_conn_without_one(root, service_for):
@@ -417,7 +417,7 @@ def test_a_reading_request_above_the_prompt_tier_threshold_pays_the_tier_on_its_
         req("r3", "2026-10-30T10:10:00Z", model=haiku, cache_read=50_000),
     ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
     f = _by_id(service_for(root).findings())["unused-listing"]
-    got = {r.message_id: r.avoidable for r in f.requests}
+    got = {r.message_id: r.avoidable for r in f.requests if r.avoidable}
     assert got == {"r2": pytest.approx(10_000 * 0.05 / 1e6), "r3": pytest.approx(10_000 * 0.01 / 1e6)}
 
 
@@ -436,4 +436,103 @@ def test_the_prompt_tier_is_decided_by_the_reading_requests_whole_prompt(
     ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
     f = _by_id(service_for(root).findings())["unused-listing"]
     rate = 0.05 if tiered else 0.01
-    assert {r.message_id: r.avoidable for r in f.requests} == {"r2": pytest.approx(10_000 * rate / 1e6)}
+    assert {r.message_id: r.avoidable for r in f.requests if r.avoidable} == {"r2": pytest.approx(10_000 * rate / 1e6)}
+
+
+# --- avoidable spend as a range (#96): the writer's write raises only the upper bound ---------
+# claude-opus-5-5 writes: 5m $5/M, 1h $8/M.
+
+def _ranged(f):
+    return {r.message_id: (r.avoidable, r.avoidable_high) for r in f.requests}
+
+
+def test_writer_request_raises_only_the_upper_bound_by_the_listings_write(root, service_for):
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert f.avoidable == pytest.approx(0.004)                    # the two reads, as before
+    assert f.avoidable_high == pytest.approx(0.004 + 0.08)        # + 10K tokens x $8/M (1h write)
+    got = _ranged(f)
+    assert got["s1-1"] == (pytest.approx(0.0), pytest.approx(0.08))   # the writer, charged no read
+    assert got["s1-2"] == (pytest.approx(0.002), pytest.approx(0.002))
+    (s,) = f.sessions
+    assert (s.avoidable, s.avoidable_high) == (pytest.approx(0.004), pytest.approx(0.084))
+
+
+def test_write_price_is_the_writers_own_5m_1h_mix(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", write_5m=500, write_1h=500),
+        req("r", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert _ranged(f)["w"][1] == pytest.approx(10_000 * 6.5 / 1e6)  # half $5/M, half $8/M
+
+
+def test_write_price_includes_the_writers_prompt_tier(root, service_for):
+    haiku = "claude-haiku-5-5"  # 1h write $0.20/M, x5 above a 100K prompt
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", model=haiku, write_1h=150_000),
+        req("r", "2026-10-30T10:05:00Z", model=haiku, cache_read=50_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    assert _ranged(f)["w"][1] == pytest.approx(10_000 * 1.0 / 1e6)
+
+
+def test_listing_written_before_the_period_has_no_write_so_the_bounds_are_equal(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("e1", "2026-10-20T10:00:00Z", write_1h=1000),
+        req("p1", "2026-10-30T10:00:00Z", cache_read=1_000_000),
+        req("p2", "2026-10-30T10:05:00Z", cache_read=1_000_000),
+    ], extra_lines=[skill_listing_line("2026-10-20T09:59:00Z", _skill("old", 10_000))])
+    since = __import__("datetime").date(2026, 10, 30)
+    f = _by_id(service_for(root).findings(since))["unused-listing"]
+    assert f.avoidable_high == pytest.approx(f.avoidable) == pytest.approx(0.004)
+
+
+def test_a_listing_never_read_adds_no_write_to_the_upper_bound(root, service_for):
+    root.write_transcript("p", "s1", [req("w", "2026-10-30T10:00:00Z", write_1h=1000)],
+                          extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    assert _by_id(service_for(root).findings())["unused-listing"].requests == ()
+
+
+def test_other_findings_have_no_upper_bound(root, service_for):
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    others = [f for f in service_for(root).findings() if f.id != "unused-listing"]
+    assert others and all(f.avoidable_high is None for f in others)
+    assert all(r.avoidable_high is None for f in others for r in f.requests)
+
+
+def test_detail_rows_and_their_cells_show_the_range_and_rank_by_the_lower_bound(root, service_for):
+    # "wrote" has the higher upper bound (a Period writer), "old" the higher lower bound (3 reads)
+    _session(root, "pa", "a1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("wrote", 10_000))])
+    root.write_transcript("pb", "b1", [
+        req("e1", "2026-10-20T10:00:00Z", write_1h=1000),
+        *[req(f"b{i}", f"2026-10-30T10:0{i}:00Z", cache_read=1_000_000) for i in range(3)],
+    ], extra_lines=[skill_listing_line("2026-10-20T09:59:00Z", _skill("old", 10_000))])
+    since = __import__("datetime").date(2026, 10, 30)
+    f = _by_id(service_for(root).findings(since))["unused-listing"]
+    assert [r[0] for r in f.table.rows] == ["old", "wrote"]
+    assert f.table.rows[0][-1] == "$0.01"                # bounds equal: one value
+    assert f.table.rows[1][-1] == "$0.00–$0.08"
+    assert f.table.rows[1][2].items == ("pa: $0.00–$0.08, 1 session",)
+
+
+def test_drains_command_and_pages_show_the_range(root, configure):
+    from claude_cost import ingest, store
+    from claude_cost.query import QueryService
+    from claude_cost.web import create_app
+    _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
+    out = io.StringIO()
+    cli.main(["drains"], env=configure(root), now=NOW, out=out)
+    line = next(l for l in out.getvalue().splitlines() if "Unused listing" in l)
+    assert "avoidable $0.00–$0.08" in line
+    cfg = cli.load_config(configure(root))
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    client = create_app(factory, lambda: NOW).test_client()
+    for url in ("/findings", "/findings/unused-listing", "/"):
+        assert "$0.00–$0.08" in client.get(url).get_data(as_text=True), url
+    page = client.get("/findings/unused-listing").get_data(as_text=True)
+    assert "lower bounds" not in page and "lower bound" in page  # the note and formula name both

@@ -1,5 +1,6 @@
 """Drain: Unused listing. A skill or MCP server Listing loaded into a project's sessions
-that was never invoked in that project over the period. Avoidable = its full read cost."""
+that was never invoked in that project over the period. Avoidable is a range: the lower bound is
+its read cost; the upper bound adds the write that stored it (see `_Stream.extra`)."""
 from __future__ import annotations
 
 import json
@@ -11,7 +12,7 @@ from itertools import accumulate
 from .. import pricing
 from ..projects import project_display_names
 from .core import (DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef,
-                   ts_where)
+                   format_avoidable, ts_where)
 
 TOP = 25  # table rows before the rest are summed into one
 
@@ -45,26 +46,46 @@ def _read_rate(ctx: FindingContext, r) -> float:
     return c.cache_read / r.context if c else 0.0
 
 
+def _write_rate(ctx: FindingContext, r) -> float:
+    """Cache write $ per token for request `r`: its own 5m : 1h write mix, at its own prompt
+    size (so any Prompt tier applies). 0 when it wrote nothing."""
+    writes = r.write_5m + r.write_1h
+    if not writes:
+        return 0.0
+    c = pricing.price_request(r.model, r.day, input=r.input, output=0, cache_read=r.cache_read,
+                              write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
+                              inference_geo=r.inference_geo, table=ctx.price_table)
+    return (c.cache_write_5m + c.cache_write_1h) / writes if c else 0.0
+
+
 class _Stream:
     """One (session, agent) stream's period requests, oldest first, with each request's read
-    rate and the unused Listing tokens it reads (kept as a difference array)."""
+    rate and the unused Listing tokens it reads (kept as a difference array).
+
+    `extra[i]` is what the upper bound adds to request i beyond its reads: today the write of
+    the Listings it wrote. Further upper-bound effects (Cold writes, Prompt tier drop) add
+    into the same array, via `_add_upper`."""
 
     def __init__(self, ctx: FindingContext, reqs: list):
         self.reqs = reqs
         self.ts = [r.ts for r in reqs]
         self.rates = [_read_rate(ctx, r) for r in reqs]
+        self.write_rates = [_write_rate(ctx, r) for r in reqs]
+        self.extra = [0.0] * len(reqs)
         self.delta = [0] * (len(reqs) + 1)
         # the Stream's last Request before the Period, if any (its gap is stored at ingest)
         self.prev_ts = None if reqs[0].gap is None else reqs[0].ts - reqs[0].gap
 
-    def charge(self, ts: float, gone: float | None, tokens: int) -> float | None:
+    def charge(self, ts: float, gone: float | None, tokens: int) -> tuple[float, float] | None:
         """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
         the cache: those after the one that wrote it (the first at or after `ts`, possibly before
-        the Period), before the removal. Returns its $, or None when no request read it."""
+        the Period), before the removal. Returns its (lower, upper) $, or None when no request
+        read it. The upper bound adds the write when the writer is a Period Request."""
         lo = bisect_left(self.ts, ts)
         # a Period Request precedes the Listing, or no Request between the Listing and the
         # Period does: either way the writer is self.reqs[lo]
         writer_in_period = lo > 0 or self.prev_ts is None or self.prev_ts < ts
+        writer = lo if writer_in_period else None
         if writer_in_period:
             lo += 1  # skip the writer
         hi = len(self.reqs) if gone is None else bisect_left(self.ts, gone)
@@ -72,12 +93,24 @@ class _Stream:
             return None
         self.delta[lo] += tokens
         self.delta[hi] -= tokens
+        write = 0.0
+        if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
+            write = tokens * self.write_rates[writer]
+            self._add_upper(writer, write)
         # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
-        return tokens * sum(self.rates[lo:hi])
+        reads = tokens * sum(self.rates[lo:hi])
+        return reads, reads + write
+
+    def _add_upper(self, i: int, dollars: float) -> None:
+        self.extra[i] += dollars
 
     def covered(self) -> list[Covered]:
-        return [Covered(r.message_id, tokens * rate)
-                for r, rate, tokens in zip(self.reqs, self.rates, accumulate(self.delta)) if tokens]
+        out = []
+        for r, rate, tokens, extra in zip(self.reqs, self.rates, accumulate(self.delta), self.extra):
+            if tokens or extra:
+                low = tokens * rate
+                out.append(Covered(r.message_id, low, low + extra))
+        return out
 
 
 def detect(ctx: FindingContext) -> Detection:
@@ -136,12 +169,14 @@ def detect(ctx: FindingContext) -> Detection:
             stream = streams[(sid, agent)] = _Stream(ctx, reqs)
         # a removed Listing is no longer read from that point
         gone = min((t for t in removed.get((sid, agent, kind, name), ()) if t > ts), default=None)
-        cost = stream.charge(ts, gone, tokens)
-        if cost is None:
+        charged = stream.charge(ts, gone, tokens)
+        if charged is None:
             continue  # never read again, so it cost nothing
-        it = items.setdefault((project, kind, name), {"sessions": set(), "cost": 0.0})
+        cost, high = charged
+        it = items.setdefault((project, kind, name), {"sessions": set(), "cost": 0.0, "high": 0.0})
         it["sessions"].add(sid)
         it["cost"] += cost
+        it["high"] += high
     covered = [c for st in streams.values() for c in st.covered()]
     if not items:
         return Detection(covered)
@@ -153,14 +188,16 @@ def detect(ctx: FindingContext) -> Detection:
     rows = []
     for (kind, name), per_project in ranked[:TOP]:
         n = len(per_project)
-        cells = tuple(f"{p}: ${i['cost']:.2f}, {len(i['sessions'])} session"
+        cells = tuple(f"{p}: {format_avoidable(i['cost'], i['high'])}, {len(i['sessions'])} session"
                       f"{'' if len(i['sessions']) == 1 else 's'}"
                       for p, i in sorted(per_project, key=lambda x: (-x[1]["cost"], x[0])))
         rows.append((name, kind, CollapsibleCell(f"{n} project{'' if n == 1 else 's'}", cells),
-                     str(elsewhere(kind, name)), f"${sum(i['cost'] for _, i in per_project):.2f}"))
+                     str(elsewhere(kind, name)), format_avoidable(sum(i['cost'] for _, i in per_project),
+                                                              sum(i['high'] for _, i in per_project))))
     if rest := ranked[TOP:]:
         rows.append((_count(len(rest), "more listing"), "", "", "",
-                     f"${sum(i['cost'] for _, pp in rest for _, i in pp):.2f}"))
+                     format_avoidable(sum(i['cost'] for _, pp in rest for _, i in pp),
+                                      sum(i['high'] for _, pp in rest for _, i in pp))))
     projects = {p for p, _, _ in items}
     table = DetailTable(("Listing", "Kind", "Unused in", "Used elsewhere", "Avoidable"), tuple(rows))
     return Detection(covered, f"{_count(len(by_listing), 'unused listing')} in "
@@ -171,6 +208,7 @@ FINDING = FindingDef(
     id="unused-listing", kind=DRAIN, title="Unused listing",
     description="Skills and MCP servers listed in a project's sessions but never invoked in "
                 "that project over the period.",
-    formula="avoidable = Listing tokens (text length / 3.6) x cache read price, for every "
-            "request after the one that wrote the Listing",
+    formula="avoidable = lower bound: Listing tokens (text length / 3.6) x cache read price, for "
+            "every request after the one that wrote the Listing; upper bound: the lower bound "
+            "plus the Listing's tokens at write price on the Period request that wrote it",
     detect=detect)
