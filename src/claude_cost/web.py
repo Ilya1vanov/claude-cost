@@ -45,6 +45,15 @@ def short_model(model_id: str) -> str:
     return f"{m[1].title()} {m[2].replace('-', '.')}" if m else model_id
 
 
+MODEL_FAMILIES = ("opus", "sonnet", "haiku", "fable")
+
+
+def model_family(model_id: str) -> str:
+    """The color family of a model ID ("opus", "sonnet", "haiku", "fable"); "unknown" for an old or other ID."""
+    m = _MODEL_ID.fullmatch(model_id)
+    return m[1] if m and m[1] in MODEL_FAMILIES else "unknown"
+
+
 def setting_change_label(change) -> str:
     return (f"{setting_label(change.from_model, change.from_effort)} → "
             f"{setting_label(change.to_model, change.to_effort)}")
@@ -97,6 +106,7 @@ def create_app(service_factory: Callable[[], QueryService],
                       f'class="id" title="{sid}">{label}</a>')
 
     app.add_template_global(short_model)
+    app.add_template_global(model_family)
     app.add_template_global(setting_change_label)
 
     @app.template_global()
@@ -453,6 +463,7 @@ def create_app(service_factory: Callable[[], QueryService],
             out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
             if row.kind in ("request", "subagent"):
                 out["modelLabel"] = short_model(row.model)
+                out["modelFamily"] = model_family(row.model)
             elif row.kind == "setting_change":
                 out["label"] = setting_change_label(row)
             if row.kind == "subagent":
