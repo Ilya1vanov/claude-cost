@@ -279,6 +279,23 @@ def test_subagent_cache_loss_and_cost_roll_up_into_the_owning_session(root, serv
     assert top[0].cost == pytest.approx(3 * 0.8)
 
 
+def test_a_cold_write_cheaper_than_its_read_counts_as_no_loss(root, service_for):
+    """claude-example-1 reads at $10/M, above its 1h write at $8/M (2x input)."""
+    _cold_pair(root, "cheap", "29", 100_000, model="claude-example-1")
+    _cold_pair(root, "s1", "29", 100_000)
+    prices = {"claude-example-1": {"input": 4.0, "output": 20.0, "cache_read": 10.0}}
+    card = service_for(root, prices=prices).cache_card("last7", NOW)
+    assert card.current.cache_loss == pytest.approx(100_000 * 7.8 / 1e6)
+    assert [s.session_id for s in card.current.top_sessions] == ["s1"]
+
+
+def test_top_sessions_are_for_the_current_period_only(root, service_for):
+    _cold_pair(root, "s1", "20", 100_000)   # baseline
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.baseline.cache_loss == pytest.approx(100_000 * 7.8 / 1e6)
+    assert card.baseline.top_sessions == () and card.current.top_sessions == ()
+
+
 def _dashboard(root, configure):
     env = configure(root)
     cfg = cli.load_config(env)

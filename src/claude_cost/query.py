@@ -442,15 +442,17 @@ class CacheCard:
     current: CacheStats
     baseline: CacheStats
 
-    @property
-    def delta_hit_ratio(self) -> float | None:
-        a, b = self.current.hit_ratio, self.baseline.hit_ratio
+    def _delta(self, field: str) -> float | None:
+        a, b = getattr(self.current, field), getattr(self.baseline, field)
         return None if a is None or b is None else a - b
 
     @property
+    def delta_hit_ratio(self) -> float | None:
+        return self._delta("hit_ratio")
+
+    @property
     def delta_cache_loss_share(self) -> float | None:
-        a, b = self.current.cache_loss_share, self.baseline.cache_loss_share
-        return None if a is None or b is None else a - b
+        return self._delta("cache_loss_share")
 
 
 @dataclass(frozen=True)
@@ -972,7 +974,7 @@ class QueryService:
         return {r["message_id"]: r["event"]
                 for r in self._conn.execute("SELECT message_id, event FROM request_cache")}
 
-    def _cache_stats(self, p: Period) -> CacheStats:
+    def _cache_stats(self, p: Period, top: bool = False) -> CacheStats:
         lo, hi = self._bounds(p)
         row = self._conn.execute(
             "SELECT COALESCE(SUM(r.cache_read_tokens), 0) AS rd, "
@@ -985,34 +987,40 @@ class QueryService:
             "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
         total = row["rd"] + row["wr"] + row["inp"]
-        loss, top = self._cache_loss(lo, hi)
-        spend = sum(self._sums(p).values())
+        loss = self._cache_loss(lo, hi)
+        spend = self._conn.execute(f"SELECT COALESCE(SUM({COST_SQL}), 0) FROM requests r "
+                                   "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()[0]
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
-                          row["w5"], row["w1"], row["rebuilds"], loss,
-                          loss / spend if spend else None, top)
+                          row["w5"], row["w1"], row["rebuilds"], sum(loss.values()),
+                          sum(loss.values()) / spend if spend else None,
+                          self._top_cache_sessions(loss, p) if top else ())
 
-    def _cache_loss(self, lo: float, hi: float) -> tuple[float, tuple[CacheSession, ...]]:
-        """Each Cold write's cost less the same tokens at that request's own read rate: the total,
-        and the top Sessions by it (Subagent requests count toward their owning Session)."""
+    def _cache_loss(self, lo: float, hi: float) -> dict[str, float]:
+        """Cache loss per Session (Subagent requests count toward their owning Session): each Cold
+        write's cost less the same tokens at that request's own read rate, never below 0."""
         loss: dict[str, float] = {}
-        cost: dict[str, float] = {}
-        for r in findings_mod.load_rows(self._conn, self._tz, lo, hi):
-            cost[r.session_id] = cost.get(r.session_id, 0.0) + r.cost
-            if r.cache_event == cache.COLD:
-                loss[r.session_id] = loss.get(r.session_id, 0.0) + (
-                    r.write_cost - (r.write_5m + r.write_1h) * pricing.read_rate(r, self._table))
-        labels = self.session_labels() if loss else {}
-        ranked = sorted((s for s in loss if loss[s] > 0), key=lambda s: (-loss[s], s))
-        return sum(loss.values()), tuple(
-            CacheSession(s, labels.get(s, s), loss[s], cost[s], loss[s] / cost[s] if cost[s] else None)
-            for s in ranked[:TOP_CACHE_SESSIONS])
+        for r in findings_mod.load_rows(self._conn, self._tz, lo, hi, event=cache.COLD):
+            loss[r.session_id] = loss.get(r.session_id, 0.0) + max(
+                0.0, r.write_cost - (r.write_5m + r.write_1h) * pricing.read_rate(r, self._table))
+        return loss
+
+    def _top_cache_sessions(self, loss: dict[str, float], p: Period) -> tuple[CacheSession, ...]:
+        """The top TOP_CACHE_SESSIONS by Cache loss, each with its Cost in the Period."""
+        ranked = sorted((s for s in loss if loss[s] > 0), key=lambda s: (-loss[s], s))[:TOP_CACHE_SESSIONS]
+        labels = self.session_labels() if ranked else {}
+        out = []
+        for s in ranked:
+            cost, _ = self.session_spend(s, p)
+            out.append(CacheSession(s, labels.get(s, s), loss[s], cost, loss[s] / cost if cost else None))
+        return tuple(out)
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True,
                    custom: Period | None = None) -> CacheCard:
-        """Cache metrics for the Period against its baseline (same periods as period_comparison)."""
+        """Cache metrics for the Period against its baseline (same periods as period_comparison);
+        top sessions only for the Period, as the baseline's are never shown."""
         today = self.today(now)
         cur, base, _ = resolve_periods(mode, today, include_today, custom)
-        return CacheCard(mode, self._cache_stats(cur), self._cache_stats(base))
+        return CacheCard(mode, self._cache_stats(cur, top=True), self._cache_stats(base))
 
     def spend_by_cache_event(self, start: date, end: date) -> list[CacheEventSpend]:
         """Cache event dimension: cost, tokens and requests per event over local days start..end."""
