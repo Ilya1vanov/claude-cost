@@ -1665,6 +1665,11 @@ class QueryService:
         """The individual requests of the slice, oldest first."""
         return explore.requests(self._conn, self._local_day, spec, self.findings)
 
+    def sessions(self, spec: explore.ExploreSpec) -> explore.SessionsResult:
+        """One row per logical Session over the requests the filters keep (the group-by is ignored)."""
+        return explore.sessions(self._conn, self._local_day, self.local_time,
+                                self.session_labels(), spec, self.findings)
+
     def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
         """Most frequent values per dimension, to suggest in filter inputs."""
         return explore.options(self._conn, limit)

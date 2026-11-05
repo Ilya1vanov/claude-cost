@@ -20,7 +20,7 @@ import functools
 import io
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Callable
 
 from .findings import all_findings
@@ -267,6 +267,25 @@ class ExploreRequest:
     cost: float
 
 
+@dataclass(frozen=True)
+class SessionRow:
+    """One logical Session of the Sessions page."""
+    session_id: str
+    name: str
+    project: str
+    last_activity: datetime  # latest request, local time
+    cost: float
+    requests: int
+    share: float  # of the slice's total cost, 0..1
+
+
+@dataclass(frozen=True)
+class SessionsResult:
+    rows: tuple[SessionRow, ...]  # costliest first
+    total_cost: float
+    total_requests: int
+
+
 def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list[Item]:
     cols = ", ".join(_KEYS)
     return [Item(r["message_id"], r["ts_epoch"], local_day(r["ts_epoch"]),
@@ -350,4 +369,33 @@ def to_csv(result: ExploreResult) -> str:
     w.writerow([result.label, "Cost", "Requests", "Share %"])
     for r in result.rows:
         w.writerow([r.value, fmt_cost(r.cost), r.requests, fmt_share(r.share)])
+    return buf.getvalue()
+
+
+def sessions(conn, local_day, local_time: Callable[[float], datetime], labels: dict[str, str],
+             spec: ExploreSpec, findings=None) -> SessionsResult:
+    """One row per logical Session over the requests the filters keep, costliest first."""
+    reqs = requests(conn, local_day, spec, findings)
+    groups: dict[str, list] = {}
+    for r in reqs:
+        g = groups.setdefault(r.session_id, [r.project, r.ts_epoch, 0.0, 0])
+        g[1] = max(g[1], r.ts_epoch)
+        g[2] += r.cost
+        g[3] += 1
+    total = sum(r.cost for r in reqs)
+    rows = [SessionRow(sid, labels.get(sid, sid), project, local_time(last), cost, n,
+                       cost / total if total else 0.0)
+            for sid, (project, last, cost, n) in groups.items()]
+    rows.sort(key=lambda r: (-r.cost, r.session_id))
+    return SessionsResult(tuple(rows), total, len(reqs))
+
+
+def sessions_to_csv(result: SessionsResult) -> str:
+    """The Sessions table as CSV: same rows, same rounding (cost in $, share in %)."""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["Session", "Session id", "Project", "Last activity", "Cost", "Requests", "Share %"])
+    for r in result.rows:
+        w.writerow([r.name, r.session_id, r.project, f"{r.last_activity:%Y-%m-%d %H:%M}",
+                    fmt_cost(r.cost), r.requests, fmt_share(r.share)])
     return buf.getvalue()
