@@ -40,10 +40,10 @@ def client(root, configure):
     return create_app(factory, lambda: NOW).test_client()
 
 
-def test_one_row_per_session_with_columns_costliest_first(svc):
+def test_one_row_per_session_with_columns_newest_activity_first(svc):
     rows = svc.sessions(ExploreSpec()).rows
-    assert [r.session_id for r in rows] == ["s1aaaaaaaa-1111", "s2bbbbbbbb-2222"]
-    a, b = rows
+    assert [r.session_id for r in rows] == ["s2bbbbbbbb-2222", "s1aaaaaaaa-1111"]
+    b, a = rows
     assert (a.name, a.project, a.requests) == ("Login work", "proj-a", 2)
     assert a.cost == pytest.approx(40.0)
     assert a.share == pytest.approx(40 / 50)

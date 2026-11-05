@@ -30,6 +30,24 @@ NONE = "(none)"
 COMPONENT_KEYS = COMPONENTS
 _KEYS = tuple(k for _, k in COMPONENT_KEYS)
 DEFAULT_GROUP = "date"
+ROW_CAP = 200  # rows a page shows; the rest is reached by narrowing the filters
+SESSION_SORTS = ("session", "project", "last_activity", "cost", "requests", "share")
+BREAKDOWN_SORTS = ("value", "cost", "requests", "share")
+
+
+def _resolve_sort(sort: str | None, allowed: tuple[str, ...], default: str) -> tuple[str, str]:
+    """(key, effective sort): `sort` is a key, with `-` in front for descending."""
+    sort = sort or default
+    key = sort.lstrip("-") if sort.startswith("-") else sort
+    if key not in allowed:
+        raise ValueError(f"sort must be one of {', '.join(allowed)} (with - in front for descending)")
+    return key, sort
+
+
+def _sorted(rows: list, key_of: Callable, tiebreak: Callable, descending: bool) -> list:
+    rows.sort(key=tiebreak)  # stable: ties keep a fixed order whichever way the key goes
+    rows.sort(key=key_of, reverse=descending)
+    return rows
 
 
 @dataclass
@@ -211,25 +229,29 @@ class ExploreSpec:
     (`?group=model&project=a&project=b`: one query parameter per dimension key)."""
     group: str = DEFAULT_GROUP
     filters: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    sort: str | None = None  # a column key, `-` in front for descending; None = the page default
 
     @classmethod
     def from_query(cls, pairs) -> "ExploreSpec":
-        group, filters = DEFAULT_GROUP, {}
+        group, filters, sort = DEFAULT_GROUP, {}, None
         for key, value in pairs:
             if key == "group":
                 if value not in breakdowns():
                     raise ValueError(f"group must be one of {', '.join(breakdowns())}")
                 group = value
+            elif key == "sort":
+                sort = value or None  # validated against the page's columns when it runs
             elif key in DIMENSIONS and value != "":
                 if value not in filters.setdefault(key, ()):
                     filters[key] = filters[key] + (value,)
-        return cls(group, filters)
+        return cls(group, filters, sort)
 
     def to_query(self) -> list[tuple[str, str]]:
-        return [("group", self.group)] + [(k, v) for k in DIMENSIONS for v in self.filters.get(k, ())]
+        return ([("group", self.group)] + [(k, v) for k in DIMENSIONS for v in self.filters.get(k, ())]
+                + ([("sort", self.sort)] if self.sort else []))
 
     def with_group(self, group: str) -> "ExploreSpec":
-        return ExploreSpec(group, self.filters)
+        return ExploreSpec(group, self.filters)  # the sort keys differ per group: back to default
 
     def drill(self, dim: str, value: str) -> "ExploreSpec":
         """The filters plus `dim = value`: the slice behind one Breakdown row, listed on Sessions."""
@@ -240,7 +262,7 @@ class ExploreSpec:
         filters = {k: v for k, v in self.filters.items() if k != dim}
         if rest:
             filters[dim] = rest
-        return ExploreSpec(self.group, filters)
+        return ExploreSpec(self.group, filters, self.sort)
 
 
 @dataclass(frozen=True)
@@ -259,6 +281,11 @@ class ExploreResult:
     total_cost: float
     total_requests: int
     overlapping: bool  # a request can be in several rows, so rows may add up to more than the total
+    sort: str = ""  # the effective sort, e.g. "-cost"
+
+    @property
+    def shown(self) -> tuple[ExploreRow, ...]:
+        return self.rows[:ROW_CAP]
 
 
 @dataclass(frozen=True)
@@ -286,9 +313,14 @@ class SessionRow:
 
 @dataclass(frozen=True)
 class SessionsResult:
-    rows: tuple[SessionRow, ...]  # costliest first
+    rows: tuple[SessionRow, ...]  # in the requested sort
     total_cost: float
     total_requests: int
+    sort: str = ""  # the effective sort, e.g. "-last_activity"
+
+    @property
+    def shown(self) -> tuple[SessionRow, ...]:
+        return self.rows[:ROW_CAP]
 
 
 def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list[Item]:
@@ -318,6 +350,7 @@ def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), find
 
 def run(conn, local_day, spec: ExploreSpec, findings=None) -> ExploreResult:
     dim = DIMENSIONS[spec.group]
+    key, sort = _resolve_sort(spec.sort, BREAKDOWN_SORTS, "-value" if dim.chronological else "-cost")
     items, data = _slice(conn, local_day, spec, findings=findings)
     groups: dict[str, list] = {}
     for item in items:
@@ -327,8 +360,8 @@ def run(conn, local_day, spec: ExploreSpec, findings=None) -> ExploreResult:
             g[1] += 1
     total = sum(i.cost for i in items)
     rows = [ExploreRow(v, c, n, c / total if total else 0.0) for v, (c, n) in groups.items()]
-    rows.sort(key=(lambda r: r.value) if dim.chronological else (lambda r: (-r.cost, r.value)))
-    return ExploreResult(spec.group, dim.label, tuple(rows), total, len(items), dim.overlapping)
+    _sorted(rows, lambda r: getattr(r, key), lambda r: r.value, sort.startswith("-"))
+    return ExploreResult(spec.group, dim.label, tuple(rows), total, len(items), dim.overlapping, sort)
 
 
 def requests(conn, local_day, spec: ExploreSpec, findings=None) -> list[ExploreRequest]:
@@ -379,7 +412,8 @@ def to_csv(result: ExploreResult) -> str:
 
 def sessions(conn, local_day, local_time: Callable[[float], datetime], labels: dict[str, str],
              spec: ExploreSpec, findings=None) -> SessionsResult:
-    """One row per logical Session over the requests the filters keep, costliest first."""
+    """One row per logical Session over the requests the filters keep, newest activity first by default."""
+    key, sort = _resolve_sort(spec.sort, SESSION_SORTS, "-last_activity")
     reqs = requests(conn, local_day, spec, findings)
     groups: dict[str, list] = {}
     for r in reqs:
@@ -391,8 +425,9 @@ def sessions(conn, local_day, local_time: Callable[[float], datetime], labels: d
     rows = [SessionRow(sid, labels.get(sid, sid), project, local_time(last), cost, n,
                        cost / total if total else 0.0)
             for sid, (project, last, cost, n) in groups.items()]
-    rows.sort(key=lambda r: (-r.cost, r.session_id))
-    return SessionsResult(tuple(rows), total, len(reqs))
+    _sorted(rows, lambda r: r.name if key == "session" else getattr(r, key),
+            lambda r: r.session_id, sort.startswith("-"))
+    return SessionsResult(tuple(rows), total, len(reqs), sort)
 
 
 def sessions_to_csv(result: SessionsResult) -> str:
