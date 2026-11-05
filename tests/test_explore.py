@@ -38,7 +38,7 @@ def svc(root, service_for):
 
 def test_total_matches_sum_of_requests_and_every_dimension_is_registered(svc):
     assert set(explore.DIMENSIONS) >= {
-        "date", "data_root", "surface", "project", "git_branch", "session", "subagent_type",
+        "date", "data_root", "surface", "project", "git_branch", "session", "session_name", "subagent_type",
         "model", "effort", "speed", "component", "cache_event", "tool", "skill"}
     res = svc.explore(_spec("model"))
     assert res.total_requests == 5
@@ -59,9 +59,9 @@ def test_group_by_scalar_dimensions(svc):
     assert _rows(svc, "model")["claude-sonnet-5"].requests == 1
 
 
-def test_group_by_date_is_chronological_in_local_days(svc):
+def test_group_by_date_lists_local_days_newest_first(svc):
     res = svc.explore(_spec("date"))
-    assert [r.value for r in res.rows] == ["2026-10-29", "2026-10-30"]
+    assert [r.value for r in res.rows] == ["2026-10-30", "2026-10-29"]
 
 
 def test_tool_and_skill_groups_overlap_and_are_flagged(svc):
@@ -105,7 +105,7 @@ def test_filter_by_each_remaining_dimension(svc):
     assert svc.explore(_spec("project", effort=["low"])).total_requests == 1
     assert svc.explore(_spec("project", speed=["fast"])).total_requests == 1
     assert svc.explore(_spec("project", surface=["Desktop"])).total_requests == 1
-    assert svc.explore(_spec("project", session=["s2"])).total_requests == 2
+    assert svc.explore(_spec("project", session_name=["s2"])).total_requests == 2
     assert svc.explore(_spec("project", subagent_type=["Explore"])).total_requests == 1
     assert svc.explore(_spec("project", model=["claude-sonnet-5"])).total_requests == 1
     root_path = str(svc.explore(_spec("data_root")).rows[0].value)
@@ -138,18 +138,18 @@ def test_spec_url_round_trip_and_drill_down():
     assert spec.group == "model" and spec.filters == {"project": ("a", "b"), "tool": ("mcp__x:y",)}
     assert ExploreSpec.from_query(spec.to_query()) == spec
     d = spec.drill("model", "opus")
-    assert d.group == "session" and d.filters["model"] == ("opus",) and d.filters["project"] == ("a", "b")
+    assert d.filters["model"] == ("opus",) and d.filters["project"] == ("a", "b")
     assert spec.drill("project", "a").filters["project"] == ("a",)  # replaces, not adds
     assert spec.without("project", "a").filters["project"] == ("b",)
     with pytest.raises(ValueError):
         ExploreSpec.from_query([("group", "bogus")])
+    with pytest.raises(ValueError):
+        ExploreSpec.from_query([("group", "session")])  # a Session is listed, not a Breakdown
+    assert ExploreSpec.from_query([("session", "s1")]).filters == {}  # the exact-id filter is gone
     assert ExploreSpec.from_query([]).group == "date"
 
 
-def test_requests_of_a_slice_and_csv(svc):
-    reqs = svc.explore_requests(_spec("session", session=["s1"]))
-    assert [r.message_id for r in reqs] == ["m1", "m2", "m5"]
-    assert reqs[0].session_id == "s1" and reqs[0].cost == pytest.approx(20.0)
+def test_csv_of_a_breakdown(svc):
     csv_text = explore.to_csv(svc.explore(_spec("project")))
     lines = csv_text.strip().splitlines()
     assert lines[0] == "Project,Cost,Requests,Share %"
@@ -185,17 +185,14 @@ def test_drain_and_opportunity_dimensions_group_and_filter_by_finding(root, serv
     assert _rows(svc, "opportunity")["Fable usage"].cost == pytest.approx(50.0)
     assert svc.explore(_spec("model", opportunity=["Fable usage"])).total_requests == 1
     assert svc.explore(_spec("model", drain=["Cold resume"])).total_requests == 1
-    assert "Cold resume" in svc.explore_options()["drain"]
+    assert {o.value for o in svc.filter_options(_spec("drain"), "drain")} >= {"Cold resume"}
 
 
-def test_options_do_not_run_the_findings_pipeline_and_a_request_computes_them_once(root, service_for):
+def test_a_request_computes_the_findings_once_although_two_finding_dimensions_are_used(root, service_for):
     root.write_transcript("p", "s1", [req("a", "2026-10-30T10:00:00Z", output=1_000)])
     svc = service_for(root)
     calls = []
     real = svc.findings
     svc.findings = lambda *a, **k: calls.append(1) or real(*a, **k)
-    opts = svc.explore_options()
-    assert "Cold resume" in opts["drain"] and "Fable usage" in opts["opportunity"]
-    assert calls == []  # suggestions come from the registered findings, not from running them
     svc.explore(_spec("drain", opportunity=["Fable usage"]))
     assert calls == [1]  # one pipeline run although two finding dimensions are used

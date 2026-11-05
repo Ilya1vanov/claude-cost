@@ -13,7 +13,7 @@
       <nav id="site-nav">
         {% for endpoint, prefix, label in [
              ("dashboard", "dashboard", "Dashboard"), ("compare", "compare", "Compare"),
-             ("explore_page", "explore", "Explore"), ("spotlight_list", "spotlight", "Spotlights"),
+             ("sessions_page", "sessions", "Sessions"), ("breakdowns_page", "breakdowns", "Breakdowns"), ("spotlight_list", "spotlight", "Spotlights"),
              ("findings", "finding", "Drains & Opportunities"), ("compact", "compact", "Compact threshold")] %}
         <a href="{{ url_for(endpoint) }}"{% if request.endpoint and request.endpoint.startswith(prefix) %} aria-current="page"{% endif %}>{{ label }}</a>
         {% endfor %}

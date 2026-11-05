@@ -1,5 +1,7 @@
 """Seam 2: adapter smoke tests. No logic asserted beyond shape."""
+import html as htmllib
 import io
+import re
 
 from claude_cost import cli, ingest, store
 from claude_cost.query import QueryService
@@ -185,31 +187,47 @@ def test_spotlight_pages_edit_picked_sessions_and_compare(root, configure):
     assert client.get("/spotlights/nope").status_code == 404
 
 
-def test_explore_page_filters_in_url_drill_down_and_csv(root, configure):
+def test_breakdowns_page_filters_in_url_drill_down_and_csv(root, configure):
     root.write_transcript("proj-a", "s1", [
         req("m1", "2026-10-29T01:00:00Z", output=1_000_000, tools=("Bash",)),
         req("m2", "2026-10-29T02:00:00Z", model="claude-sonnet-5", output=1_000_000)])
     root.write_transcript("proj-b", "s2", [req("m3", "2026-10-30T01:00:00Z", output=500_000)])
     client = _client(configure(root))
-    html = client.get("/explore").get_data(as_text=True)
-    assert 'id="explore-chart"' in html and "2026-10-29" in html
+    html = client.get("/breakdowns").get_data(as_text=True)
+    assert 'id="cost-chart"' in html and "2026-10-29" in html
+    assert "Breakdown by" in html and "Group by" not in html
+    assert '<option value="date" selected>' in html  # defaults to Date
+    assert 'value="session"' not in html  # session is not a breakdown
     for dim in ("Git branch", "Subagent type", "Cost component", "Cache event", "Tool", "Skill"):
         assert dim in html
-    page = client.get("/explore?group=model&project=proj-a&project=proj-b&tool=Bash")
+    page = client.get("/breakdowns?group=model&project=proj-a&project=proj-b&tool=Bash")
     html = page.get_data(as_text=True)
-    assert page.status_code == 200 and "Project = proj-a" in html and "Project = proj-b" in html
-    table = html.split('id="explore-table"')[1]
+    assert page.status_code == 200 and "<strong>proj-a, proj-b</strong>" in html and 'title="Tool: Bash"' in html
+    table = html.split('id="breakdowns-table"')[1]
     assert "claude-opus-5-5" in table and "claude-sonnet-5" not in table  # filtered slice
-    assert "/explore/requests?" in client.get("/explore?group=session").get_data(as_text=True)
-    assert "group=session" in html and "model=claude-opus-5-5" in html  # drill-down link
-    reqs = client.get("/explore/requests?session=s1").get_data(as_text=True)
-    assert "m1" in reqs and "m2" in reqs and "m3" not in reqs
-    csv_resp = client.get("/explore.csv?group=project")
+    # each row opens Sessions with its value added to the current filters
+    link = re.search(r'href="(/sessions\?[^"]*model=claude-opus-5-5[^"]*)"', table).group(1)
+    link = htmllib.unescape(link)
+    assert "project=proj-a" in link and "project=proj-b" in link and "tool=Bash" in link
+    drilled = client.get(link)
+    assert drilled.status_code == 200
+    csv_resp = client.get("/breakdowns.csv?group=project")
     assert csv_resp.mimetype == "text/csv"
     assert csv_resp.get_data(as_text=True).splitlines() == [
         "Project,Cost,Requests,Share %", "proj-a,30.00,2,75.0", "proj-b,10.00,1,25.0"]
-    assert client.get("/explore?group=bogus").status_code == 400
-    assert client.get("/explore.csv?group=bogus").status_code == 400
+    assert client.get("/breakdowns?group=session").status_code == 400
+    assert client.get("/breakdowns?group=bogus").status_code == 400
+    assert client.get("/breakdowns.csv?group=session").status_code == 400
+    assert client.get("/breakdowns.csv?group=bogus").status_code == 400
+
+
+def test_explore_is_gone_and_nav_shows_breakdowns(root, configure):
+    root.write_transcript("proj-a", "s1", [req("m1", "2026-10-29T01:00:00Z", output=1_000_000)])
+    client = _client(configure(root))
+    for path in ("/explore", "/explore.csv", "/explore/requests", "/explore/requests?session=s1"):
+        assert client.get(path).status_code == 404
+    nav = client.get("/breakdowns").get_data(as_text=True).split('id="site-nav"')[1].split("</nav>")[0]
+    assert ">Breakdowns<" in nav and "Explore" not in nav and 'href="/breakdowns"' in nav
 
 
 def test_session_timeline_page_loads(root, configure):

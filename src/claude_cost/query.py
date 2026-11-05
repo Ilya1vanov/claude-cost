@@ -1621,7 +1621,7 @@ class QueryService:
 
         Candidates are every Session except the Spotlight's direct members and `exclude`. An empty
         query returns the suggested Forks (unpicked Forks of members), costliest first. Otherwise
-        the query is matched as a case-insensitive subsequence of the label or the id; suggested
+        the query is matched as a case-insensitive substring of the label or the id; suggested
         Forks rank first, then the better match, then the costlier Session; at most 10 are returned.
         """
         infos, defs, member = self._spotlight_state()
@@ -1656,15 +1656,26 @@ class QueryService:
         ranked.sort(key=lambda r: r[:4])
         return [r[4] for r in ranked[:self.SEARCH_LIMIT]]
 
-    # Explore (ticket #11): the dimension registry and slicing live in explore.py
+    # Sessions and Breakdowns: the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
-        return explore.run(self._conn, self._local_day, spec, self.findings)
+        return explore.run(self._conn, self._local_day, spec, self.findings, self.session_labels())
 
-    def explore_requests(self, spec: explore.ExploreSpec) -> list[explore.ExploreRequest]:
-        """The individual requests of the slice, oldest first."""
-        return explore.requests(self._conn, self._local_day, spec, self.findings)
+    def sessions(self, spec: explore.ExploreSpec) -> explore.SessionsResult:
+        """One row per logical Session over the requests the filters keep (the group-by is ignored)."""
+        return explore.sessions(self._conn, self._local_day, self.local_time,
+                                self.session_labels(), spec, self.findings)
 
-    def explore_options(self, limit: int = 100) -> dict[str, list[str]]:
-        """Most frequent values per dimension, to suggest in filter inputs."""
-        return explore.options(self._conn, limit)
+    def value_names(self, key: str) -> dict[str, str]:
+        """Readable names of a dimension's values: Project names and Session labels."""
+        if key == "project":
+            return self.project_names()
+        if key == "session":
+            return self.session_labels()
+        return {}
+
+    def filter_options(self, spec: explore.ExploreSpec, key: str, q: str = "",
+                       limit: int = 100) -> list[explore.FilterOption]:
+        """Values of dimension `key` for the filter popover (see `explore.filter_options`)."""
+        return explore.filter_options(self._conn, self._local_day, spec, key, q,
+                                      self.value_names, self.findings, limit)

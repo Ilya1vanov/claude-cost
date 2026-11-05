@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -19,8 +20,7 @@ from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
 MAX_DAILY_COST_DAYS = 400  # longest span /api/daily-cost will serve
-CHART_ROWS = 25  # Explore chart shows the top groups; the table and CSV show all
-REQUEST_ROWS = 1000
+CHART_ROWS = 25  # Breakdown and Sessions charts show the top groups; the table shows up to explore.ROW_CAP and the CSV all
 
 
 PERIOD_LABELS = {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}
@@ -385,7 +385,7 @@ def create_app(service_factory: Callable[[], QueryService],
             abort(400, str(e))
         return redirect(url_for("spotlight_list"))
 
-    def explore_service() -> QueryService:
+    def page_service() -> QueryService:
         service = service_factory()
         if refresh:
             last = service.last_ingest_epoch()
@@ -394,49 +394,116 @@ def create_app(service_factory: Callable[[], QueryService],
                 service = service_factory()
         return service
 
-    def explore_spec() -> ExploreSpec:
+    def page_spec() -> ExploreSpec:
         try:
             return ExploreSpec.from_query(request.args.items(multi=True))
         except ValueError as e:
             abort(400, str(e))
 
+    def run_page(service: QueryService, compute, spec: ExploreSpec):
+        """Run `compute` (a `service` method) on the spec with Date presets resolved against today."""
+        try:
+            return compute(spec.resolved(service.today(now())))
+        except ValueError as e:  # an unknown sort key
+            abort(400, str(e))
+
     @app.template_global()
-    def explore_url(endpoint: str, spec: ExploreSpec, **extra) -> str:
-        """URL of an Explore page for `spec`: filters live in the query string."""
+    def sort_url(endpoint: str, spec: ExploreSpec, current: str, key: str) -> str:
+        """Header link: sort by `key` (descending first for numbers and dates), or flip the direction when it is already the sort."""
+        if current == key:
+            new = f"-{key}"
+        elif current == f"-{key}":
+            new = key
+        else:
+            new = f"-{key}" if key in explore.DESC_FIRST else key
+        return page_url(endpoint, replace(spec, sort=new))
+
+    @app.template_global()
+    def page_url(endpoint: str, spec: ExploreSpec, **extra) -> str:
+        """URL of the Sessions or Breakdowns page (or a CSV) for `spec`: filters live in the query string."""
         params: dict[str, list[str]] = {}
         for key, value in spec.to_query():
             params.setdefault(key, []).append(value)
         return url_for(endpoint, **{**params, **extra})
 
-    @app.get("/explore")
-    def explore_page():
-        spec = explore_spec()
-        service = explore_service()
-        result = service.explore(spec)
+    def filter_ui(service: QueryService, spec: ExploreSpec) -> dict:
+        """What the filter popover and chips need: the chips, and the filters the popover lists."""
+        names = {k: service.value_names(k) for k in ("project", "session")}
+        chips = explore.chips(spec, names)
+        summary = {c.key: c.text for c in chips}
+        today = service.today(now())
+        date_view = {"presets": [list(p) for p in explore.DATE_PRESETS.items()],
+                     "min": (service.first_request_day() or today).isoformat(), "max": today.isoformat(),
+                     "costsUrl": url_for("daily_cost")}
+        return {"chips": chips,
+                "dims": [{"key": k, "label": d.label, "kind": {"date": "date", "session_name": "contains"}.get(k, "options"),
+                          "values": spec.filters.get(k, ()), "summary": summary.get(k, ""),
+                          **(date_view if k == "date" else {})}
+                         for k, d in explore.DIMENSIONS.items() if d.filterable]}
+
+    @app.get("/filter-options")
+    def filter_options():
+        key = request.args.get("dimension", "")
+        filterable = [k for k, d in explore.DIMENSIONS.items() if d.filterable]
+        if key not in filterable:
+            abort(400, f"dimension must be one of {', '.join(filterable)}")
+        if key == "date":  # presets, not the days that have requests
+            return jsonify({"dimension": key, "options": [
+                {"value": k, "label": label} for k, label in explore.DATE_PRESETS.items()]})
+        service = page_service()
+        options = service.filter_options(page_spec().resolved(service.today(now())), key,
+                                         request.args.get("q", ""))
+        return jsonify({"dimension": key, "options": [
+            {"value": o.value, "label": o.label, "count": o.count, "id": o.id, "meta": o.meta}
+            for o in options]})
+
+    def top_by_cost(rows, tiebreak):
+        """The chart's rows: the costliest CHART_ROWS, whatever the table's sort."""
+        return sorted(rows, key=lambda r: (-r.cost, tiebreak(r)))[:CHART_ROWS]
+
+    @app.get("/breakdowns")
+    def breakdowns_page():
+        spec = page_spec()
+        service = page_service()
+        result = run_page(service, service.explore, spec)
+        top = top_by_cost(result.rows, lambda r: r.value)
         return render_template(
-            "explore.html", spec=spec, result=result, dims=explore.DIMENSIONS,
-            options=service.explore_options(), fmt_cost=explore.fmt_cost,
+            "breakdowns.html", spec=spec, result=result, breakdown_dims=explore.breakdowns(),
+            filters=filter_ui(service, spec), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share,
             chart_data={"label": result.label,
                         "labels": [project_name(r.value) if result.group == "project" else r.value
-                                   for r in result.rows[:CHART_ROWS]],
-                        "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
+                                   for r in top],
+                        "costs": [round(r.cost, 4) for r in top]})
 
-    @app.get("/explore.csv")
-    def explore_csv():
-        spec = explore_spec()
-        body = explore.to_csv(explore_service().explore(spec))
-        return Response(body, mimetype="text/csv", headers={
-            "Content-Disposition": f'attachment; filename="claude-cost-{spec.group}.csv"'})
-
-    @app.get("/explore/requests")
-    def explore_requests():
-        spec = explore_spec()
-        service = explore_service()
-        reqs = service.explore_requests(spec)
+    @app.get("/sessions")
+    def sessions_page():
+        spec = page_spec()
+        service = page_service()
+        result = run_page(service, service.sessions, spec)
+        top = top_by_cost(result.rows, lambda r: r.session_id)
         return render_template(
-            "explore_requests.html", spec=spec, dims=explore.DIMENSIONS, total=len(reqs),
-            requests=reqs[:REQUEST_ROWS], cost=sum(r.cost for r in reqs))
+            "sessions.html", spec=spec, result=result,
+            filters=filter_ui(service, spec), fmt_cost=explore.fmt_cost,
+            fmt_share=explore.fmt_share, short_id=short_id,
+            chart_data={"label": "Session", "labels": [r.name for r in top],
+                        "costs": [round(r.cost, 4) for r in top]})
+
+    def csv_response(body: str, name: str) -> Response:
+        return Response(body, mimetype="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="claude-cost-{name}.csv"'})
+
+    @app.get("/sessions.csv")
+    def sessions_csv():
+        service = page_service()
+        return csv_response(explore.sessions_to_csv(run_page(service, service.sessions, page_spec())),
+                            "sessions")
+
+    @app.get("/breakdowns.csv")
+    def breakdowns_csv():
+        spec = page_spec()
+        service = page_service()
+        return csv_response(explore.to_csv(run_page(service, service.explore, spec)), spec.group)
 
     @app.get("/session/<session_id>")
     @app.get("/session/<session_id>/agent/<agent_id>")
