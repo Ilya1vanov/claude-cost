@@ -138,6 +138,9 @@ main.wrap { padding-top: 24px; padding-bottom: 64px; }
   flex-wrap: wrap; margin-bottom: 20px;
 }
 .page-head .sub { color: var(--muted); margin: 4px 0 0; }
+.page-head .id-row { color: var(--muted); margin: 4px 0 0; }
+.page-head .full-id { overflow-wrap: anywhere; }
+.page-head .copy-id { padding: 1px 8px; margin-left: 6px; font-size: 12px; }
 .lead { color: var(--muted); max-width: 75ch; margin: 0 0 20px; }
 
 /* Cards and grids */

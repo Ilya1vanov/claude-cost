@@ -8,6 +8,9 @@
   <div class="page-head">
     <div>
       <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ session_label(t.session_id) }}</small>{% else %}Session {{ session_label(t.session_id, link=False) }}{% endif %}</h1>
+      {% set full_id = t.agent_id or t.session_id %}<p class="id-row"><code class="full-id">{{ full_id }}</code>
+        <button type="button" class="ghost copy-id" data-copy="{{ full_id }}" aria-label="Copy id"
+          onclick="navigator.clipboard.writeText(this.dataset.copy).then(()=>{this.textContent='Copied';setTimeout(()=>{this.textContent='Copy'},1500)})">Copy</button></p>
       {% if in_period %}<p class="sub">{{ in_period[1] }} requests, <strong>${{ "%.2f"|format(in_period[0]) }}</strong> in {{ period.start }} to {{ period.end }};
         all time: {{ t.total_requests }} requests, ${{ "%.2f"|format(t.total_cost) }}{% if t.subagent_cost %}
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }}){% endif %}</p>
