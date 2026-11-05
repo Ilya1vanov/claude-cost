@@ -150,7 +150,7 @@
     <div class="card-head"><h2>Top findings</h2><a href="{{ url_for('findings') }}">All Drains and Opportunities</a></div>
     <p class="note">Findings overlap, so their figures are never added up.</p>
     <div class="table-wrap"><table id="top-findings">
-      <tr><th>Finding</th><th>Kind</th><th class="num">Attributed</th><th class="num">Avoidable (lower bound)</th><th class="num">Requests</th></tr>
+      <tr><th>Finding</th><th>Kind</th><th class="num">Attributed</th><th class="num">Avoidable</th><th class="num">Requests</th></tr>
       {% for f in top_findings %}<tr><td><a href="{{ url_for('finding_detail', finding_id=f.id) }}">{{ f.title }}</a></td>
         <td><span class="badge {{ f.kind }}">{{ f.kind }}</span></td><td class="num">${{ "%.2f"|format(f.attributed) }}</td>
         <td class="num">{% if f.avoidable is none %}n/a{% else %}{{ avoidable(f.avoidable, f.avoidable_high) }}{% endif %}</td><td class="num">{{ f.requests|length }}</td></tr>

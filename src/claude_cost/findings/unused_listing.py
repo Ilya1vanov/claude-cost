@@ -1,6 +1,7 @@
 """Drain: Unused listing. A skill or MCP server Listing loaded into a project's sessions
 that was never invoked in that project over the period. Avoidable is a range: the lower bound is
-its read cost; the upper bound adds the write that stored it and any Prompt tier drop (see `_Stream.extra`)."""
+its read cost; the upper bound adds the write that stored it, the Cold writes that rebuilt it in
+place of a read, and any Prompt tier drop its removal would cause (see `_Stream.extra`)."""
 from __future__ import annotations
 
 import json
@@ -33,6 +34,14 @@ def _used(listing_name: str, kind: str, used: set[str]) -> bool:
     return listing_name in used or (kind == "skill" and not used.isdisjoint(_suffixes(listing_name)))
 
 
+def _price(ctx: FindingContext, r, *, input: int, output: int, cache_read: int,
+           write_5m: int, write_1h: int):
+    """Request `r` priced with the given token counts and its own model, day, speed and geo."""
+    return pricing.price_request(r.model, r.day, input=input, output=output, cache_read=cache_read,
+                                 write_5m=write_5m, write_1h=write_1h, speed=r.speed,
+                                 inference_geo=r.inference_geo, table=ctx.price_table)
+
+
 def _read_rate(ctx: FindingContext, r) -> float:
     """Cache read $ per token for request `r`, at its own prompt size (so any Prompt tier applies).
 
@@ -41,9 +50,7 @@ def _read_rate(ctx: FindingContext, r) -> float:
     """
     if not r.context:
         return 0.0
-    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=r.context,
-                              write_5m=0, write_1h=0, speed=r.speed,
-                              inference_geo=r.inference_geo, table=ctx.price_table)
+    c = _price(ctx, r, input=0, output=0, cache_read=r.context, write_5m=0, write_1h=0)
     return c.cache_read / r.context if c else 0.0
 
 
@@ -53,9 +60,8 @@ def _write_rate(ctx: FindingContext, r) -> float:
     writes = r.write_5m + r.write_1h
     if not writes:
         return 0.0
-    c = pricing.price_request(r.model, r.day, input=r.input, output=0, cache_read=r.cache_read,
-                              write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
-                              inference_geo=r.inference_geo, table=ctx.price_table)
+    c = _price(ctx, r, input=r.input, output=0, cache_read=r.cache_read,
+               write_5m=r.write_5m, write_1h=r.write_1h)
     return (c.cache_write_5m + c.cache_write_1h) / writes if c else 0.0
 
 
@@ -63,9 +69,9 @@ class _Stream:
     """One (session, agent) stream's period requests, oldest first, with each request's read
     rate and the unused Listing tokens it reads (kept as a difference array).
 
-    `extra[i]` is what the upper bound adds to request i beyond its reads: today the write of
-    the Listings it wrote. Further upper-bound effects (Cold writes, Prompt tier drop) add
-    into the same array, via `_add_upper`."""
+    `extra[i]` is what the upper bound adds to request i beyond its reads: the write of the
+    Listings it wrote, the rebuild of Listings it re-wrote as a Cold write, and its Prompt tier
+    drop. All add into the same array, via `_add_upper`."""
 
     def __init__(self, ctx: FindingContext, reqs: list):
         self.ctx = ctx
@@ -131,9 +137,8 @@ class _Stream:
         p = pricing.find_price(r.model, r.day, self.ctx.price_table)
         if p is None or p.tier_threshold is None or not r.context - unused <= p.tier_threshold < r.context:
             return 0.0
-        c = pricing.price_request(r.model, r.day, input=r.input, output=r.output, cache_read=r.cache_read,
-                                  write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
-                                  inference_geo=r.inference_geo, table=self.ctx.price_table)
+        c = _price(self.ctx, r, input=r.input, output=r.output, cache_read=r.cache_read,
+                   write_5m=r.write_5m, write_1h=r.write_1h)
         return c.total * (p.tier_mult - 1) / p.tier_mult
 
     def split_tier_drops(self) -> list[tuple[tuple, float]]:

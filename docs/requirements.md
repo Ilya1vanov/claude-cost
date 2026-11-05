@@ -13,7 +13,7 @@ I need a repeatable tool that tells me, from my own local data and without using
 - A **web server** bound to localhost, with a Dashboard (prepared views for rolling 7 days, calendar weeks and calendar months, each compared with earlier periods), a Comparison view for any set of periods, an Explore view with every filter and group-by, a session timeline, Spotlight pages, and a findings view of Drains and Opportunities.
 - A **CLI** for quick answers in the terminal (today, this week, drains, ingest, prices, config) and to start the server.
 
-It reads transcripts from one or more **Data roots**, ingests them step by step into a local SQLite store that keeps history even after Claude Code deletes old transcripts, counts every **Request** exactly once (ADR-0001), prices it at API list price from a dated price table, and links **Sessions**, **Subagents**, **Side sessions** and **Forks** so that totals roll up correctly. Every finding shows **Attributed spend** (measured) and **Avoidable spend** (a conservative lower bound, with its formula), and avoidable figures are never summed across findings.
+It reads transcripts from one or more **Data roots**, ingests them step by step into a local SQLite store that keeps history even after Claude Code deletes old transcripts, counts every **Request** exactly once (ADR-0001), prices it at API list price from a dated price table, and links **Sessions**, **Subagents**, **Side sessions** and **Forks** so that totals roll up correctly. Every finding shows **Attributed spend** (measured) and **Avoidable spend** (a conservative lower bound, and for some findings an upper bound too, with its formula), and avoidable figures are never summed across findings.
 
 All terms in this spec are defined in `GLOSSARY.md`.
 
@@ -115,7 +115,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 ### Findings
 
 70. As a user, I want each finding to show Attributed spend and Avoidable spend separately, so that measured facts and estimates aren't mixed.
-71. As a user, I want Avoidable spend to always be a lower bound, with its formula on the finding's page, so that forecasts are never optimistic.
+71. As a user, I want Avoidable spend to always have a conservative lower bound, with its formula on the finding's page, and for some findings an upper bound that counts effects the lower bound leaves out, so that forecasts are never optimistic and findings rank by the lower bound (ADR-0006).
 72. As a user, I want a negative avoidable estimate shown as $0, so that a finding never claims a saving that didn't exist.
 73. As a user, I want avoidable figures labelled "not additive" and no "total avoidable" headline, so that overlapping findings don't overstate savings.
 74. As a user, I want Drains and Opportunities shown separately, so that real waste isn't confused with choices I may have made on purpose.
@@ -125,7 +125,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 78. As a user, I want the threshold to fall back to a global value when a model has fewer than 20 compactions, so that thin data doesn't produce a wild number.
 79. As a user, I want to see the cost-vs-threshold curve and the payback in requests, so that I can judge how reliable the threshold is.
 80. As a user, I want the compaction cost in that model to use a pessimistic (p75) estimate, so that unmeasurable rework after compacting doesn't make savings look better.
-81. As a user, I want an Unused listing Drain for skills and MCP servers listed in a project's sessions but never invoked there in the period, with avoidable spend = the full read cost of their Listings, so that I know what to disable per project.
+81. As a user, I want an Unused listing Drain for skills and MCP servers listed in a project's sessions but never invoked there in the period, with avoidable spend a range: the read cost of their Listings as the lower bound, plus the write that stored them, Cold writes that rebuilt them and any Prompt tier drop as the upper bound (ADR-0006), so that I know what to disable per project.
 82. As a user, I want "unused" judged per project, so that a skill used daily in one project isn't flagged because another project never uses it.
 83. As a user, I want a Fable usage Opportunity, with avoidable spend = Fable cost minus the same tokens at Opus 5.5 prices, so that I can decide when Fable is worth it.
 84. As a user, I want a Wide subagent Opportunity for Subagents whose first request has at least 50K context, so that I can spot expensive delegations.
@@ -175,7 +175,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 - **Avoidable spend formulas:**
   - Cold resume = cold write cost minus the cost of the user's median first-request context written fresh.
   - Oversized context = reads above T minus the cost of compacting at T.
-  - Unused listing = full read cost of the unused Listings.
+  - Unused listing = read cost of the unused Listings (lower bound); the upper bound adds their write, Cold-write rebuilds and any Prompt tier drop (ADR-0006).
   - Fable usage = Fable cost minus the same tokens at Opus 5.5 prices.
   - Wide subagent and Fork subagent: Attributed spend only.
   - Negative results are shown as $0. Avoidable figures are not additive across findings.

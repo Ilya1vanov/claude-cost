@@ -12,7 +12,7 @@
   <div class="kpis">
     <div class="kpi"><div class="label">Attributed spend</div><div class="value">${{ "%.2f"|format(f.attributed) }}</div>
       <div class="meta">{{ f.requests|length }} requests in {{ f.sessions|length }} sessions</div></div>
-    <div class="kpi"><div class="label">Avoidable spend (lower bound)</div>
+    <div class="kpi"><div class="label">Avoidable spend</div>
       <div class="value">{% if f.avoidable is none %}not estimated{% else %}{{ avoidable(f.avoidable, f.avoidable_high) }}{% endif %}</div>
       <div class="meta">{% if f.formula %}Formula: {{ f.formula }}{% else %}&nbsp;{% endif %}</div></div>
   </div>
