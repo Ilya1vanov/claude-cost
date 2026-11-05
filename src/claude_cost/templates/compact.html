@@ -5,7 +5,8 @@
   <p class="lead">The context size above which compacting costs less than carrying on, learned per model from
     your own history. A compaction costs summary output plus writing the tokens it leaves, at the
     75th percentile of your observed compactions; a model with fewer than 20 compactions uses the
-    global threshold. Carrying a context is priced at the cache-read price.</p>
+    global threshold. Carrying a context is priced at the cache-read price. Both at each request's
+    speed and region, and at the Prompt tier of the context carried or compacted.</p>
   {% if a.global_ is none %}
   <p class="card empty">No compactions observed yet, so no Compact threshold can be learned.</p>
   {% else %}
