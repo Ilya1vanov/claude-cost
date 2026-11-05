@@ -59,9 +59,9 @@ def test_group_by_scalar_dimensions(svc):
     assert _rows(svc, "model")["claude-sonnet-5"].requests == 1
 
 
-def test_group_by_date_is_chronological_in_local_days(svc):
+def test_group_by_date_lists_local_days_newest_first(svc):
     res = svc.explore(_spec("date"))
-    assert [r.value for r in res.rows] == ["2026-10-29", "2026-10-30"]
+    assert [r.value for r in res.rows] == ["2026-10-30", "2026-10-29"]
 
 
 def test_tool_and_skill_groups_overlap_and_are_flagged(svc):

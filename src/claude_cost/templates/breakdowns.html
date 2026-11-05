@@ -29,13 +29,14 @@
   </section>
   <section class="card">
     <div class="table-wrap"><table id="explore-table">
-      <tr><th>{{ result.label }}</th><th class="num">Cost</th><th class="num">Requests</th><th class="num">Share %</th><th></th></tr>
-      {% for r in result.rows %}
+      <tr>{{ ui.sort_th('breakdowns_page', spec, result.sort, 'value', result.label) }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'cost', 'Cost', 'num') }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'requests', 'Requests', 'num') }}{{ ui.sort_th('breakdowns_page', spec, result.sort, 'share', 'Share %', 'num') }}<th></th></tr>
+      {% for r in result.shown %}
       <tr><td>{% if result.group == "component" %}{{ ui.component(r.value) }}{% elif result.group == "project" %}{{ project_name(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
         <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td>
         <td class="num"><a href="{{ explore_url('sessions_page', spec.drill(result.group, r.value)) }}">sessions</a></td></tr>
       {% endfor %}
     </table></div>
+    {{ ui.cap_note(result) }}
   </section>
   {% else %}<p class="card empty">No requests match.</p>{% endif %}
 {% endblock %}
