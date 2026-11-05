@@ -430,21 +430,23 @@ def create_app(service_factory: Callable[[], QueryService],
                      "min": (service.first_request_day() or today).isoformat(), "max": today.isoformat(),
                      "costsUrl": url_for("daily_cost")}
         return {"chips": chips,
-                "dims": [{"key": k, "label": d.label, "kind": "date" if k == "date" else "options",
+                "dims": [{"key": k, "label": d.label, "kind": {"date": "date", "session_name": "contains"}.get(k, "options"),
                           "values": spec.filters.get(k, ()), "summary": summary.get(k, ""),
                           **(date_view if k == "date" else {})}
-                         for k, d in explore.DIMENSIONS.items()]}
+                         for k, d in explore.DIMENSIONS.items() if d.filterable]}
 
     @app.get("/filter-options")
     def filter_options():
         key = request.args.get("dimension", "")
-        if key not in explore.DIMENSIONS:
-            abort(400, f"dimension must be one of {', '.join(explore.DIMENSIONS)}")
+        filterable = [k for k, d in explore.DIMENSIONS.items() if d.filterable]
+        if key not in filterable:
+            abort(400, f"dimension must be one of {', '.join(filterable)}")
         service = explore_service()
         options = service.filter_options(explore_spec().resolved(service.today(now())), key,
                                          request.args.get("q", ""))
         return jsonify({"dimension": key, "options": [
-            {"value": o.value, "label": o.label, "count": o.count} for o in options]})
+            {"value": o.value, "label": o.label, "count": o.count, "id": o.id, "meta": o.meta}
+            for o in options]})
 
     @app.get("/breakdowns")
     def breakdowns_page():

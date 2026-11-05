@@ -74,6 +74,8 @@ class Dimension:
     missing = NONE  # value of a request the loader has nothing for
     overlapping = False  # a request can have several values
     chronological = False  # order groups by value, not by cost
+    filterable = True  # offered in the filter popover and accepted from the URL
+    groupable = True  # offered as a Breakdown group-by
 
     def load(self, conn: sqlite3.Connection) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
@@ -82,9 +84,10 @@ class Dimension:
                 out.setdefault(mid, []).append(value)
         return out
 
-    def load_with(self, conn: sqlite3.Connection,
-                  findings: Callable[[], list] | None) -> dict[str, list[str]]:
-        """`load`, for dimensions that also need the findings (`findings()` -> list[Finding])."""
+    def load_with(self, conn: sqlite3.Connection, findings: Callable[[], list] | None,
+                  labels: dict[str, str] | None = None) -> dict[str, list[str]]:
+        """`load`, for dimensions that also need the findings (`findings()` -> list[Finding])
+        or the Session labels (logical Session id -> label)."""
         return self.load(conn)
 
     def parts(self, item: Item, data: dict[str, list[str]]) -> list[Part]:
@@ -190,13 +193,29 @@ class FindingDimension(Dimension):
     def titles(self) -> list[str]:
         return [d.title for d in all_findings() if d.kind == self.kind]
 
-    def load_with(self, conn, findings):
+    def load_with(self, conn, findings, labels=None):
         out: dict[str, list[str]] = {}
         for f in findings() if findings else []:
             if f.kind == self.kind:
                 for r in f.requests:
                     out.setdefault(r.message_id, []).append(f.title)
         return out
+
+
+class SessionNameDimension(Dimension):
+    """Sessions whose label or id contains the selected text (case-insensitive). Loaded as
+    `label\\nid`, since the label is not in the store."""
+    key, label, groupable = "session_name", "Session name", False
+    sql = f"SELECT r.message_id, {SESSION_ID_SQL} FROM requests r {SESSION_JOIN}"
+
+    def load_with(self, conn, findings, labels=None):
+        labels = labels or {}
+        return {mid: [f"{labels.get(sid, sid)}\n{sid}" for sid in sids]
+                for mid, sids in self.load(conn).items()}
+
+    def matches(self, value, selected):
+        name, _, sid = value.rpartition("\n")
+        return any(t.lower() in name.lower() or t.lower() in sid.lower() for t in selected)
 
 
 def _scalar(key: str, label: str, sql: str, **attrs) -> Dimension:
@@ -228,7 +247,9 @@ for _d in (
     _scalar("git_branch", "Git branch",
             "SELECT message_id, git_branch FROM request_dims WHERE git_branch != ''"),
     _scalar("session", "Session",
-            f"SELECT r.message_id, {SESSION_ID_SQL} FROM requests r {SESSION_JOIN}"),
+            f"SELECT r.message_id, {SESSION_ID_SQL} FROM requests r {SESSION_JOIN}",
+            filterable=False, groupable=False),  # the Sessions page lists it; Session name filters it
+    SessionNameDimension(),
     _scalar("subagent_type", "Subagent type", _SUBAGENT_SQL, missing="(main)"),
     _scalar("model", "Model", "SELECT message_id, model FROM requests"),
     _scalar("effort", "Effort", "SELECT message_id, effort FROM request_dims WHERE effort != ''"),
@@ -245,7 +266,7 @@ for _d in (
 
 def breakdowns() -> dict[str, Dimension]:
     """The dimensions a Breakdown can split by: all but Session, which the Sessions page lists."""
-    return {k: d for k, d in DIMENSIONS.items() if k != "session"}
+    return {k: d for k, d in DIMENSIONS.items() if d.groupable}
 
 
 @dataclass(frozen=True)
@@ -266,7 +287,7 @@ class ExploreSpec:
                 group = value
             elif key == "sort":
                 sort = value or None  # validated against the page's columns when it runs
-            elif key in DIMENSIONS and value != "":
+            elif key in DIMENSIONS and DIMENSIONS[key].filterable and value != "":
                 if value not in filters.setdefault(key, ()):
                     filters[key] = filters[key] + (value,)
         return cls(group, filters, sort)
@@ -366,12 +387,13 @@ def _items(conn: sqlite3.Connection, local_day: Callable[[float], date]) -> list
                                   "ORDER BY ts_epoch, message_id")]
 
 
-def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), findings=None):
+def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), findings=None,
+           labels=None):
     """Items left by the filters, and the loaded data of every dimension used."""
     used = {spec.group, *spec.filters, *extra}
     if findings is not None:  # several finding dimensions share one pipeline run
         findings = functools.cache(findings)
-    data = {k: DIMENSIONS[k].load_with(conn, findings) for k in used}
+    data = {k: DIMENSIONS[k].load_with(conn, findings, labels) for k in used}
     items = []
     for item in _items(conn, local_day):
         for key, selected in spec.filters.items():
@@ -383,10 +405,10 @@ def _slice(conn, local_day, spec: ExploreSpec, extra: tuple[str, ...] = (), find
     return items, data
 
 
-def run(conn, local_day, spec: ExploreSpec, findings=None) -> ExploreResult:
+def run(conn, local_day, spec: ExploreSpec, findings=None, labels=None) -> ExploreResult:
     dim = DIMENSIONS[spec.group]
     key, sort = _resolve_sort(spec.sort, BREAKDOWN_SORTS, "-value" if dim.chronological else "-cost")
-    items, data = _slice(conn, local_day, spec, findings=findings)
+    items, data = _slice(conn, local_day, spec, findings=findings, labels=labels)
     groups: dict[str, list] = {}
     for item in items:
         for value, keys in dim.parts(item, data[spec.group]):
@@ -399,9 +421,9 @@ def run(conn, local_day, spec: ExploreSpec, findings=None) -> ExploreResult:
     return ExploreResult(spec.group, dim.label, tuple(rows), total, len(items), dim.overlapping, sort)
 
 
-def requests(conn, local_day, spec: ExploreSpec, findings=None) -> list[ExploreRequest]:
+def requests(conn, local_day, spec: ExploreSpec, findings=None, labels=None) -> list[ExploreRequest]:
     items, data = _slice(conn, local_day, spec, extra=("session", "project", "model"),
-                         findings=findings)
+                         findings=findings, labels=labels)
     one = lambda key, item: (data[key].get(item.message_id) or [NONE])[0]  # noqa: E731
     return [ExploreRequest(i.message_id, i.ts_epoch, i.day, one("session", i), one("project", i),
                            one("model", i), i.cost) for i in items]
@@ -413,19 +435,41 @@ class FilterOption:
     value: str
     label: str
     count: int
+    id: str = ""  # Session name suggestions: the Session the text came from
+    meta: str = ""  # Session name suggestions: that Session's cost
+
+
+def _session_name_options(conn, local_day, spec, q, session_labels, findings, limit):
+    """Suggestions for the Session name filter: Sessions (among the requests the other filters
+    keep) whose label or id contains `q`, costliest first. The value is the label, to be filled in."""
+    narrowed = ExploreSpec(DEFAULT_GROUP, {k: v for k, v in spec.filters.items() if k != "session_name"})
+    items, data = _slice(conn, local_day, narrowed, extra=("session",), findings=findings,
+                         labels=session_labels)
+    cost: dict[str, float] = {}
+    for item in items:
+        sid = (data["session"].get(item.message_id) or [NONE])[0]
+        cost[sid] = cost.get(sid, 0.0) + item.cost
+    needle = q.strip().lower()
+    found = [(sid, session_labels.get(sid, sid), c) for sid, c in cost.items()
+             if not needle or needle in session_labels.get(sid, sid).lower() or needle in sid.lower()]
+    found.sort(key=lambda f: (-f[2], f[1], f[0]))
+    return [FilterOption(name, name, 1, sid, f"${fmt_cost(c)}") for sid, name, c in found[:limit]]
 
 
 def filter_options(conn, local_day, spec: ExploreSpec, key: str, q: str = "",
                    labels: dict[str, str] | None = None, findings=None,
-                   limit: int = 100) -> list[FilterOption]:
+                   limit: int = 100, session_labels: dict[str, str] | None = None) -> list[FilterOption]:
     """The values of dimension `key` for the filter popover: the top `limit` by Session count
     among the requests the *other* filters keep, narrowed by `q` (case-insensitive, on the
     readable label or the value). Values `spec` already selects for `key` are always listed,
     at 0 when the other filters leave them nothing."""
+    if key == "session_name":
+        return _session_name_options(conn, local_day, spec, q, session_labels or {}, findings, limit)
     labels = labels or {}
     selected = spec.filters.get(key, ())
     narrowed = ExploreSpec(DEFAULT_GROUP, {k: v for k, v in spec.filters.items() if k != key})
-    items, data = _slice(conn, local_day, narrowed, extra=(key, "session"), findings=findings)
+    items, data = _slice(conn, local_day, narrowed, extra=(key, "session"), findings=findings,
+                         labels=session_labels)
     sessions: dict[str, set[str]] = {}
     for item in items:
         sid = (data["session"].get(item.message_id) or [NONE])[0]
@@ -462,7 +506,8 @@ def chips(spec: ExploreSpec, names: dict[str, dict[str, str]]) -> list[Chip]:
     for key, dim in DIMENSIONS.items():
         values = spec.filters.get(key)
         if values:
-            shown = [names.get(key, {}).get(v, v) for v in values]
+            shown = [f"“{v}”" for v in values] if key == "session_name" else [
+                names.get(key, {}).get(v, v) for v in values]
             if key == "date":
                 shown = [DATE_PRESETS.get(v) or v.replace("..", " – ") for v in values]
             out.append(Chip(key, dim.label, chip_summary(shown), f"{dim.label}: {', '.join(shown)}"))
@@ -491,7 +536,7 @@ def sessions(conn, local_day, local_time: Callable[[float], datetime], labels: d
              spec: ExploreSpec, findings=None) -> SessionsResult:
     """One row per logical Session over the requests the filters keep, newest activity first by default."""
     key, sort = _resolve_sort(spec.sort, SESSION_SORTS, "-last_activity")
-    reqs = requests(conn, local_day, spec, findings)
+    reqs = requests(conn, local_day, spec, findings, labels)
     groups: dict[str, list] = {}
     for r in reqs:
         g = groups.setdefault(r.session_id, [r.project, r.ts_epoch, 0.0, 0])

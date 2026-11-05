@@ -63,11 +63,6 @@ def test_q_searches_the_server_over_readable_names(client):
     assert list(projects) == ["proj-b"] and projects["proj-b"]["label"] == "cart"
 
 
-def test_session_options_are_labelled_with_the_session_label(client):
-    opts = _options(client, dimension="session")
-    assert opts["s1aaaaaaaa-1111"]["label"] == "Login work"
-
-
 def test_options_are_the_top_100_by_count_plus_selected(root, configure):
     root.write_transcript("p", "s1", [req(f"m{i}", "2026-10-29T10:00:00Z", output=10, git_branch=f"b{i}")
                                       for i in range(105)] +
@@ -98,10 +93,10 @@ def test_pages_have_the_filter_button_and_no_old_form(client, page):
 
 @pytest.mark.parametrize("page", ["/sessions", "/breakdowns"])
 def test_chips_read_model_a_b_with_readable_names_and_a_remove_link(client, page):
-    html = client.get(f"{page}?model={OPUS}&model={SONNET}&project=proj-a&session=s1aaaaaaaa-1111").get_data(as_text=True)
+    html = client.get(f"{page}?model={OPUS}&model={SONNET}&project=proj-a&session_name=login").get_data(as_text=True)
     assert f'title="Model: {OPUS}, {SONNET}"' in html and f"<strong>{OPUS}, {SONNET}</strong>" in html
     assert "<strong>shop</strong>" in html  # project name, not the key
-    assert "<strong>Login work</strong>" in html  # session label, not the id
+    assert "<strong>“login”</strong>" in html
     assert f"{page}?" in html and 'aria-label="Remove Model filter"' in html
 
 

@@ -38,7 +38,7 @@ def svc(root, service_for):
 
 def test_total_matches_sum_of_requests_and_every_dimension_is_registered(svc):
     assert set(explore.DIMENSIONS) >= {
-        "date", "data_root", "surface", "project", "git_branch", "session", "subagent_type",
+        "date", "data_root", "surface", "project", "git_branch", "session", "session_name", "subagent_type",
         "model", "effort", "speed", "component", "cache_event", "tool", "skill"}
     res = svc.explore(_spec("model"))
     assert res.total_requests == 5
@@ -105,7 +105,7 @@ def test_filter_by_each_remaining_dimension(svc):
     assert svc.explore(_spec("project", effort=["low"])).total_requests == 1
     assert svc.explore(_spec("project", speed=["fast"])).total_requests == 1
     assert svc.explore(_spec("project", surface=["Desktop"])).total_requests == 1
-    assert svc.explore(_spec("project", session=["s2"])).total_requests == 2
+    assert svc.explore(_spec("project", session_name=["s2"])).total_requests == 2
     assert svc.explore(_spec("project", subagent_type=["Explore"])).total_requests == 1
     assert svc.explore(_spec("project", model=["claude-sonnet-5"])).total_requests == 1
     root_path = str(svc.explore(_spec("data_root")).rows[0].value)
@@ -145,7 +145,7 @@ def test_spec_url_round_trip_and_drill_down():
         ExploreSpec.from_query([("group", "bogus")])
     with pytest.raises(ValueError):
         ExploreSpec.from_query([("group", "session")])  # a Session is listed, not a Breakdown
-    assert ExploreSpec.from_query([("session", "s1")]).filters["session"] == ("s1",)  # still a filter
+    assert ExploreSpec.from_query([("session", "s1")]).filters == {}  # the exact-id filter is gone
     assert ExploreSpec.from_query([]).group == "date"
 
 

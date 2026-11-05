@@ -50,7 +50,7 @@
   }
   function openDim(key, fromChip) {
     var d = dimOf(key);
-    st = { mode: "filter", dim: d, fromChip: fromChip, draft: d.values.slice(), names: {}, options: [], q: "", seq: 0 };
+    st = { mode: "filter", dim: d, fromChip: fromChip, draft: d.values.slice(), names: {}, options: [], q: d.kind === "contains" ? (d.values[0] || "") : "", seq: 0 };
     pop.hidden = false; add.setAttribute("aria-expanded", "true");
     var chip = bar.querySelector('.chip[data-dim="' + key + '"]');
     Array.prototype.forEach.call(bar.querySelectorAll(".chip.editing"), function (c) { c.classList.remove("editing"); });
@@ -58,6 +58,7 @@
     else pop.style.left = "0";
     render();
     if (d.kind === "options") fetchOptions();
+    if (d.kind === "contains") fetchOptions();
   }
 
   function head(title, back) {
@@ -92,7 +93,21 @@
     pop.appendChild(head(d.label, !st.fromChip));
     var foot = el("div", "fp-foot");
     var note = el("span");
-    if (d.kind === "date") {
+    if (d.kind === "contains") {
+      var cw = el("div", "fp-text");
+      var clab = el("label", null, "Name or id contains"); clab.setAttribute("for", "fp-contains");
+      var cin = el("input"); cin.id = "fp-contains"; cin.type = "text"; cin.autocomplete = "off"; cin.value = st.q;
+      cin.addEventListener("input", function () {
+        st.q = cin.value; st.draft = cin.value.trim() ? [cin.value.trim()] : [];
+        clearTimeout(timer); timer = setTimeout(fetchOptions, 200);
+      });
+      cin.addEventListener("keydown", function (e) { if (e.key === "Enter") apply(); });
+      cw.appendChild(clab); cw.appendChild(cin); pop.appendChild(cw);
+      pop.appendChild(el("p", "fp-hint", "Suggestions: picking one fills the text"));
+      var clist = el("ul", "fp-list"); clist.id = "fp-options"; pop.appendChild(clist);
+      fillOptions();
+      note.id = "fp-note";
+    } else if (d.kind === "date") {
       dateView(d, note);
     } else {
       var sw = el("div", "fp-search");
@@ -118,8 +133,10 @@
 
   function updateNote() {
     var n = document.getElementById("fp-note");
-    if (n && st.dim.kind === "date") n.textContent = "A preset stays relative when bookmarked";
-    else if (n) n.textContent = st.draft.length + " selected";
+    if (!n) return;
+    if (st.dim.kind === "date") n.textContent = "A preset stays relative when bookmarked";
+    else if (st.dim.kind === "contains") n.textContent = st.loaded ? st.options.length + " sessions match “" + st.q.trim() + "”" : "";
+    else n.textContent = st.draft.length + " selected";
   }
 
   /* The Date view: preset radios beside a range calendar for a custom period (both ends included).
@@ -176,6 +193,28 @@
     var list = document.getElementById("fp-options");
     if (!list) return;
     list.textContent = "";
+    if (st.dim.kind === "contains") {
+      st.options.forEach(function (o) {
+        var li = el("li");
+        var b = button(null, "fp-sugg", function () {
+          st.q = o.value; st.draft = [o.value];
+          var inp = document.getElementById("fp-contains"); inp.value = o.value; inp.focus(); fetchOptions();
+        });
+        var top = el("span", "fp-sugg-top"), name = el("span", "fp-sugg-name");
+        var needle = st.q.trim().toLowerCase(), at = needle ? o.label.toLowerCase().indexOf(needle) : -1;
+        if (at >= 0) {
+          name.appendChild(document.createTextNode(o.label.slice(0, at)));
+          name.appendChild(el("mark", null, o.label.slice(at, at + needle.length)));
+          name.appendChild(document.createTextNode(o.label.slice(at + needle.length)));
+        } else name.textContent = o.label;
+        top.appendChild(name); top.appendChild(el("code", null, o.id));
+        b.appendChild(top); b.appendChild(el("small", null, o.meta));
+        li.appendChild(b); list.appendChild(li);
+      });
+      if (!st.options.length) list.appendChild(el("li", "fp-empty", st.loaded ? "No sessions match." : "Loading…"));
+      updateNote();
+      return;
+    }
     st.options.forEach(function (o) {
       var li = el("li");
       var lab = el("label", "fp-opt" + (st.draft.indexOf(o.value) >= 0 ? " checked" : ""));
@@ -198,7 +237,7 @@
     params.set("dimension", key); params.set("q", st.q);
     fetch(optionsUrl + "?" + params.toString()).then(function (r) { return r.json(); }).then(function (data) {
       if (!st || st.dim.key !== key || seq !== st.seq) return;  // a newer search or another editor took over
-      st.options = data.options; st.loaded = true; fillOptions();
+      st.options = data.options; st.loaded = true; fillOptions(); updateNote();
     });
   }
 

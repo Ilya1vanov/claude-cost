@@ -1659,7 +1659,7 @@ class QueryService:
     # Explore (ticket #11): the dimension registry and slicing live in explore.py
     def explore(self, spec: explore.ExploreSpec) -> explore.ExploreResult:
         """Cost and requests per value of `spec.group`, over the requests the filters keep."""
-        return explore.run(self._conn, self._local_day, spec, self.findings)
+        return explore.run(self._conn, self._local_day, spec, self.findings, self.session_labels())
 
     def sessions(self, spec: explore.ExploreSpec) -> explore.SessionsResult:
         """One row per logical Session over the requests the filters keep (the group-by is ignored)."""
@@ -1678,4 +1678,5 @@ class QueryService:
                        limit: int = 100) -> list[explore.FilterOption]:
         """Values of dimension `key` for the filter popover (see `explore.filter_options`)."""
         return explore.filter_options(self._conn, self._local_day, spec, key, q,
-                                      self.value_names(key), self.findings, limit)
+                                      self.value_names(key), self.findings, limit,
+                                      self.session_labels())
