@@ -202,7 +202,7 @@ def test_breakdowns_page_filters_in_url_drill_down_and_csv(root, configure):
         assert dim in html
     page = client.get("/breakdowns?group=model&project=proj-a&project=proj-b&tool=Bash")
     html = page.get_data(as_text=True)
-    assert page.status_code == 200 and "Project = proj-a" in html and "Project = proj-b" in html
+    assert page.status_code == 200 and "<strong>proj-a, proj-b</strong>" in html and 'title="Tool: Bash"' in html
     table = html.split('id="explore-table"')[1]
     assert "claude-opus-5-5" in table and "claude-sonnet-5" not in table  # filtered slice
     # each row opens Sessions with its value added to the current filters
