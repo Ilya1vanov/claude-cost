@@ -231,7 +231,7 @@ def test_replay_resets_at_a_real_compaction_and_never_goes_negative():
     from claude_cost.compact import Rates, _Req, replay
     # contexts 100K, 150K, real compaction to 20K, 30K; T=120K, post=10K; read $1/token, post $0
     ctxs = [100_000, 150_000, 20_000, 30_000]
-    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, Rates(1.0, 0.0)) for i, c in enumerate(ctxs)]
+    reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, Rates(1.0, 0.0, 0.0)) for i, c in enumerate(ctxs)]
     # the 150K request is hypothetically compacted to 10K; the real drop to 20K resets that
     assert replay(reqs, 120_000, 10_000) == 100_000 + 10_000 + 20_000 + 30_000
 
@@ -257,8 +257,11 @@ def test_payback_is_for_the_threshold_applied_and_the_models_own_prices(root, se
     assert sonnet.payback_requests == pytest.approx(
         sonnet.compaction_cost / ((a.global_.threshold - 10_000) * read("claude-sonnet-5-5")))
     haiku = a.for_model("claude-haiku-5-5")  # no compactions: global T and p75, haiku prices
-    assert haiku.threshold == a.global_.threshold
-    assert haiku.compaction_cost == pytest.approx(a.global_.post_tokens_p75 * per_post("claude-haiku-5-5"))
+    assert haiku.threshold == a.global_.threshold > 100_000  # above haiku's Prompt tier
+    post = a.global_.post_tokens_p75
+    assert haiku.compaction_cost == pytest.approx(post * (0.5e-6 * 5 + 0.2e-6))  # output tiered, write not
+    assert haiku.payback_requests == pytest.approx(
+        haiku.compaction_cost / (a.global_.threshold * 0.05e-6 - post * 0.01e-6))  # reads tiered at T
     assert haiku.compaction_cost != pytest.approx(a.global_.compaction_cost)
 
 
@@ -399,7 +402,7 @@ def test_a_tiered_model_learns_a_threshold_that_keeps_compactions_under_the_tier
 
 def test_replay_reads_a_compacted_context_at_the_tier_it_drops_to():
     from claude_cost.compact import Rates, _Req, replay
-    rates = Rates(1.0, 0.0, tier_threshold=100_000, tier_mult=5.0)
+    rates = Rates(1.0, 0.0, 0.0, tier_threshold=100_000, tier_mult=5.0)
     reqs = [_Req(f"m{i}", ("s", None), float(i), "m", c, rates) for i, c in enumerate([90_000, 150_000])]
     assert replay(reqs, 120_000, 10_000) == 90_000 + 10_000
     assert replay(reqs, 200_000, 10_000) == 90_000 + 150_000 * 5
@@ -412,7 +415,8 @@ def test_oversized_context_avoidable_is_reads_above_the_threshold_at_the_prompt_
     f = {f.id: f for f in service_for(root).findings()}["oversized-context"]
     got = {r.message_id: r.avoidable for r in f.requests if r.session_id == "big"}
     excess = 600_000 * 0.05e-6 - 90_000 * 0.01e-6  # at T=90K the context is back under the tier
-    assert got == {"b0": pytest.approx(excess - 50_000 * 0.7e-6), "b1": pytest.approx(excess)}
+    # compacting the 600K context: summary output at the tier (x5), the 50K write flat
+    assert got == {"b0": pytest.approx(excess - 50_000 * (0.5e-6 * 5 + 0.2e-6)), "b1": pytest.approx(excess)}
 
 
 @pytest.mark.parametrize("kw, mult", [({"speed": "fast"}, 2.0), ({"inference_geo": "us"}, 1.1)])

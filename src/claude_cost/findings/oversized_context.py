@@ -20,7 +20,7 @@ def detect(ctx: FindingContext) -> Detection:
         stream = (r.session_id, r.agent_id)
         if stream not in charged:  # one compaction per stream pays for all its excess reads
             charged.add(stream)
-            avoidable -= rates.compaction_cost(t.threshold, t.post_tokens_p75)
+            avoidable -= rates.compaction_cost(r.context, t.post_tokens_p75)  # as replay does
         covered.append(Covered(r.message_id, avoidable))
     g = analysis.global_
     return Detection(covered, f"global Compact threshold {g.threshold:,} tokens "

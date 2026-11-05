@@ -30,6 +30,7 @@ from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
 FORMAT = 2  # shape and method of the stored analysis (`to_json`); bump it whenever either changes
+# (prices and price modifiers need no bump: `pricing.fingerprint` is part of the key)
 
 # Autocompact fires at autoCompactWindow - 33,000: the window minus an output reserve, minus a
 # buffer. Read from the Claude Code 2.1.314 bundle; re-check when autocompacts fire elsewhere.
@@ -98,19 +99,18 @@ class Rates:
     """A request's prices at its speed and region; a context above `tier_threshold` pays
     `tier_mult` x them (its Prompt tier)."""
     read: float  # $ per token of context
-    per_post: float  # $ per post token of one compaction
+    output: float  # $ per post token of compaction summary output
+    write: float  # $ per post token written to the 1h cache after a compaction
     tier_threshold: int | None = None
     tier_mult: float = 1.0
 
-    def _mult(self, context: int) -> float:
-        return self.tier_mult if self.tier_threshold is not None and context > self.tier_threshold else 1.0
-
     def read_cost(self, context: int) -> float:
-        return context * self.read * self._mult(context)
+        return context * self.read * pricing.tier(self, context)
 
     def compaction_cost(self, context: int, post: int) -> float:
-        """Compacting `context` down to `post`: the summary request's prompt is `context`."""
-        return post * self.per_post * self._mult(context)
+        """Compacting `context` down to `post`: the summary request's prompt is `context`, so its
+        output pays that tier; the write lands in a prompt of `post`."""
+        return post * (self.output * pricing.tier(self, context) + self.write * pricing.tier(self, post))
 
 
 def rates(model: str, day: date, speed: str | None = None, inference_geo: str | None = None,
@@ -119,7 +119,7 @@ def rates(model: str, day: date, speed: str | None = None, inference_geo: str | 
     if p is None:
         return None
     m = pricing.modifier(speed, inference_geo) / 1_000_000
-    return Rates(p.cache_read * m, (p.output + p.input * pricing.WRITE_1H_MULT) * m,
+    return Rates(p.cache_read * m, p.output * m, p.input * pricing.WRITE_1H_MULT * m,
                  p.tier_threshold, p.tier_mult)
 
 
@@ -137,8 +137,8 @@ class _Req:
 class CompactAnalysis:
     models: tuple[ModelThreshold, ...]  # models with at least one observed compaction
     global_: ModelThreshold | None  # None when there are no compactions at all
-    own_prices: Mapping[str, tuple[float, float]] = field(default_factory=dict)
-    # model -> (average $ per post token of a compaction, average cache-read $ per token)
+    own_costs: Mapping[str, tuple[float, float | None]] = field(default_factory=dict)
+    # model -> (compaction cost, payback) at the global threshold and p75, at this model's prices
 
     # The autocompact rule, exposed for the CLI and the page to quote.
     CLAUDE_CODE_VERSION: ClassVar[str] = CLAUDE_CODE_VERSION
@@ -158,12 +158,9 @@ class CompactAnalysis:
             if m.model == model:
                 return m
         g = self.global_
-        if g is not None and model in self.own_prices:  # global T and p75, this model's prices
-            cpp, read = self.own_prices[model]
-            saved = (g.threshold - g.post_tokens_p75) * read
-            cost = g.post_tokens_p75 * cpp
-            return replace(g, compaction_cost=cost,
-                           payback_requests=cost / saved if saved > 0 else None)
+        if g is not None and model in self.own_costs:  # global T and p75, this model's prices
+            cost, payback = self.own_costs[model]
+            return replace(g, compaction_cost=cost, payback_requests=payback)
         return g
 
 
@@ -205,14 +202,13 @@ def _fit(model: str | None, reqs: list[_Req], posts: list[int], source: str,
 
 
 def _cost_and_payback(reqs: list[_Req], post: int, threshold: int) -> tuple[float, float | None]:
-    """Compaction cost and payback at `threshold`, priced at the average prices of `reqs`
-    (below any Prompt tier)."""
+    """Compaction cost and payback at `threshold`, averaged over the prices of `reqs`: compacting
+    `threshold` pays its Prompt tier, and each later request reads `post` instead of `threshold`."""
     if not reqs:
         return 0.0, None
-    cost_per_post = sum(r.rates.per_post for r in reqs) / len(reqs)
-    read = sum(r.rates.read for r in reqs) / len(reqs)
-    saved_per_request = (threshold - post) * read
-    cost = post * cost_per_post
+    cost = sum(r.rates.compaction_cost(threshold, post) for r in reqs) / len(reqs)
+    saved_per_request = sum(r.rates.read_cost(threshold) - r.rates.read_cost(post)
+                            for r in reqs) / len(reqs)
     return cost, cost / saved_per_request if saved_per_request > 0 else None
 
 
@@ -227,8 +223,12 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         "ORDER BY r.ts_epoch, r.message_id").fetchall()
     reqs: list[_Req] = []
     last_model: dict[str, list[tuple[float, str]]] = {}
+    found: dict[tuple, Rates | None] = {}  # a handful of distinct prices, shared by every request
     for x in rows:
-        rs = rates(x["model"], price_day(x["ts_epoch"]), x["speed"], x["inference_geo"], table)
+        k = (x["model"], price_day(x["ts_epoch"]), x["speed"], x["inference_geo"])
+        if k not in found:
+            found[k] = rates(*k, table)
+        rs = found[k]
         if rs is None:
             continue
         reqs.append(_Req(x["message_id"], (x["sid"], x["agent_id"]), x["ts_epoch"], x["model"],
@@ -244,15 +244,15 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         if before:  # a compaction belongs to the model of the request just before it
             posts.setdefault(before[-1], []).append(c["post_tokens"])
     all_posts = [p for ps in posts.values() for p in ps]
-    own_prices: dict[str, tuple[float, float]] = {}
-    for model in {r.model for r in reqs}:
-        mine = [r for r in reqs if r.model == model]
-        own_prices[model] = (sum(r.rates.per_post for r in mine) / len(mine),
-                             sum(r.rates.read for r in mine) / len(mine))
     if not all_posts:
-        return CompactAnalysis((), None, own_prices)
+        return CompactAnalysis((), None)
 
     global_ = _fit(None, reqs, all_posts, "global", step)
+    by_model: dict[str, list[_Req]] = {}
+    for r in reqs:
+        by_model.setdefault(r.model, []).append(r)
+    own_costs = {model: _cost_and_payback(mine, global_.post_tokens_p75, global_.threshold)
+                 for model, mine in by_model.items()}
     models = []
     for model, ps in sorted(posts.items()):
         if len(ps) >= min_sample:
@@ -264,7 +264,7 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
             models.append(ModelThreshold(
                 model, global_.threshold, "global", len(ps), own.post_tokens_p75,
                 cost, payback, own.actual_cost, global_.curve))
-    return CompactAnalysis(tuple(models), global_, own_prices)
+    return CompactAnalysis(tuple(models), global_, own_costs)
 
 
 def key(table, min_sample: int, step: int) -> str:
@@ -294,7 +294,7 @@ def store(conn: sqlite3.Connection, key: str, analysis: CompactAnalysis) -> None
 def to_json(a: CompactAnalysis) -> str:
     return json.dumps({"models": [asdict(m) for m in a.models],
                        "global": None if a.global_ is None else asdict(a.global_),
-                       "own_prices": a.own_prices})
+                       "own_costs": a.own_costs})
 
 
 def from_json(text: str) -> CompactAnalysis:
@@ -304,4 +304,4 @@ def from_json(text: str) -> CompactAnalysis:
     return CompactAnalysis(
         tuple(threshold(m) for m in d["models"]),
         None if d["global"] is None else threshold(d["global"]),
-        {m: tuple(p) for m, p in d["own_prices"].items()})
+        {m: tuple(p) for m, p in d["own_costs"].items()})

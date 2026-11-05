@@ -122,9 +122,14 @@ def _find_price(model: str, on: date, table: Mapping[str, list[PriceEntry]]) -> 
     return None
 
 
-def modifier(speed: str | None, inference_geo: str | None) -> float:
-    """Fast mode and US-only inference: the multiplier on every Cost component of a request."""
-    mult = 1.0
+def tier(p, prompt_tokens: int) -> float:
+    """The Prompt tier multiplier `p` (a PriceEntry or anything with its tier fields) charges a
+    request whose prompt is `prompt_tokens`."""
+    return p.tier_mult if p.tier_threshold is not None and prompt_tokens > p.tier_threshold else 1.0
+
+
+def modifier(speed: str | None, inference_geo: str | None, mult: float = 1.0) -> float:
+    """Fast mode and US-only inference applied to `mult`: the multiplier on every Cost component."""
     if speed == "fast":
         mult *= FAST_MULT
     if inference_geo == "us":
@@ -140,10 +145,7 @@ def price_request(model: str, on: date, *, input: int, output: int,
     p = find_price(model, on, table)
     if p is None:
         return None
-    mult = 1.0
-    if p.tier_threshold is not None and input + cache_read + write_5m + write_1h > p.tier_threshold:
-        mult *= p.tier_mult
-    mult *= modifier(speed, inference_geo)
+    mult = modifier(speed, inference_geo, tier(p, input + cache_read + write_5m + write_1h))
     m = 1_000_000 / mult
     return CostComponents(
         input=input * p.input / m,
@@ -155,5 +157,6 @@ def price_request(model: str, on: date, *, input: int, output: int,
 
 
 def fingerprint(table: Mapping[str, list[PriceEntry]]) -> str:
-    """Identifies the price table in effect: changes when any price or effective date does."""
-    return hashlib.sha256(repr(sorted(table.items())).encode()).hexdigest()
+    """Identifies the price table in effect: changes when any price, effective date or modifier does."""
+    modifiers = (WRITE_5M_MULT, WRITE_1H_MULT, FAST_MULT, US_MULT)
+    return hashlib.sha256(repr((sorted(table.items()), modifiers)).encode()).hexdigest()
