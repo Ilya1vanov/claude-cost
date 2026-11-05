@@ -88,8 +88,18 @@ if (api) {
     if (node && node.firstChild) { node.firstChild.classList.toggle("expanded", open); }
   };
   api.mountRows = mount;
+  // Swap in a changed row list (a Subagent block expanded or collapsed) keeping the scroll position.
+  api.updateRows = function (newRows) {
+    if (!virtualizer) { mount(newRows); return; }
+    rows = newRows;
+    nodes.forEach(function (node) { node.remove(); });
+    nodes.clear();
+    virtualizer.setOptions(Object.assign({}, virtualizer.options, { count: rows.length }));
+    virtualizer.measure();  // item sizes were cached per index, which has shifted
+    render();
+  };
 
-  api.loadRows(document.getElementById("timeline-box").dataset.src).then(mount).catch(function (err) {
+  api.loadRows(document.getElementById("timeline-box").dataset.src).then(api.setTree || mount).catch(function (err) {
     body.textContent = "";
     body.appendChild(api.el("p", "empty", "Could not load the Timeline: " + err.message));
   });

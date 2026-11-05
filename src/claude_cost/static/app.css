@@ -260,6 +260,7 @@ tr.baseline td { background: var(--surface-2); }
 .collapse-text .tl-row:not(.expanded) .tl-text + button { display: none; }
 .tl-tool b { color: var(--text); font-weight: 600; }
 .tl-gone { color: var(--muted); font-style: italic; }
+.tl-subagent { background: var(--surface-2); }
 .tl-request.oversized .ctx { color: var(--late); font-weight: 600; }
 .tl-badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0; }
 .tl-event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 6px 12px;

@@ -223,6 +223,8 @@ def test_session_timeline_page_loads(root, configure):
     client = create_app(factory, lambda: NOW).test_client()
     page = client.get("/session/s1")
     assert page.status_code == 200 and 'id="timeline"' in page.get_data(as_text=True)
+    rows = client.get("/api/session/s1/timeline").get_json()["rows"]
+    assert [r["agent_id"] for r in rows if r["kind"] == "subagent"] == ["a1"]
     assert client.get("/session/s1/agent/a1").status_code == 200
     assert client.get("/session/nope").status_code == 404
 

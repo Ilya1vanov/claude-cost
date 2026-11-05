@@ -34,12 +34,13 @@ def test_timeline_points_carry_effort_empty_when_not_recorded(root, service_for)
 
 def _rows(root, tmp_path, url="/api/session/s1/timeline"):
     import json
-    return [r for r in json.loads(_page(root, tmp_path, url))["rows"] if r["kind"] == "request"]
+    return [r for r in json.loads(_page(root, tmp_path, url))["rows"] if r["kind"] in ("request", "subagent")]
 
 
 def test_timeline_rows_show_short_model_and_effort(root, tmp_path):
     _session(root)
-    r1, r2, r3 = _rows(root, tmp_path)
+    r1, block, r2, r3 = _rows(root, tmp_path)
+    assert (block["kind"], block["modelLabel"], block["effort"]) == ("subagent", "Haiku 4.5", "medium")
     assert (r1["modelLabel"], r1["effort"]) == ("Opus 5.5", "high")
     assert (r2["modelLabel"], r2["effort"]) == ("Sonnet 5.5", "")
     assert (r3["modelLabel"], r3["effort"]) == ("claude-mystery-model", "low")

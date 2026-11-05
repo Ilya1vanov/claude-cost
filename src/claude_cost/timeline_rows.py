@@ -1,7 +1,7 @@
 """Timeline rows: the session's prompts and requests with the text and tool calls read from its
 transcripts when the Session view is opened (ADR 0005). Nothing here is stored at ingest.
 
-Rows are a tagged union on `kind` ("prompt", "request", and the event kinds "setting_change",
+Rows are a tagged union on `kind` ("prompt", "request", "subagent", and the event kinds "setting_change",
 "compaction", "idle_gap", "child_session", "forked_from"); a new kind is a new dataclass with its
 own `kind`, so consumers dispatch on it and never see the old rows change shape.
 """
@@ -103,6 +103,25 @@ class ForkedFromRow:
     parent_session_id: str
     parent_label: str
     kind: str = "forked_from"
+
+
+
+@dataclass(frozen=True)
+class SubagentRow:
+    """A Subagent as one block where it started; `rows` is its own Timeline (nested Subagents
+    are blocks inside it), each request carrying its own model and Effort."""
+    ts: float
+    agent_id: str
+    agent_type: str | None
+    description: str | None
+    is_fork: bool
+    model: str  # of its first request
+    effort: str  # of its first request, "" when not recorded
+    requests: int
+    peak_context: int
+    cost: float
+    rows: tuple
+    kind: str = "subagent"
 
 
 # Order of rows with the same time: a Fork's opening row, then the prompt that starts a turn, then
