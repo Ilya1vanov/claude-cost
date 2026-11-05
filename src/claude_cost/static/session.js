@@ -62,3 +62,95 @@
       scales: { x: { ticks: { callback: tickLabel } }, y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } } },
   });
 })();
+
+// Timeline: rows come from the JSON endpoint in one request. A row is a plain object tagged by
+// `kind`; ROW_RENDERERS has one function per kind, each returning that row's DOM element.
+// renderRow(row) is the single entry point for drawing one row, so a windowing layer can call it
+// for just the rows in view; mountRows(rows) draws them all.
+(function () {
+  var box = document.getElementById("timeline-box");
+  if (!box) { return; }
+  var body = document.getElementById("timeline-rows");
+  var COLLAPSED_LINES = 4;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined) { e.textContent = text; }
+    return e;
+  }
+
+  function renderPrompt(row) {
+    var wrap = el("div", "tl-row tl-prompt");
+    wrap.appendChild(el("div", "tl-bubble", row.text));
+    return wrap;
+  }
+
+  function renderText(text) {
+    var p = el("div", "tl-text", text);
+    var wrap = el("div");
+    wrap.appendChild(p);
+    if (text.split("\n").length > COLLAPSED_LINES || text.length > COLLAPSED_LINES * 90) {
+      p.classList.add("clamped");
+      var more = el("button", "ghost small", "Show more");
+      more.type = "button";
+      more.addEventListener("click", function () {
+        var open = p.classList.toggle("clamped");
+        more.textContent = open ? "Show more" : "Show less";
+      });
+      wrap.appendChild(more);
+    }
+    return wrap;
+  }
+
+  function renderRequest(row) {
+    var wrap = el("div", "tl-row tl-request" + (row.oversized ? " oversized" : ""));
+    var main = el("div");
+    main.appendChild(el("div", "tl-time", row.time));
+    if (!row.content_available) {
+      main.appendChild(el("div", "tl-gone", "transcript no longer on disk"));
+    } else {
+      if (row.text) { main.appendChild(renderText(row.text)); }
+      row.tools.forEach(function (t) {
+        var line = el("div", "tl-tool");
+        line.appendChild(el("b", null, t.name));
+        if (t.summary) { line.appendChild(document.createTextNode(" " + t.summary)); }
+        main.appendChild(line);
+      });
+    }
+    wrap.appendChild(main);
+    wrap.appendChild(el("div", "num ctx", row.context_tokens.toLocaleString()));
+    wrap.appendChild(el("div", "num", "$" + row.cost.toFixed(4)));
+    return wrap;
+  }
+
+  var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest };
+
+  function renderRow(row) {
+    var render = ROW_RENDERERS[row.kind];
+    return render ? render(row) : null;  // a kind this script does not know is not drawn
+  }
+
+  function mountRows(rows) {
+    body.textContent = "";
+    rows.forEach(function (row) {
+      var node = renderRow(row);
+      if (node) { body.appendChild(node); }
+    });
+    body.scrollTop = 0;
+  }
+
+  function loadRows(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) { throw new Error("HTTP " + r.status); }
+      return r.json();
+    }).then(function (data) { return data.rows; });
+  }
+
+  window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, mountRows: mountRows,
+    loadRows: loadRows, body: body };
+  loadRows(box.dataset.src).then(mountRows).catch(function (err) {
+    body.textContent = "";
+    body.appendChild(el("p", "empty", "Could not load the Timeline: " + err.message));
+  });
+})();

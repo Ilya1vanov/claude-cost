@@ -18,7 +18,9 @@ from . import findings as findings_mod
 from . import pricing, session_graph, spotlights, store
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
+from . import timeline_rows as timeline_rows_mod
 from .projects import project_display_names
+from .timeline_rows import PromptRow, RequestRow
 from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
@@ -307,6 +309,9 @@ class SessionTimeline:
     total_requests: int | None = None
     subagent_cost: float = 0.0
     setting_changes: tuple[SettingChange, ...] = ()
+    # The Timeline: PromptRow and RequestRow (tagged by `kind`) in time order. Read from the
+    # transcripts, so only filled when asked for (`session_timeline(with_rows=True)`).
+    rows: tuple[PromptRow | RequestRow, ...] = ()
 
     @property
     def combinations(self) -> tuple[ModelEffort, ...]:
@@ -639,9 +644,11 @@ class QueryService:
         """How old the last ingest may be before a page load re-ingests (config)."""
         return self._threshold("refresh_stale_seconds")
 
-    def session_timeline(self, session_id: str, agent_id: str | None = None) -> SessionTimeline | None:
+    def session_timeline(self, session_id: str, agent_id: str | None = None,
+                         with_rows: bool = False) -> SessionTimeline | None:
         """Timeline of a Session's own requests (its Subagents are separate, marked as launches),
-        or of one Subagent with `agent_id`. None when the Session or Subagent is unknown."""
+        or of one Subagent with `agent_id`. None when the Session or Subagent is unknown.
+        `with_rows` also reads the transcripts for the Timeline rows (ADR 0005)."""
         rows = self._conn.execute(
             f"SELECT r.message_id, r.ts_epoch, r.model, {CONTEXT_SQL} AS ctx, "
             f"{COST_SQL} AS cost, COALESCE(c.event, 'none') AS event, "
@@ -691,13 +698,45 @@ class QueryService:
                                       s.link_kind)
                       for s, first in self._child_sessions(session_id)) if agent_id is None else ()
         parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
-        return SessionTimeline(
+        timeline = SessionTimeline(
             session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
               if parent and agent_id is None else ()),
             setting_changes=self._setting_changes(points))
+        if not with_rows:
+            return timeline
+        return dataclasses.replace(timeline, rows=self._timeline_rows(timeline, stems))
+
+    def _timeline_rows(self, t: SessionTimeline, stems: list[str]) -> tuple:
+        """Prompt and request rows: each request with its content, each prompt before the
+        requests it answers. Prompts are the Session's own; a Subagent's stream has none."""
+        ids = [p.message_id for p in t.points]
+        copies: dict[str, list[str]] = {}
+        for i in range(0, len(ids), 500):  # stay under SQLite's variable limit
+            chunk = ids[i:i + 500]
+            for c in self._conn.execute(
+                    "SELECT message_id, path FROM request_copies "
+                    f"WHERE message_id IN ({','.join('?' * len(chunk))}) "
+                    "ORDER BY is_copy, path", chunk):
+                copies.setdefault(c["message_id"], []).append(c["path"])
+        main_paths = [] if t.agent_id else [
+            r["path"] for r in self._conn.execute(
+                f"SELECT path FROM ingest_files WHERE file_stem IN ({','.join('?' * len(stems))}) "
+                "AND path NOT IN (SELECT path FROM subagent_files) ORDER BY path", stems)]
+        content, prompts = timeline_rows_mod.read_content(copies, main_paths)
+        requests = [
+            RequestRow(p.ts, p.message_id, p.model, p.effort,
+                       content[p.message_id].text if p.message_id in content else "",
+                       content[p.message_id].tools if p.message_id in content else (),
+                       p.context_tokens, p.cost, p.gap_seconds, p.idle,
+                       p.cache_event == cache.COLD, p.cold_resume,
+                       p.threshold is not None and p.context_tokens > p.threshold,
+                       p.message_id in content)
+            for p in t.points]
+        # A prompt comes before the request made at the same time
+        return tuple(sorted([*prompts, *requests], key=lambda r: (r.ts, r.kind != "prompt")))
 
     @staticmethod
     def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:
