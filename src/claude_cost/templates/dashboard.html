@@ -106,6 +106,12 @@
         <tr><td>Warm writes {{ ui.info("warm writes") }}</td><td class="num">{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
         <tr><td>5m writes {{ ui.info("5m writes") }}</td><td class="num">{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
         <tr><td>1h writes {{ ui.info("1h writes") }}</td><td class="num">{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>
+        {% if k.current.top_sessions %}<tbody id="cache-top-sessions">
+        <tr><th>Top sessions by cache loss</th><th class="num">Cache loss</th></tr>
+        {% for s in k.current.top_sessions %}<tr><td>{{ session_label(s.session_id, period=c.current) }}</td>
+          <td class="num">${{ "%.2f"|format(s.cache_loss) }}
+          <small>{% if s.share is none %}n/a{% else %}{{ "%.1f"|format(s.share * 100) }}%{% endif %} of its cost ${{ "%.2f"|format(s.cost) }}</small></td></tr>{% endfor %}
+        </tbody>{% endif %}
       </table></div>
     </section>
   </div>

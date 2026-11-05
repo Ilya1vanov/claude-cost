@@ -410,6 +410,19 @@ class PeriodComparison:
 
 
 @dataclass(frozen=True)
+class CacheSession:
+    """A Session's Cache loss in a Period; its Subagents' requests count toward it."""
+    session_id: str
+    label: str
+    cache_loss: float
+    cost: float  # the Session's Cost in the Period
+    share: float | None  # cache_loss / cost (None if no Cost)
+
+
+TOP_CACHE_SESSIONS = 5
+
+
+@dataclass(frozen=True)
 class CacheStats:
     """Cache behaviour over one Period. Costs are $; hit ratio is by tokens (None if no tokens)."""
     hit_ratio: float | None  # cache read / (cache read + cache write + uncached input)
@@ -420,6 +433,7 @@ class CacheStats:
     rebuilds: int  # requests whose write was Cold
     cache_loss: float = 0.0  # $ Cold writes cost beyond reading the same tokens
     cache_loss_share: float | None = None  # cache_loss / the Period's total Cost (None if no Cost)
+    top_sessions: tuple[CacheSession, ...] = ()  # up to 5 by Cache loss; none with no Cold writes
 
 
 @dataclass(frozen=True)
@@ -971,17 +985,27 @@ class QueryService:
             "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
             "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
         total = row["rd"] + row["wr"] + row["inp"]
-        loss = self._cache_loss(lo, hi)
+        loss, top = self._cache_loss(lo, hi)
         spend = sum(self._sums(p).values())
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
                           row["w5"], row["w1"], row["rebuilds"], loss,
-                          loss / spend if spend else None)
+                          loss / spend if spend else None, top)
 
-    def _cache_loss(self, lo: float, hi: float) -> float:
-        """Each Cold write's cost less the same tokens at that request's own read rate."""
-        return sum(r.write_cost - (r.write_5m + r.write_1h) * pricing.read_rate(r, self._table)
-                   for r in findings_mod.load_rows(self._conn, self._tz, lo, hi)
-                   if r.cache_event == cache.COLD)
+    def _cache_loss(self, lo: float, hi: float) -> tuple[float, tuple[CacheSession, ...]]:
+        """Each Cold write's cost less the same tokens at that request's own read rate: the total,
+        and the top Sessions by it (Subagent requests count toward their owning Session)."""
+        loss: dict[str, float] = {}
+        cost: dict[str, float] = {}
+        for r in findings_mod.load_rows(self._conn, self._tz, lo, hi):
+            cost[r.session_id] = cost.get(r.session_id, 0.0) + r.cost
+            if r.cache_event == cache.COLD:
+                loss[r.session_id] = loss.get(r.session_id, 0.0) + (
+                    r.write_cost - (r.write_5m + r.write_1h) * pricing.read_rate(r, self._table))
+        labels = self.session_labels() if loss else {}
+        ranked = sorted((s for s in loss if loss[s] > 0), key=lambda s: (-loss[s], s))
+        return sum(loss.values()), tuple(
+            CacheSession(s, labels.get(s, s), loss[s], cost[s], loss[s] / cost[s] if cost[s] else None)
+            for s in ranked[:TOP_CACHE_SESSIONS])
 
     def cache_card(self, mode: str, now: datetime, include_today: bool = True,
                    custom: Period | None = None) -> CacheCard:
