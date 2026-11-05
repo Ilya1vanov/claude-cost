@@ -433,7 +433,7 @@ class CacheStats:
     rebuilds: int  # requests whose write was Cold
     cache_loss: float = 0.0  # $ Cold writes cost beyond reading the same tokens
     cache_loss_share: float | None = None  # cache_loss / the Period's total Cost (None if no Cost)
-    top_sessions: tuple[CacheSession, ...] = ()  # up to 5 by Cache loss; none with no Cold writes
+    top_sessions: tuple[CacheSession, ...] = ()  # the top TOP_CACHE_SESSIONS by Cache loss; none with no Cold writes
 
 
 @dataclass(frozen=True)
