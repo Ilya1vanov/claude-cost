@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Callable
 
@@ -19,7 +20,7 @@ from .tooltips import TOOLTIPS
 
 DASHBOARD_DAYS = 30
 MAX_DAILY_COST_DAYS = 400  # longest span /api/daily-cost will serve
-CHART_ROWS = 25  # Breakdown and Sessions charts show the top groups; the table and CSV show all
+CHART_ROWS = 25  # Breakdown and Sessions charts show the top groups; the table shows up to explore.ROW_CAP and the CSV all
 
 
 PERIOD_LABELS = {"last7": "Last 7 days", "week": "Calendar week", "month": "Calendar month"}
@@ -399,6 +400,17 @@ def create_app(service_factory: Callable[[], QueryService],
         except ValueError as e:
             abort(400, str(e))
 
+    def explore_result(compute, spec: ExploreSpec):
+        try:
+            return compute(spec)
+        except ValueError as e:  # an unknown sort key
+            abort(400, str(e))
+
+    @app.template_global()
+    def sort_url(endpoint: str, spec: ExploreSpec, current: str, key: str) -> str:
+        """Header link: sort by `key` ascending, or flip the direction when it is already the sort."""
+        return explore_url(endpoint, replace(spec, sort=key if current == f"-{key}" else f"-{key}" if current == key else key))
+
     @app.template_global()
     def explore_url(endpoint: str, spec: ExploreSpec, **extra) -> str:
         """URL of an Explore page for `spec`: filters live in the query string."""
@@ -411,7 +423,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def breakdowns_page():
         spec = explore_spec()
         service = explore_service()
-        result = service.explore(spec)
+        result = explore_result(service.explore, spec)
         return render_template(
             "breakdowns.html", spec=spec, result=result, dims=explore.DIMENSIONS, breakdown_dims=explore.breakdowns(),
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
@@ -425,25 +437,26 @@ def create_app(service_factory: Callable[[], QueryService],
     def sessions_page():
         spec = explore_spec()
         service = explore_service()
-        result = service.sessions(spec)
-        labels = [r.name for r in result.rows[:CHART_ROWS]]
+        result = explore_result(service.sessions, spec)
+        top = sorted(result.rows, key=lambda r: (-r.cost, r.session_id))[:CHART_ROWS]  # chart: costliest, whatever the sort
+        labels = [r.name for r in top]
         return render_template(
             "sessions.html", spec=spec, result=result, dims=explore.DIMENSIONS,
             options=service.explore_options(), fmt_cost=explore.fmt_cost,
             fmt_share=explore.fmt_share, short_id=short_id,
             chart_data={"label": "Session", "labels": labels,
-                        "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
+                        "costs": [round(r.cost, 4) for r in top]})
 
     @app.get("/sessions.csv")
     def sessions_csv():
-        body = explore.sessions_to_csv(explore_service().sessions(explore_spec()))
+        body = explore.sessions_to_csv(explore_result(explore_service().sessions, explore_spec()))
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": 'attachment; filename="claude-cost-sessions.csv"'})
 
     @app.get("/breakdowns.csv")
     def breakdowns_csv():
         spec = explore_spec()
-        body = explore.to_csv(explore_service().explore(spec))
+        body = explore.to_csv(explore_result(explore_service().explore, spec))
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": f'attachment; filename="claude-cost-{spec.group}.csv"'})
 

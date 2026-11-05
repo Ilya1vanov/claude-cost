@@ -34,3 +34,11 @@
   {% if submit %}<button type="submit" class="picker-submit" hidden>Add sessions</button>{% endif %}
 </div>
 {% endmacro %}
+
+{# Sortable column header: links to sort by `key` (flips when active) and shows the active direction. `sort` is the
+   effective sort of the result ("-cost" = cost, descending); `url_for_sort(key)` builds the link. #}
+{% macro sort_th(endpoint, spec, sort, key, label, cls="") %}{% set active = sort.lstrip("-") == key %}
+<th{% if cls %} class="{{ cls }}"{% endif %}{% if active %} aria-sort="{{ 'descending' if sort.startswith('-') else 'ascending' }}"{% endif %}><a class="sort" href="{{ sort_url(endpoint, spec, sort, key) }}">{{ label }}{% if active %} {{ "▼" if sort.startswith("-") else "▲" }}{% endif %}</a></th>{% endmacro %}
+
+{# "showing 200 of N" under a capped table. #}
+{% macro cap_note(result) %}{% if result.rows|length > result.shown|length %}<p class="sub">Showing {{ result.shown|length }} of {{ result.rows|length }}, narrow with filters.</p>{% endif %}{% endmacro %}
