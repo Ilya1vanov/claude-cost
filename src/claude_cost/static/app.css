@@ -242,6 +242,8 @@ tr.baseline td { background: var(--surface-2); }
 .tl-head .num, .tl-request .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tl-body { flex: 1; overflow-y: auto; position: relative; }
 .tl-body .empty { padding: 12px; }
+.tl-space { position: relative; width: 100%; }
+.tl-item { position: absolute; top: 0; left: 0; width: 100%; }
 .tl-row { border-bottom: 1px solid var(--border); }
 .tl-prompt { display: flex; padding: 10px 12px; }
 .tl-bubble { background: var(--accent-soft); color: var(--text); border-radius: var(--radius); padding: 8px 12px;

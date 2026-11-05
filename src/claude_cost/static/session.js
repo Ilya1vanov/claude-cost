@@ -65,8 +65,8 @@
 
 // Timeline: rows come from the JSON endpoint in one request. A row is a plain object tagged by
 // `kind`; ROW_RENDERERS has one function per kind, each returning that row's DOM element.
-// renderRow(row) is the single entry point for drawing one row, so a windowing layer can call it
-// for just the rows in view; mountRows(rows) draws them all.
+// renderRow(row) is the single entry point for drawing one row; timeline_window.js calls it for
+// just the rows near the scroll position.
 (function () {
   var box = document.getElementById("timeline-box");
   if (!box) { return; }
@@ -131,15 +131,6 @@
     return render ? render(row) : null;  // a kind this script does not know is not drawn
   }
 
-  function mountRows(rows) {
-    body.textContent = "";
-    rows.forEach(function (row) {
-      var node = renderRow(row);
-      if (node) { body.appendChild(node); }
-    });
-    body.scrollTop = 0;
-  }
-
   function loadRows(url) {
     return fetch(url).then(function (r) {
       if (!r.ok) { throw new Error("HTTP " + r.status); }
@@ -147,10 +138,7 @@
     }).then(function (data) { return data.rows; });
   }
 
-  window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, mountRows: mountRows,
-    loadRows: loadRows, body: body };
-  loadRows(box.dataset.src).then(mountRows).catch(function (err) {
-    body.textContent = "";
-    body.appendChild(el("p", "empty", "Could not load the Timeline: " + err.message));
-  });
+  // timeline_window.js (a module script, so it runs after this one) windows these rows into view
+  // and adds scrollToIndex, remeasure and onFirstVisibleChange to this object.
+  window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el };
 })();
