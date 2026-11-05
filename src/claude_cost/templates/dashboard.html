@@ -49,14 +49,10 @@
         vs ${{ "%.2f"|format(c.baseline_cost) }}</div>
     </div>
     <div class="kpi">
-      <div class="label">Cache hit ratio</div>
-      <div class="value">{% if k.current.hit_ratio is none %}n/a{% else %}{{ "%.1f"|format(k.current.hit_ratio * 100) }}%{% endif %}</div>
-      <div class="meta">{% if k.delta_hit_ratio is not none %}{{ ui.delta(-k.delta_hit_ratio, "%+.1f"|format(k.delta_hit_ratio * 100) ~ " pts") }} vs baseline{% else %}&nbsp;{% endif %}</div>
-    </div>
-    <div class="kpi">
-      <div class="label">Cold writes {{ ui.info("cold writes") }}</div>
-      <div class="value">${{ "%.2f"|format(k.current.cold_cost) }}</div>
-      <div class="meta">{{ ui.signed_usd(k.current.cold_cost - k.baseline.cold_cost) }} vs baseline</div>
+      <div class="label">Cache loss {{ ui.info("cache loss") }}</div>
+      <div class="value">{{ ui.cache_share(k.current.cache_loss_share) }}</div>
+      <div class="meta">${{ "%.2f"|format(k.current.cache_loss) }}
+        {% if k.delta_cache_loss_share is not none %}{{ ui.share_delta(k.delta_cache_loss_share) }} vs baseline{% endif %}</div>
     </div>
     <div class="kpi">
       <div class="label">Last {{ days|length }} days</div>
@@ -120,9 +116,19 @@
           {% if k.delta_hit_ratio is not none %}<small>{{ ui.delta(-k.delta_hit_ratio, "%+.1f"|format(k.delta_hit_ratio * 100) ~ " pts") }}</small>{% endif %}</td></tr>
         <tr><td>Cold writes {{ ui.info("cold writes") }}</td><td class="num">{{ money(k.current.cold_cost, k.baseline.cold_cost) }}
           <small>across {{ k.current.rebuilds }} requests ({{ ui.delta(k.current.rebuilds - k.baseline.rebuilds, "%+d"|format(k.current.rebuilds - k.baseline.rebuilds)) }} vs baseline {{ k.baseline.rebuilds }})</small></td></tr>
+        {# The share, not the $, says whether the cache got better: the $ grows with spend, so it is left uncoloured. #}
+        <tr><td>Cache loss {{ ui.info("cache loss") }}</td><td class="num"><span class="num">${{ "%.2f"|format(k.current.cache_loss) }}</span>
+          <small>vs baseline ${{ "%.2f"|format(k.baseline.cache_loss) }}</small>
+          <small>{{ ui.cache_share(k.current.cache_loss_share) }} {{ ui.share_delta(k.delta_cache_loss_share) }}</small></td></tr>
         <tr><td>Warm writes {{ ui.info("warm writes") }}</td><td class="num">{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
         <tr><td>5m writes {{ ui.info("5m writes") }}</td><td class="num">{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
         <tr><td>1h writes {{ ui.info("1h writes") }}</td><td class="num">{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>
+        {% if k.current.top_sessions %}<tbody id="cache-top-sessions">
+        <tr><th>Top sessions by cache loss</th><th class="num">Cache loss</th></tr>
+        {% for s in k.current.top_sessions %}<tr><td>{{ session_label(s.session_id, period=c.current) }}</td>
+          <td class="num">${{ "%.2f"|format(s.cache_loss) }}
+          <small>{{ ui.cache_share(s.share, "of its cost") }} ${{ "%.2f"|format(s.cost) }}</small></td></tr>{% endfor %}
+        </tbody>{% endif %}
       </table></div>
     </section>
   </div>

@@ -29,15 +29,15 @@ def _row(html, label):
 
 def test_every_cost_component_and_cache_metric_has_a_tooltip(root, configure):
     html = _dashboard(root, configure)
-    for label in ("Hit ratio", "Cold writes", "Warm writes", "5m writes", "1h writes"):
+    for label in ("Hit ratio", "Cache loss", "Cold writes", "Warm writes", "5m writes", "1h writes"):
         assert 'class="info" title="' in _row(html, label), label
     for name in ("input", "output", "cache write (5m)", "cache write (1h)", "cache read"):
         assert re.search(rf"{re.escape(name)}\s*<span class=\"info\" title=\"", html), name
 
 
-def test_cold_writes_kpi_tile_has_a_tooltip(root, configure):
+def test_cache_loss_kpi_tile_has_a_tooltip(root, configure):
     html = _dashboard(root, configure)
-    tile = re.search(r'<div class="label">Cold writes[^<]*(<span.*?)</div>', html, re.S).group(1)
+    tile = re.search(r'<div class="label">Cache loss[^<]*(<span.*?)</div>', html, re.S).group(1)
     assert 'class="info" title="' in tile
 
 

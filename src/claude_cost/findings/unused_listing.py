@@ -42,18 +42,6 @@ def _price(ctx: FindingContext, r, *, input: int, output: int, cache_read: int,
                                  inference_geo=r.inference_geo, table=ctx.price_table)
 
 
-def _read_rate(ctx: FindingContext, r) -> float:
-    """Cache read $ per token for request `r`, at its own prompt size (so any Prompt tier applies).
-
-    The whole prompt goes in as cache_read alone: `r.context` already sums input and writes,
-    so passing them too would count them twice in the tier check.
-    """
-    if not r.context:
-        return 0.0
-    c = _price(ctx, r, input=0, output=0, cache_read=r.context, write_5m=0, write_1h=0)
-    return c.cache_read / r.context if c else 0.0
-
-
 def _write_rate(ctx: FindingContext, r) -> float:
     """Cache write $ per token for request `r`: its own 5m : 1h write mix, at its own prompt
     size (so any Prompt tier applies). 0 when it wrote nothing."""
@@ -80,7 +68,7 @@ class _Stream:
         self.reads: list[tuple[int, int, int, tuple]] = []
         self.sitting = [0] * (len(reqs) + 1)  # difference array of reads + writes: Listing tokens in a prompt
         self.ts = [r.ts for r in reqs]
-        self.rates = [_read_rate(ctx, r) for r in reqs]
+        self.rates = [pricing.read_rate(r, ctx.price_table) for r in reqs]
         self.write_rates = [_write_rate(ctx, r) for r in reqs]
         self.cold = [i for i, r in enumerate(reqs) if r.cache_event == COLD]  # indices, ascending
         self.extra = [0.0] * len(reqs)

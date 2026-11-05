@@ -1,4 +1,5 @@
 """Seam 1: cache classification (Cold/Warm) and cache metrics through the query service."""
+import re
 from datetime import date
 
 import pytest
@@ -92,6 +93,75 @@ def test_card_has_baseline_and_deltas(root, service_for):
     assert card.baseline.cold_cost == pytest.approx(100_000 * 5 / 1e6)
 
 
+# --- Cache loss: a Cold write's cost beyond reading the same tokens ----------------------------
+
+def _loss(root, service_for, *reqs):
+    root.write_transcript("p", "s1", list(reqs))
+    return service_for(root).cache_card("last7", NOW)
+
+
+def test_cold_write_loses_its_cost_beyond_a_read_of_the_same_tokens(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", write_1h=100_000),   # warm
+                 req("b", "2026-10-29T14:00:00Z", write_1h=100_000))   # cold: 1h write $8/M, read $0.2/M
+    assert card.current.cache_loss == pytest.approx(100_000 * (8 - 0.2) / 1e6)
+
+
+@pytest.mark.parametrize("ttl, write_rate", [("write_5m", 5), ("write_1h", 8)])
+def test_5m_and_1h_cold_writes_of_equal_size_lose_different_amounts(root, service_for, ttl, write_rate):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", **{ttl: 100_000}),
+                 req("b", "2026-10-29T12:00:00Z", **{ttl: 100_000}))
+    assert card.current.cache_loss == pytest.approx(100_000 * (write_rate - 0.2) / 1e6)
+
+
+def test_a_cold_write_above_the_prompt_tier_uses_the_tiered_read_rate(root, service_for):
+    """claude-haiku-5-5: 1h write $0.2/M, read $0.01/M; both x5 above a 100K prompt."""
+    haiku = "claude-haiku-5-5"
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", model=haiku, write_1h=1_000),
+                 req("b", "2026-10-29T14:00:00Z", model=haiku, write_1h=150_000),   # tiered
+                 req("c", "2026-10-29T18:00:00Z", model=haiku, write_1h=50_000))    # flat
+    assert card.current.cache_loss == pytest.approx(
+        150_000 * (1.0 - 0.05) / 1e6 + 50_000 * (0.2 - 0.01) / 1e6)
+
+
+def test_warm_writes_reads_and_uncached_input_are_not_cache_loss(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", input=5_000, write_1h=100_000),
+                 req("b", "2026-10-29T10:01:00Z", input=5_000, cache_read=100_000, write_1h=2_000))
+    assert card.current.cache_loss == 0
+    assert card.current.cache_loss_share == 0
+
+
+def test_cache_loss_share_is_of_the_periods_total_cost_including_output(root, service_for):
+    card = _loss(root, service_for,
+                 req("a", "2026-10-29T10:00:00Z", write_1h=100_000),                  # $0.80
+                 req("b", "2026-10-29T14:00:00Z", write_1h=100_000, output=100_000))  # $0.80 + $2.00
+    assert card.current.cache_loss == pytest.approx(0.78)
+    assert card.current.cache_loss_share == pytest.approx(0.78 / 3.6)
+
+
+def test_cache_loss_share_is_none_without_cost(root, service_for):
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.current.cache_loss == 0
+    assert card.current.cache_loss_share is None
+    assert card.delta_cache_loss_share is None
+
+
+def test_cache_loss_share_change_vs_baseline(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("a", "2026-10-20T10:00:00Z", write_1h=100_000),
+        req("b", "2026-10-20T14:00:00Z", write_1h=100_000),   # baseline: loss 0.78 of 1.6
+    ])
+    root.write_transcript("p", "s2", [
+        req("c", "2026-10-29T10:00:00Z", write_1h=100_000),   # current: no loss
+    ])
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.baseline.cache_loss_share == pytest.approx(0.78 / 1.6)
+    assert card.delta_cache_loss_share == pytest.approx(0 - 0.78 / 1.6)
+
+
 def test_spend_by_cache_event_dimension(root, service_for):
     root.write_transcript("p", "s1", [
         req("a", "2026-10-29T10:00:00Z", write_1h=100_000),
@@ -132,3 +202,118 @@ def test_dashboard_shows_cache_card(root, configure):
     assert 'id="cache-card"' in html
     for label in ("Hit ratio", "Cold writes", "Warm writes", "5m writes", "1h writes"):
         assert label in html
+
+
+def test_dashboard_kpi_row_has_a_cache_loss_tile_and_the_card_a_cache_loss_row(root, configure):
+    root.write_transcript("p", "s1", [
+        req("a", "2026-10-29T10:00:00Z", write_1h=100_000),
+        req("b", "2026-10-29T14:00:00Z", write_1h=100_000),
+    ])
+    env = configure(root)
+    cfg = cli.load_config(env)
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    html = create_app(factory, lambda: NOW).test_client().get("/").get_data(as_text=True)
+    kpis = html.split('class="kpis"')[1].split('class="card"')[0]
+    tile = kpis.split("Cache loss")[1].split('class="kpi"')[0]
+    assert re.search(r'class="value">\s*[\d.]+% of spend\s*<', tile)  # the share is the headline
+    assert "$0.78" in tile.split('class="meta"')[1]  # its $ sits beside it
+    assert "Cache hit ratio" not in kpis and "Cold writes" not in kpis
+    card = html.split('id="cache-card"')[1].split("</table>")[0]
+    for label in ("Hit ratio", "Cache loss", "Cold writes"):
+        assert label in card
+
+
+# --- Top sessions by Cache loss ---------------------------------------------------------------
+
+def _cold_pair(root, sid, day, write, tail=(), **kw):
+    """A session whose second request rebuilds `write` tokens cold (1h write $8/M, read $0.2/M)."""
+    root.write_transcript("p", sid, [
+        req(f"{sid}-a", f"2026-10-{day}T10:00:00Z", write_1h=write),
+        req(f"{sid}-b", f"2026-10-{day}T14:00:00Z", write_1h=write, **kw), *tail])
+
+
+def test_top_sessions_rank_by_cache_loss_with_cost_and_share(root, service_for):
+    _cold_pair(root, "small", "29", 100_000)
+    _cold_pair(root, "big", "28", 300_000, output=100_000)   # cost 2.4 + 2.4 + 2.0
+    top = service_for(root).cache_card("last7", NOW).current.top_sessions
+    assert [s.session_id for s in top] == ["big", "small"]
+    big = top[0]
+    assert big.cache_loss == pytest.approx(300_000 * 7.8 / 1e6)
+    assert big.cost == pytest.approx(6.8)
+    assert big.share == pytest.approx(big.cache_loss / 6.8)
+    assert big.label
+
+
+def test_top_sessions_are_capped_at_five(root, service_for):
+    for i in range(7):
+        _cold_pair(root, f"s{i}", "29", 100_000 + i * 10_000)
+    top = service_for(root).cache_card("last7", NOW).current.top_sessions
+    assert [s.session_id for s in top] == ["s6", "s5", "s4", "s3", "s2"]
+
+
+def test_top_sessions_exclude_zero_loss_sessions(root, service_for):
+    _cold_pair(root, "cold", "29", 100_000)
+    root.write_transcript("p", "warm", [
+        req("w1", "2026-10-29T10:00:00Z", write_1h=100_000),
+        req("w2", "2026-10-29T10:01:00Z", cache_read=100_000, write_1h=1_000)])
+    top = service_for(root).cache_card("last7", NOW).current.top_sessions
+    assert [s.session_id for s in top] == ["cold"]
+
+
+def test_top_sessions_are_empty_without_cold_writes(root, service_for):
+    root.write_transcript("p", "s1", [req("a", "2026-10-29T10:00:00Z", write_1h=1_000)])
+    assert service_for(root).cache_card("last7", NOW).current.top_sessions == ()
+
+
+def test_subagent_cache_loss_and_cost_roll_up_into_the_owning_session(root, service_for):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T10:00:00Z", write_1h=100_000)])
+    root.write_subagent_transcript("p", "s1", "a1", [
+        req("x1", "2026-10-29T10:00:00Z", write_1h=100_000),
+        req("x2", "2026-10-29T14:00:00Z", write_1h=100_000)])   # cold, inside the subagent
+    top = service_for(root).cache_card("last7", NOW).current.top_sessions
+    assert [s.session_id for s in top] == ["s1"]
+    assert top[0].cache_loss == pytest.approx(100_000 * 7.8 / 1e6)
+    assert top[0].cost == pytest.approx(3 * 0.8)
+
+
+def test_a_cold_write_cheaper_than_its_read_counts_as_no_loss(root, service_for):
+    """claude-example-1 reads at $10/M, above its 1h write at $8/M (2x input)."""
+    _cold_pair(root, "cheap", "29", 100_000, model="claude-example-1")
+    _cold_pair(root, "s1", "29", 100_000)
+    prices = {"claude-example-1": {"input": 4.0, "output": 20.0, "cache_read": 10.0}}
+    card = service_for(root, prices=prices).cache_card("last7", NOW)
+    assert card.current.cache_loss == pytest.approx(100_000 * 7.8 / 1e6)
+    assert [s.session_id for s in card.current.top_sessions] == ["s1"]
+
+
+def test_top_sessions_are_for_the_current_period_only(root, service_for):
+    _cold_pair(root, "s1", "20", 100_000)   # baseline
+    card = service_for(root).cache_card("last7", NOW)
+    assert card.baseline.cache_loss == pytest.approx(100_000 * 7.8 / 1e6)
+    assert card.baseline.top_sessions == () and card.current.top_sessions == ()
+
+
+def _dashboard(root, configure):
+    env = configure(root)
+    cfg = cli.load_config(env)
+
+    def factory():
+        conn = store.connect(cfg.store_path)
+        ingest.ingest(conn, cfg.data_roots)
+        return QueryService(conn, cfg.timezone)
+    return create_app(factory, lambda: NOW).test_client().get("/").get_data(as_text=True)
+
+
+def test_dashboard_cache_card_lists_top_sessions_linking_to_their_timeline(root, configure):
+    _cold_pair(root, "s1", "29", 100_000)
+    card = _dashboard(root, configure).split('id="cache-card"')[1].split("</table>")[0]
+    assert 'href="/session/s1' in card and "$0.78" in card and "of its cost" in card
+
+
+def test_dashboard_has_no_top_sessions_list_without_cold_writes(root, configure):
+    root.write_transcript("p", "s1", [req("a", "2026-10-29T10:00:00Z", write_1h=1_000)])
+    html = _dashboard(root, configure)
+    assert 'id="cache-top-sessions"' not in html

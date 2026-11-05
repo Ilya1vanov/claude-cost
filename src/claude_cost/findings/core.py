@@ -225,9 +225,13 @@ def ts_where(column: str, lo: float | None, hi: float | None) -> tuple[str, list
 
 
 def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
-              hi: float | None) -> list[RequestRow]:
-    """The Requests from `lo` up to `hi` (all when None), oldest first, with their stored Stream facts."""
+              hi: float | None, event: str | None = None) -> list[RequestRow]:
+    """The Requests from `lo` up to `hi` (all when None), oldest first, with their stored Stream
+    facts; only those whose cache event is `event` when given."""
     where, args = ts_where("r.ts_epoch", lo, hi)
+    if event is not None:
+        where += ("AND " if where else "WHERE ") + "c.event = ? "
+        args.append(event)
     sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "

@@ -36,6 +36,8 @@ TOOLTIPS = {
     "hit ratio": "Share of the prompt that was read from the cache instead of written or sent uncached.",
     "cold writes": ("A cache write that rebuilds context the cache already held before it expired. "
                     "Shown as its cost and the number of requests that made one."),
+    "cache loss": ("The cost paid for cold writes beyond what reading the same tokens from the cache "
+                   "would have cost; it counts every cold write, avoidable or not."),
     "warm writes": "A cache write of context that is new to the session, as the conversation grows.",
     "5m writes": _5M,
     "1h writes": _1H,

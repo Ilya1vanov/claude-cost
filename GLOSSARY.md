@@ -90,11 +90,15 @@ _Avoid_: token type
 
 **Cold write**:
 A cache write that rebuilds context the cache already held before it expired.
-_Avoid_: cache miss, rebuild
+_Avoid_: cache miss, rebuild, cold read
 
 **Warm write**:
 A cache write of context that is new to the session, as the conversation grows.
 _Avoid_: incremental write
+
+**Cache loss**:
+The Cost paid for cold writes beyond what reading the same tokens from the cache would have cost; it counts every cold write, avoidable or not.
+_Avoid_: rebuild overhead, cache tax, miss cost
 
 **Prompt tier**:
 A higher rate a model charges for every token of a request whose prompt is above a set size.

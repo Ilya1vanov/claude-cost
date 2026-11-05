@@ -156,6 +156,21 @@ def price_request(model: str, on: date, *, input: int, output: int,
     )
 
 
+def read_rate(r, table: Mapping[str, list[PriceEntry]] | None = None) -> float:
+    """Cache read $ per token for request `r` (anything with model, day, context, speed and
+    inference_geo), at its own prompt size so any Prompt tier, speed and region apply.
+
+    The whole prompt goes in as cache_read alone: `r.context` already sums input and writes,
+    so passing them too would count them twice in the tier check. 0 when `r` has no prompt or
+    its model is not in the table.
+    """
+    if not r.context:
+        return 0.0
+    c = price_request(r.model, r.day, input=0, output=0, cache_read=r.context, write_5m=0,
+                      write_1h=0, speed=r.speed, inference_geo=r.inference_geo, table=table)
+    return c.cache_read / r.context if c else 0.0
+
+
 def fingerprint(table: Mapping[str, list[PriceEntry]]) -> str:
     """Identifies the price table in effect: changes when any price, effective date or modifier does."""
     modifiers = (WRITE_5M_MULT, WRITE_1H_MULT, FAST_MULT, US_MULT)
