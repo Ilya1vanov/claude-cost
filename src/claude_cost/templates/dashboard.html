@@ -50,9 +50,9 @@
     </div>
     <div class="kpi">
       <div class="label">Cache loss {{ ui.info("cache loss") }}</div>
-      <div class="value">${{ "%.2f"|format(k.current.cache_loss) }}</div>
-      <div class="meta">{% if k.current.cache_loss_share is none %}n/a{% else %}{{ "%.1f"|format(k.current.cache_loss_share * 100) }}% of spend{% endif %}
-        {% if k.delta_cache_loss_share is not none %}{{ ui.delta(k.delta_cache_loss_share, "%+.1f"|format(k.delta_cache_loss_share * 100) ~ " pts") }} vs baseline{% endif %}</div>
+      <div class="value">{{ ui.cache_share(k.current.cache_loss_share) }}</div>
+      <div class="meta">${{ "%.2f"|format(k.current.cache_loss) }}
+        {% if k.delta_cache_loss_share is not none %}{{ ui.share_delta(k.delta_cache_loss_share) }} vs baseline{% endif %}</div>
     </div>
     <div class="kpi">
       <div class="label">Last {{ days|length }} days</div>
@@ -101,8 +101,7 @@
         <tr><td>Cold writes {{ ui.info("cold writes") }}</td><td class="num">{{ money(k.current.cold_cost, k.baseline.cold_cost) }}
           <small>across {{ k.current.rebuilds }} requests ({{ ui.delta(k.current.rebuilds - k.baseline.rebuilds, "%+d"|format(k.current.rebuilds - k.baseline.rebuilds)) }} vs baseline {{ k.baseline.rebuilds }})</small></td></tr>
         <tr><td>Cache loss {{ ui.info("cache loss") }}</td><td class="num">{{ money(k.current.cache_loss, k.baseline.cache_loss) }}
-          <small>{% if k.current.cache_loss_share is none %}n/a{% else %}{{ "%.1f"|format(k.current.cache_loss_share * 100) }}% of spend{% endif %}
-          {% if k.delta_cache_loss_share is not none %}{{ ui.delta(k.delta_cache_loss_share, "%+.1f"|format(k.delta_cache_loss_share * 100) ~ " pts") }}{% endif %}</small></td></tr>
+          <small>{{ ui.cache_share(k.current.cache_loss_share) }} {{ ui.share_delta(k.delta_cache_loss_share) }}</small></td></tr>
         <tr><td>Warm writes {{ ui.info("warm writes") }}</td><td class="num">{{ money(k.current.warm_cost, k.baseline.warm_cost) }}</td></tr>
         <tr><td>5m writes {{ ui.info("5m writes") }}</td><td class="num">{{ money(k.current.write_5m_cost, k.baseline.write_5m_cost) }}</td></tr>
         <tr><td>1h writes {{ ui.info("1h writes") }}</td><td class="num">{{ money(k.current.write_1h_cost, k.baseline.write_1h_cost) }}</td></tr>

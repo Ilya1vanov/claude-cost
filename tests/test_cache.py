@@ -1,4 +1,5 @@
 """Seam 1: cache classification (Cold/Warm) and cache metrics through the query service."""
+import re
 from datetime import date
 
 import pytest
@@ -216,7 +217,9 @@ def test_dashboard_kpi_row_has_a_cache_loss_tile_and_the_card_a_cache_loss_row(r
         return QueryService(conn, cfg.timezone)
     html = create_app(factory, lambda: NOW).test_client().get("/").get_data(as_text=True)
     kpis = html.split('class="kpis"')[1].split('class="card"')[0]
-    assert "Cache loss" in kpis and "of spend" in kpis and "$0.78" in kpis
+    tile = kpis.split("Cache loss")[1].split('class="kpi"')[0]
+    assert re.search(r'class="value">\s*[\d.]+% of spend\s*<', tile)  # the share is the headline
+    assert "$0.78" in tile.split('class="meta"')[1]  # its $ sits beside it
     assert "Cache hit ratio" not in kpis and "Cold writes" not in kpis
     card = html.split('id="cache-card"')[1].split("</table>")[0]
     for label in ("Hit ratio", "Cache loss", "Cold writes"):

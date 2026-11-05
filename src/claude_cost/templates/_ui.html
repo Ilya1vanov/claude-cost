@@ -8,6 +8,10 @@
 
 {% macro signed_usd(d) %}{{ delta(d|round(2),("+" if d >= 0 else "-") ~ "$" ~ "%.2f"|format(d|abs)) }}{% endmacro %}
 
+{# Cache loss as a share of the Period's total Cost, and its change in points vs the baseline. #}
+{% macro cache_share(share) %}{% if share is none %}n/a{% else %}{{ "%.1f"|format(share * 100) }}% of spend{% endif %}{% endmacro %}
+{% macro share_delta(d) %}{% if d is not none %}{{ delta(d, "%+.1f"|format(d * 100) ~ " pts") }}{% endif %}{% endmacro %}
+
 {# A Cost component name with its chart color. #}
 {% macro component(name) %}<span class="swatch sw-{{ name|replace(' (', '-')|replace(')', '')|replace(' ', '-') }}"></span>{{ name }}{% endmacro %}
 
