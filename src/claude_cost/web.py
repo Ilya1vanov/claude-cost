@@ -400,9 +400,10 @@ def create_app(service_factory: Callable[[], QueryService],
         except ValueError as e:
             abort(400, str(e))
 
-    def explore_result(compute, spec: ExploreSpec):
+    def explore_result(service: QueryService, compute: str, spec: ExploreSpec):
+        """Run `service.<compute>` on the spec with Date presets resolved against today."""
         try:
-            return compute(spec)
+            return getattr(service, compute)(spec.resolved(service.today(now())))
         except ValueError as e:  # an unknown sort key
             abort(400, str(e))
 
@@ -424,9 +425,14 @@ def create_app(service_factory: Callable[[], QueryService],
         names = {k: service.value_names(k) for k in ("project", "session")}
         chips = explore.chips(spec, names)
         summary = {c.key: c.text for c in chips}
+        today = service.today(now())
+        date_view = {"presets": [list(p) for p in explore.DATE_PRESETS.items()],
+                     "min": (service.first_request_day() or today).isoformat(), "max": today.isoformat(),
+                     "costsUrl": url_for("daily_cost")}
         return {"chips": chips,
-                "dims": [{"key": k, "label": d.label, "kind": {"date": "text", "session_name": "contains"}.get(k, "options"),
-                          "values": spec.filters.get(k, ()), "summary": summary.get(k, "")}
+                "dims": [{"key": k, "label": d.label, "kind": {"date": "date", "session_name": "contains"}.get(k, "options"),
+                          "values": spec.filters.get(k, ()), "summary": summary.get(k, ""),
+                          **(date_view if k == "date" else {})}
                          for k, d in explore.DIMENSIONS.items() if d.filterable]}
 
     @app.get("/filter-options")
@@ -435,7 +441,9 @@ def create_app(service_factory: Callable[[], QueryService],
         filterable = [k for k, d in explore.DIMENSIONS.items() if d.filterable]
         if key not in filterable:
             abort(400, f"dimension must be one of {', '.join(filterable)}")
-        options = explore_service().filter_options(explore_spec(), key, request.args.get("q", ""))
+        service = explore_service()
+        options = service.filter_options(explore_spec().resolved(service.today(now())), key,
+                                         request.args.get("q", ""))
         return jsonify({"dimension": key, "options": [
             {"value": o.value, "label": o.label, "count": o.count, "id": o.id, "meta": o.meta}
             for o in options]})
@@ -444,7 +452,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def breakdowns_page():
         spec = explore_spec()
         service = explore_service()
-        result = explore_result(service.explore, spec)
+        result = explore_result(service, "explore", spec)
         return render_template(
             "breakdowns.html", spec=spec, result=result, breakdown_dims=explore.breakdowns(),
             filters=filter_ui(service, spec), fmt_cost=explore.fmt_cost,
@@ -458,7 +466,7 @@ def create_app(service_factory: Callable[[], QueryService],
     def sessions_page():
         spec = explore_spec()
         service = explore_service()
-        result = explore_result(service.sessions, spec)
+        result = explore_result(service, "sessions", spec)
         top = sorted(result.rows, key=lambda r: (-r.cost, r.session_id))[:CHART_ROWS]  # chart: costliest, whatever the sort
         labels = [r.name for r in top]
         return render_template(
@@ -470,14 +478,14 @@ def create_app(service_factory: Callable[[], QueryService],
 
     @app.get("/sessions.csv")
     def sessions_csv():
-        body = explore.sessions_to_csv(explore_result(explore_service().sessions, explore_spec()))
+        body = explore.sessions_to_csv(explore_result(explore_service(), "sessions", explore_spec()))
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": 'attachment; filename="claude-cost-sessions.csv"'})
 
     @app.get("/breakdowns.csv")
     def breakdowns_csv():
         spec = explore_spec()
-        body = explore.to_csv(explore_result(explore_service().explore, spec))
+        body = explore.to_csv(explore_result(explore_service(), "explore", spec))
         return Response(body, mimetype="text/csv", headers={
             "Content-Disposition": f'attachment; filename="claude-cost-{spec.group}.csv"'})
 

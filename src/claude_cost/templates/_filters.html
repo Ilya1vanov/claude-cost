@@ -12,5 +12,6 @@
   <div class="filter-pop" role="dialog" hidden></div>
   <script id="filter-dims" type="application/json">{{ filters.dims|tojson }}</script>
 </div>
+<script src="{{ url_for('static', filename='range_calendar.js') }}"></script>
 <script src="{{ url_for('static', filename='filters.js') }}"></script>
 {% endmacro %}

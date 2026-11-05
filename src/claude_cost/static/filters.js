@@ -9,7 +9,7 @@
   var add = bar.querySelector(".filter-add");
   var dims = JSON.parse(document.getElementById("filter-dims").textContent);
   var optionsUrl = bar.dataset.optionsUrl;
-  var st = null;  // {mode: "list" | "filter", dim, fromChip, draft, names, options, q, seq}
+  var st = null;  // {mode: "list" | "filter", dim, fromChip, draft, names, options, q, seq, cal}
   var timer = null;
 
   function el(tag, cls, text) {
@@ -37,6 +37,7 @@
   function dimOf(key) { return dims.filter(function (d) { return d.key === key; })[0]; }
 
   function close(refocus) {
+    dropCal();
     st = null; pop.hidden = true; pop.textContent = "";
     add.setAttribute("aria-expanded", "false");
     Array.prototype.forEach.call(bar.querySelectorAll(".chip.editing"), function (c) { c.classList.remove("editing"); });
@@ -68,8 +69,11 @@
     return h;
   }
 
+  function dropCal() { if (st && st.cal) { st.cal.destroy(); st.cal = null; } }
+
   function render() {
-    pop.textContent = "";
+    dropCal();
+    pop.textContent = ""; pop.classList.remove("wide");
     if (st.mode === "list") {
       pop.setAttribute("aria-label", "Add a filter");
       pop.appendChild(head("Add a filter", false));
@@ -103,16 +107,8 @@
       var clist = el("ul", "fp-list"); clist.id = "fp-options"; pop.appendChild(clist);
       fillOptions();
       note.id = "fp-note";
-    } else if (d.kind === "text") {
-      var wrap = el("div", "fp-text");
-      var lab = el("label", null, "Day (YYYY-MM-DD) or range (A..B); separate several with commas");
-      lab.setAttribute("for", "fp-text");
-      var inp = el("input"); inp.id = "fp-text"; inp.type = "text"; inp.value = st.draft.join(", ");
-      inp.addEventListener("input", function () {
-        st.draft = inp.value.split(",").map(function (v) { return v.trim(); }).filter(Boolean);
-      });
-      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") apply(); });
-      wrap.appendChild(lab); wrap.appendChild(inp); pop.appendChild(wrap);
+    } else if (d.kind === "date") {
+      dateView(d, note);
     } else {
       var sw = el("div", "fp-search");
       var q = el("input"); q.type = "search"; q.id = "fp-q"; q.value = st.q; q.autocomplete = "off";
@@ -138,8 +134,59 @@
   function updateNote() {
     var n = document.getElementById("fp-note");
     if (!n) return;
-    if (st.dim.kind === "contains") n.textContent = st.loaded ? st.options.length + " sessions match “" + st.q.trim() + "”" : "";
+    if (st.dim.kind === "date") n.textContent = "A preset stays relative when bookmarked";
+    else if (st.dim.kind === "contains") n.textContent = st.loaded ? st.options.length + " sessions match “" + st.q.trim() + "”" : "";
     else n.textContent = st.draft.length + " selected";
+  }
+
+  /* The Date view: preset radios beside a range calendar for a custom period (both ends included).
+     The draft is one value: a preset token, a day, or "A..B". */
+  var SHORT = { month: "short", day: "numeric", timeZone: "UTC" };
+  function dayText(s) { return new Date(s + "T00:00:00Z").toLocaleDateString("en-US", SHORT); }
+  function rangeText(lo, hi) {
+    var n = Math.round((Date.parse(hi) - Date.parse(lo)) / 864e5) + 1;
+    return dayText(lo) + " \u2013 " + dayText(hi) + " \u00b7 " + n + (n === 1 ? " day" : " days") + ", both ends included";
+  }
+  function dateView(d, note) {
+    var presets = d.presets.map(function (p) { return { value: p[0], label: p[1] }; });
+    var tokens = presets.map(function (p) { return p.value; });
+    var cur = st.draft[0] || "";
+    var custom = cur && tokens.indexOf(cur) < 0 ? cur.split("..") : null;  // [lo] or [lo, hi]
+    var wrap = el("div", "fp-date");
+    var set = el("fieldset", "fp-presets");
+    set.appendChild(el("legend", "sr-only", "Preset"));
+    presets.concat([{ value: "", label: "Custom period" }]).forEach(function (p) {
+      var lab = el("label"); var r = el("input"); r.type = "radio"; r.name = "date-preset"; r.value = p.value;
+      r.checked = p.value ? cur === p.value : !!custom;
+      lab.classList.toggle("on", r.checked);
+      r.addEventListener("change", function () {
+        if (p.value) st.draft = [p.value];
+        Array.prototype.forEach.call(set.querySelectorAll("label"), function (l) {
+          l.classList.toggle("on", l.querySelector("input").checked);
+        });
+        if (!p.value) { var g = st.cal.get(); if (g.start && g.end) st.draft = [g.start + ".." + g.end]; }
+      });
+      lab.appendChild(r); lab.appendChild(document.createTextNode(p.label)); set.appendChild(lab);
+    });
+    var side = el("div", "fp-calbox");
+    var cal = el("div", "period-cal"); cal.hidden = true;
+    var summary = el("p", "fp-range");
+    side.appendChild(cal); side.appendChild(summary);
+    wrap.appendChild(set); wrap.appendChild(side); pop.appendChild(wrap);
+    pop.classList.add("wide");
+    st.cal = RangeCalendar.mount(cal, {
+      min: d.min, max: d.max, costsUrl: d.costsUrl, months: 1,
+      onChange: function (s, e) {
+        if (!(s && e)) { summary.textContent = s ? dayText(s) + " \u2013 pick the last day" : ""; return; }
+        summary.textContent = rangeText(s, e);
+        st.draft = [s === e ? s : s + ".." + e];
+        var radios = set.querySelectorAll("input");
+        Array.prototype.forEach.call(radios, function (r) {
+          r.checked = !r.value; r.parentNode.classList.toggle("on", r.checked);
+        });
+      }
+    });
+    st.cal.reset(custom && custom[0], custom && (custom[1] || custom[0]));
   }
 
   function fillOptions() {
