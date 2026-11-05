@@ -255,6 +255,7 @@ tr.baseline td { background: var(--surface-2); }
   text-overflow: ellipsis; }
 .tl-tool b { color: var(--text); font-weight: 600; }
 .tl-gone { color: var(--muted); font-style: italic; }
+.tl-subagent { background: var(--surface-2); }
 .tl-request.oversized .ctx { color: var(--late); font-weight: 600; }
 
 /* Forms */

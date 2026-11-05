@@ -447,13 +447,16 @@ def create_app(service_factory: Callable[[], QueryService],
         timeline = service.session_timeline(session_id, agent_id, with_rows=True)
         if timeline is None:
             abort(404)
-        rows = []
-        for row in timeline.rows:
-            out = dataclasses.asdict(row)
+
+        def encode(row) -> dict:
+            out = dataclasses.asdict(dataclasses.replace(row, rows=()) if row.kind == "subagent" else row)
             out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
-            if row.kind == "request":
+            if row.kind in ("request", "subagent"):
                 out["modelLabel"] = short_model(row.model)
-            rows.append(out)
+            if row.kind == "subagent":
+                out["rows"] = [encode(r) for r in row.rows]
+            return out
+        rows = [encode(r) for r in timeline.rows]
         return jsonify(rows=rows)
 
     @app.get("/session/<session_id>")

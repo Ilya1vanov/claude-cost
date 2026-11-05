@@ -20,7 +20,7 @@ from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
 from . import timeline_rows as timeline_rows_mod
 from .projects import project_display_names
-from .timeline_rows import PromptRow, RequestRow
+from .timeline_rows import PromptRow, RequestRow, SubagentRow
 from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 
@@ -311,7 +311,7 @@ class SessionTimeline:
     setting_changes: tuple[SettingChange, ...] = ()
     # The Timeline: PromptRow and RequestRow (tagged by `kind`) in time order. Read from the
     # transcripts, so only filled when asked for (`session_timeline(with_rows=True)`).
-    rows: tuple[PromptRow | RequestRow, ...] = ()
+    rows: tuple[PromptRow | RequestRow | SubagentRow, ...] = ()
 
     @property
     def combinations(self) -> tuple[ModelEffort, ...]:
@@ -735,8 +735,20 @@ class QueryService:
                        p.threshold is not None and p.context_tokens > p.threshold,
                        p.message_id in content)
             for p in t.points]
-        # A prompt comes before the request made at the same time
-        return tuple(sorted([*prompts, *requests], key=lambda r: (r.ts, r.kind != "prompt")))
+        return tuple(sorted([*prompts, *requests, *self._subagent_rows(t)],
+                            key=lambda r: (r.ts, r.kind != "prompt")))  # a prompt comes first
+
+    def _subagent_rows(self, t: SessionTimeline) -> list[SubagentRow]:
+        """One block per direct child launch, holding the child's own rows (so nested Subagents
+        resolve through the parent agent link, recursively)."""
+        blocks = []
+        for a in t.subagents:
+            child = self.session_timeline(t.session_id, a.agent_id, with_rows=True)
+            first = child.points[0]
+            blocks.append(SubagentRow(
+                a.ts, a.agent_id, a.agent_type, a.description, a.is_fork, first.model, first.effort,
+                a.requests, max(p.context_tokens for p in child.points), a.cost, child.rows))
+        return blocks
 
     @staticmethod
     def _setting_changes(points: list[TimelinePoint]) -> tuple[SettingChange, ...]:
