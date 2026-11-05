@@ -78,4 +78,5 @@
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   {{ ui.chart_scripts('session.js') }}
+  <script type="module" src="{{ url_for('static', filename='timeline_window.js') }}"></script>
 {% endblock %}
