@@ -422,6 +422,25 @@ def create_app(service_factory: Callable[[], QueryService],
                                    for r in result.rows[:CHART_ROWS]],
                         "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
 
+    @app.get("/sessions")
+    def sessions_page():
+        spec = explore_spec()
+        service = explore_service()
+        result = service.sessions(spec)
+        labels = [r.name for r in result.rows[:CHART_ROWS]]
+        return render_template(
+            "sessions.html", spec=spec, result=result, dims=explore.DIMENSIONS,
+            options=service.explore_options(), fmt_cost=explore.fmt_cost,
+            fmt_share=explore.fmt_share, short_id=short_id,
+            chart_data={"label": "Session", "labels": labels,
+                        "costs": [round(r.cost, 4) for r in result.rows[:CHART_ROWS]]})
+
+    @app.get("/sessions.csv")
+    def sessions_csv():
+        body = explore.sessions_to_csv(explore_service().sessions(explore_spec()))
+        return Response(body, mimetype="text/csv", headers={
+            "Content-Disposition": 'attachment; filename="claude-cost-sessions.csv"'})
+
     @app.get("/explore.csv")
     def explore_csv():
         spec = explore_spec()
