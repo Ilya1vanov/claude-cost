@@ -70,6 +70,14 @@ _Avoid_: thinking level, reasoning budget
 A request whose model or effort differs from the previous request in its stream; the first request is never one, and a request whose effort is not recorded does not change effort.
 _Avoid_: switch, model swap
 
+**Timeline**:
+A session's turns, requests and events in time order, read like the conversation they came from, each request with its context size and cost.
+_Avoid_: transcript history, chat, history
+
+**Breakdown**:
+Spend split by one dimension, such as date, project, model or tool, one row per value.
+_Avoid_: group by, explore, pivot
+
 ## Money
 
 **Cost**:
@@ -175,7 +183,7 @@ _Avoid_: late auto-compact
 ## Time
 
 **Period**:
-A span of time that spend is reported for: a rolling 7 days, a calendar week, a calendar month, or a custom period.
+A span of time that spend is reported for: a rolling 7, 30 or 90 days, a calendar week, a calendar month, or a custom period.
 _Avoid_: range, window
 
 **Custom period**:
