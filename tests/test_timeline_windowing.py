@@ -46,3 +46,9 @@ def test_timeline_header_has_collapse_text_toggle(client):
     html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
     head = html.split('class="tl-head"')[1].split("</div>")[0]
     assert 'id="timeline-collapse"' in head and "Collapse text" in head
+
+
+def test_timeline_header_has_search_box(client):
+    html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
+    head = html.split('class="tl-head"')[1].split("</div>")[0]
+    assert 'id="timeline-search"' in head and 'id="timeline-search-count"' in head
