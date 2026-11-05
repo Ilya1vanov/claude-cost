@@ -10,10 +10,8 @@ from itertools import accumulate
 
 from .. import pricing
 from ..projects import project_display_names
-from .core import DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef
-
-# four `?` params, in order: start, start, end, end (None bound = open)
-_IN_PERIOD = "(? IS NULL OR {0} >= ?) AND (? IS NULL OR {0} < ?)"
+from .core import (DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef,
+                   ts_where)
 
 TOP = 25  # table rows before the rest are summed into one
 
@@ -87,16 +85,17 @@ def detect(ctx: FindingContext) -> Detection:
     # by time: a Stream's earliest Listing and its removals can predate the Period.
     stems = json.dumps(sorted({t for sid, _ in by_stream for t in ctx.graph.transcripts(sid)}))
     # a use is placed by its own timestamp; a side with no bound is all history
-    bounds = (ctx.period_start, ctx.period_start, ctx.period_end, ctx.period_end)
     names_used: dict[tuple[str, str], set[str]] = defaultdict(set)  # (project, kind) -> names
     uses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))  # kind -> name -> uses
+    where, args = ts_where("ts_epoch", ctx.period_start, ctx.period_end)
     for x in ctx.conn.execute("SELECT project, kind, name, COUNT(*) AS n FROM tool_uses "
-                              f"WHERE {_IN_PERIOD.format('ts_epoch')} GROUP BY project, kind, name", bounds):
+                              f"{where}GROUP BY project, kind, name", args):
         names_used[(x["project"], x["kind"])].add(x["name"])
         uses[x["kind"]][x["name"]] += x["n"]
+    where, args = ts_where("r.ts_epoch", ctx.period_start, ctx.period_end)
     for x in ctx.conn.execute("SELECT r.project, s.skill, COUNT(*) AS n FROM request_skills s "
                               "JOIN requests r ON r.message_id = s.message_id "
-                              f"WHERE {_IN_PERIOD.format('r.ts_epoch')} GROUP BY r.project, s.skill", bounds):
+                              f"{where}GROUP BY r.project, s.skill", args):
         # slash commands and attributionSkill count as uses too
         names_used[(x["project"], "skill")].add(x["skill"])
         uses["slash"][x["skill"]] += x["n"]

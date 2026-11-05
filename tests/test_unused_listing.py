@@ -83,6 +83,16 @@ def test_use_outside_the_period_does_not_count(root, service_for):
     assert _by_id(svc.findings())["unused-listing"].requests == ()  # all history: it was used
 
 
+def test_use_before_the_first_period_request_on_its_first_day_counts(root, service_for):
+    # the Period starts at its first local day's start, not at its first Request (10:00)
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    early = tool_use_line("2026-10-30T08:00:00Z", "t0", "Skill", {"skill": "tdd"})
+    _session(root, "p", "s1", listing)
+    root.write_transcript("p", "early", [req("e1", "2026-10-30T10:20:00Z")], extra_lines=[early])
+    day = __import__("datetime").date(2026, 10, 30)
+    assert _by_id(service_for(root).findings(day, day))["unused-listing"].requests == ()
+
+
 def test_use_after_the_period_does_not_count_on_a_past_period(root, service_for):
     import datetime
     listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
