@@ -253,6 +253,11 @@ tr.baseline td { background: var(--surface-2); }
 .tl-text.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .tl-tool { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
+.tl-collapse { font-weight: 400; margin-left: 12px; cursor: pointer; }
+.collapse-text .tl-row:not(.expanded) { cursor: pointer; }
+.collapse-text .tl-row:not(.expanded) .tl-bubble { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.collapse-text .tl-row:not(.expanded) .tl-text { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.collapse-text .tl-row:not(.expanded) .tl-text + button { display: none; }
 .tl-tool b { color: var(--text); font-weight: 600; }
 .tl-gone { color: var(--muted); font-style: italic; }
 .tl-subagent { background: var(--surface-2); }

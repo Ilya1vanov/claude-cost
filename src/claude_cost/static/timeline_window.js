@@ -78,6 +78,15 @@ if (api) {
     firstVisibleListeners.push(fn);
     return function () { const i = firstVisibleListeners.indexOf(fn); if (i >= 0) { firstVisibleListeners.splice(i, 1); } };
   };
+  // Open (or close, with on=false) the text of row `index` while Collapse text is on; the
+  // ResizeObserver re-measures the drawn row. For the search (#92) to reveal a match.
+  api.expandText = function (index, on) {
+    if (!rows[index]) { return; }
+    const open = on !== false;
+    api.setRowExpanded(rows[index], open);
+    const node = nodes.get(index);
+    if (node && node.firstChild) { node.firstChild.classList.toggle("expanded", open); }
+  };
   api.mountRows = mount;
   // Swap in a changed row list (a Subagent block expanded or collapsed) keeping the scroll position.
   api.updateRows = function (newRows) {

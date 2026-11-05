@@ -80,10 +80,52 @@
     return e;
   }
 
+  // Collapse text: a global flag (a class on the box, saved in localStorage) plus per-row overrides.
+  // Both live here, not in the DOM, because windowing redraws a row each time it scrolls into view.
+  var STORAGE_KEY = "timeline-collapse-text";
+  var expanded = new WeakSet();  // row objects the user opened while the flag is on
+
+  function readSaved() {
+    try { return window.localStorage.getItem(STORAGE_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  function setRowExpanded(row, on) {
+    if (on) { expanded.add(row); } else { expanded.delete(row); }
+  }
+
+  // Makes a text row (prompt or request) open on click while collapsing is on.
+  function collapsible(wrap, row) {
+    wrap.classList.toggle("expanded", expanded.has(row));
+    wrap.addEventListener("click", function (ev) {
+      if (!box.classList.contains("collapse-text") || ev.target.closest("button")) { return; }
+      setRowExpanded(row, !expanded.has(row));
+      wrap.classList.toggle("expanded", expanded.has(row));
+    });
+    return wrap;
+  }
+
+  function setCollapsed(on) {
+    var api = window.sessionTimeline;
+    var first = api.getFirstVisibleIndex ? api.getFirstVisibleIndex() : -1;
+    box.classList.toggle("collapse-text", on);
+    try { window.localStorage.setItem(STORAGE_KEY, on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+    if (first >= 0 && api.scrollToIndex) {  // rows resize after layout: hold the first row in view
+      requestAnimationFrame(function () { api.scrollToIndex(first, { align: "start" }); });
+    }
+  }
+
+  var toggle = document.getElementById("timeline-collapse");
+  if (toggle) {
+    var saved = readSaved();
+    toggle.checked = saved;
+    box.classList.toggle("collapse-text", saved);
+    toggle.addEventListener("change", function () { setCollapsed(toggle.checked); });
+  }
+
   function renderPrompt(row) {
     var wrap = el("div", "tl-row tl-prompt");
     wrap.appendChild(el("div", "tl-bubble", row.text));
-    return wrap;
+    return collapsible(wrap, row);
   }
 
   function renderText(text) {
@@ -121,7 +163,7 @@
     wrap.appendChild(main);
     wrap.appendChild(el("div", "num ctx", row.context_tokens.toLocaleString()));
     wrap.appendChild(el("div", "num", "$" + row.cost.toFixed(4)));
-    return wrap;
+    return collapsible(wrap, row);
   }
 
   // A Subagent block: collapsed by default. Its rows are not drawn inside it; expanding it adds
@@ -153,15 +195,17 @@
   }
 
   // The rows arrive as a tree (a subagent row holds its own rows). The windowed list is the
-  // flattening of that tree under the expanded set: each entry is a copy of its row with `depth`
+  // flattening of that tree under the open blocks: each entry is the row itself with `depth`
   // and `expanded`, children directly after their block.
   var tree = [];
-  var expanded = new Set();
+  var openAgents = new Set();  // agent ids of the Subagent blocks that are open
   var flat = [];
   function flatten(rows, depth, out) {
     rows.forEach(function (row) {
-      var isOpen = row.kind === "subagent" && expanded.has(row.agent_id);
-      out.push(Object.assign({}, row, { depth: depth, expanded: isOpen }));
+      var isOpen = row.kind === "subagent" && openAgents.has(row.agent_id);
+      row.depth = depth;  // the row objects stay the same across refreshes (Collapse text keys on them)
+      row.expanded = isOpen;
+      out.push(row);
       if (isOpen) { flatten(row.rows, depth + 1, out); }
     });
     return out;
@@ -183,7 +227,7 @@
     return flat.findIndex(function (r) { return r.kind === "subagent" && r.agent_id === agentId; });
   }
   function toggleSubagent(agentId) {
-    if (expanded.has(agentId)) { expanded.delete(agentId); } else { expanded.add(agentId); }
+    if (openAgents.has(agentId)) { openAgents.delete(agentId); } else { openAgents.add(agentId); }
     refresh(false);
   }
   // Expands the block of `agentId` (and every block around it); returns the index of its row in
@@ -192,12 +236,12 @@
   function expandSubagent(agentId) {
     var path = findPath(tree, agentId);
     if (!path) { return -1; }
-    path.forEach(function (id) { expanded.add(id); });
+    path.forEach(function (id) { openAgents.add(id); });
     refresh(false);
     return indexOfAgent(agentId);
   }
   function collapseSubagent(agentId) {
-    expanded.delete(agentId);
+    openAgents.delete(agentId);
     refresh(false);
   }
   // The model and Effort in force at windowed row `index`: a request or block has its own; a prompt
@@ -215,7 +259,7 @@
     }
     return near && { model: near.model, modelLabel: near.modelLabel, effort: near.effort };
   }
-  function setTree(rows) { tree = rows; expanded.clear(); refresh(true); }
+  function setTree(rows) { tree = rows; openAgents.clear(); refresh(true); }
 
   function loadRows(url) {
     return fetch(url).then(function (r) {
@@ -227,6 +271,7 @@
   // timeline_window.js (a module script, so it runs after this one) windows these rows into view
   // and adds mountRows, updateRows, scrollToIndex, remeasure and onFirstVisibleChange to this object.
   window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el,
+    setRowExpanded: setRowExpanded,
     setTree: setTree, expandSubagent: expandSubagent, collapseSubagent: collapseSubagent,
     rowAt: function (i) { return flat[i]; }, settingAt: settingAt };
 })();
