@@ -336,6 +336,7 @@ class SessionTimeline:
         return tuple(out + [("compaction", c) for c in pending])
 
 
+CONCURRENCY_SLOT_SECONDS = 5 * 60  # the clock-aligned slot Concurrency is counted in
 PERIOD_MODES = ("last7", "week", "month")
 CUSTOM_MODE = "custom"
 
@@ -896,8 +897,8 @@ class QueryService:
         for row in self._conn.execute(
                 f"SELECT {SESSION_ID_SQL} AS sid, r.ts_epoch AS ts FROM requests r {SESSION_JOIN} "
                 "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)):
-            offset = datetime.fromtimestamp(row["ts"], self._tz).astimezone(self._tz).utcoffset()
-            per_slot.setdefault(int((row["ts"] + offset.total_seconds()) // 300), set()).add(row["sid"])
+            offset = self.local_time(row["ts"]).utcoffset().total_seconds()
+            per_slot.setdefault(int((row["ts"] + offset) // CONCURRENCY_SLOT_SECONDS), set()).add(row["sid"])
         if not per_slot:
             return None, None
         counts = [len(s) for s in per_slot.values()]
