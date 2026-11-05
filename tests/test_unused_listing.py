@@ -348,3 +348,21 @@ def test_a_reading_request_above_the_prompt_tier_threshold_pays_the_tier_on_its_
     f = _by_id(service_for(root).findings())["unused-listing"]
     got = {r.message_id: r.avoidable for r in f.requests}
     assert got == {"r2": pytest.approx(10_000 * 0.05 / 1e6), "r3": pytest.approx(10_000 * 0.01 / 1e6)}
+
+
+@pytest.mark.parametrize("input_, cache_read, tiered", [
+    (0, 100_000, False),       # exactly the 100K threshold stays flat
+    (0, 100_001, True),
+    (30_000, 60_000, False),   # a 90K prompt: input counts once, not twice
+    (50_000, 60_000, True),    # a 110K prompt only because of its input
+])
+def test_the_prompt_tier_is_decided_by_the_reading_requests_whole_prompt(
+        root, service_for, input_, cache_read, tiered):
+    haiku = "claude-haiku-5-5"
+    root.write_transcript("p", "s1", [
+        req("r1", "2026-10-30T10:00:00Z", model=haiku, write_1h=1000),
+        req("r2", "2026-10-30T10:05:00Z", model=haiku, input=input_, cache_read=cache_read),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    rate = 0.05 if tiered else 0.01
+    assert {r.message_id: r.avoidable for r in f.requests} == {"r2": pytest.approx(10_000 * rate / 1e6)}
