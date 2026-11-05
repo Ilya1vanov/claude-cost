@@ -96,6 +96,10 @@ _Avoid_: cache miss, rebuild
 A cache write of context that is new to the session, as the conversation grows.
 _Avoid_: incremental write
 
+**Prompt tier**:
+A higher rate a model charges for every token of a request whose prompt is above a set size.
+_Avoid_: long-context tier, tier
+
 ## Spotlights
 
 **Spotlight**:
@@ -153,7 +157,7 @@ The measured cost of the requests a drain or opportunity covers.
 _Avoid_: impact, waste
 
 **Avoidable spend**:
-A conservative lower-bound estimate of what would have been saved without the drain or opportunity.
+An estimate of what would have been saved without the drain or opportunity: a conservative lower bound, and for some findings also an upper bound that counts effects the lower bound leaves out.
 _Avoid_: savings, forecast
 
 **Cold resume**:
