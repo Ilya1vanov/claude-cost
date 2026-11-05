@@ -612,3 +612,38 @@ def test_a_cold_write_in_the_read_range_replaces_its_read_in_the_upper_bound(roo
     assert got["r1"] == (pytest.approx(0.002), pytest.approx(0.002))
     assert sum(h for _, h in got.values()) == pytest.approx(f.avoidable_high)
 
+
+# --- integration of #97 and #98: the Listing's tokens in cache writes count toward the tier drop ----
+def test_the_writers_cache_write_counts_the_listing_toward_the_tier_drop(root, service_for):
+    """The writer's prompt is 105K, 95K without the 10K Listing it wrote: the tier drop applies to it."""
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_5m=105_000),
+        req("r", "2026-10-30T10:04:00Z", model=HAIKU, cache_read=50_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    # 5m write $0.125/M x5 above 100K: the Listing's write 10K x $0.625/M, plus 4/5 of the 105K x $0.625/M cost
+    assert _ranged(f)["w"] == (pytest.approx(0.0), pytest.approx(0.00625 + 0.0525))
+    assert f.avoidable == pytest.approx(10_000 * 0.01 / 1e6)
+    assert f.avoidable_high == pytest.approx(0.0001 + 0.00625 + 0.0525)
+    assert f.table.rows[0][-1] == "$0.00–$0.06"
+
+
+def test_a_cold_write_and_a_tier_drop_in_one_listings_range_sum_to_the_upper_bound(root, service_for):
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_5m=105_000),
+        req("r1", "2026-10-30T10:04:00Z", model=HAIKU, cache_read=50_000),
+        req("c", "2026-10-30T10:20:00Z", model=HAIKU, write_5m=105_000),   # Cold write, 105K prompt
+        req("r2", "2026-10-30T10:24:00Z", model=HAIKU, cache_read=50_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    # lower: reads at $0.01/M (the Cold write's at the tiered $0.05/M); unchanged by writes and drops
+    assert f.avoidable == pytest.approx(10_000 * (0.01 + 0.05 + 0.01) / 1e6)
+    write, drop = 10_000 * 0.625 / 1e6, 105_000 * 0.625 / 1e6 * 4 / 5   # the Listing's write; 4/5 of the cost
+    got = _ranged(f)
+    assert got["w"] == (pytest.approx(0.0), pytest.approx(write + drop))
+    assert got["c"] == (pytest.approx(10_000 * 0.05 / 1e6), pytest.approx(write + drop))
+    assert got["r1"] == (pytest.approx(0.0001), pytest.approx(0.0001))
+    assert f.avoidable_high == pytest.approx(2 * (write + drop) + 0.0002)
+    assert sum(h for _, h in got.values()) == pytest.approx(f.avoidable_high)
+    (row,) = f.table.rows
+    assert row[-1] == "$0.00–$0.12" and row[2].items == ("p: $0.00–$0.12, 1 session",)

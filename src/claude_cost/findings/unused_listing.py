@@ -70,7 +70,9 @@ class _Stream:
     def __init__(self, ctx: FindingContext, reqs: list):
         self.ctx = ctx
         self.reqs = reqs
-        self.reads: list[tuple[int, int, int, tuple]] = []  # (first, end, tokens, key) per charged Listing
+        # (first, end, tokens, key) per charged Listing: its reads, and the writer's own write
+        self.reads: list[tuple[int, int, int, tuple]] = []
+        self.sitting = [0] * (len(reqs) + 1)  # difference array of reads + writes: Listing tokens in a prompt
         self.ts = [r.ts for r in reqs]
         self.rates = [_read_rate(ctx, r) for r in reqs]
         self.write_rates = [_write_rate(ctx, r) for r in reqs]
@@ -100,10 +102,16 @@ class _Stream:
         self.delta[lo] += tokens
         self.delta[hi] -= tokens
         self.reads.append((lo, hi, tokens, key))
+        self.sitting[lo] += tokens
+        self.sitting[hi] -= tokens
         write = 0.0
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
             write = tokens * self.write_rates[writer]
             self._add_upper(writer, write)
+            # the Listing sits in the writer's cache writes: it leaves its prompt too (tier drop)
+            self.reads.append((writer, writer + 1, tokens, key))
+            self.sitting[writer] += tokens
+            self.sitting[writer + 1] -= tokens
         # a Cold write rebuilds the Listing too: it pays the write in place of the read
         for j in self.cold[bisect_left(self.cold, lo):bisect_left(self.cold, hi)]:
             rebuild = tokens * (self.write_rates[j] - self.rates[j])
@@ -131,7 +139,7 @@ class _Stream:
     def split_tier_drops(self) -> list[tuple[tuple, float]]:
         """Add each request's Prompt tier drop to its upper bound, once, and return it split across
         the unused Listings it reads, by token share, as (key, dollars). Call after every `charge`."""
-        unused = list(accumulate(self.delta))
+        unused = list(accumulate(self.sitting))
         drops = {i: d for i, t in enumerate(unused) if t and (d := self._tier_drop(i, t))}
         for i, d in drops.items():
             self._add_upper(i, d)
