@@ -20,6 +20,12 @@ TOOLTIPS = {
     "requests": "Billed API calls in the period, each counted once however many transcripts hold a copy.",
     "subagents": ("Subagent runs that made at least one request in the period, nested ones included. "
                   "Their requests and cost are already part of Requests and the Session's cost."),
+    "avg concurrency": ("How many Sessions were working at once, on average. Time is cut into 5-minute "
+                        "slots; a Session counts in a slot if it or one of its Subagents made a request "
+                        "in it. Only slots where at least one Session was working are averaged, so idle "
+                        "time doesn't pull it down."),
+    "peak concurrency": ("The most Sessions working at once in any single 5-minute slot of the period. "
+                         "A Session counts in a slot if it or one of its Subagents made a request in it."),
     "per turn": ("The component's cost divided by the Turns in the period. A flat cost per Turn "
                  "with a falling total means less usage, not savings."),
     "input": "The uncached input tokens of requests, at the list price.",
