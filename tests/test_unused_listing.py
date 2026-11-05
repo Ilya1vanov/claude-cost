@@ -93,7 +93,8 @@ def test_use_after_the_period_does_not_count_on_a_past_period(root, service_for)
     svc = service_for(root)
     day = datetime.date(2026, 10, 30)
     assert _by_id(svc.findings(day, day))["unused-listing"].avoidable == pytest.approx(0.004)
-    assert _by_id(svc.findings(day))["unused-listing"].requests == ()  # all history: it was used
+    assert _by_id(svc.findings(day))["unused-listing"].requests == ()  # from day on: it was used
+    assert _by_id(svc.findings())["unused-listing"].requests == ()  # all history: it was used
 
 
 def test_used_elsewhere_ignores_a_use_in_another_project_after_the_period(root, service_for):
@@ -106,6 +107,26 @@ def test_used_elsewhere_ignores_a_use_in_another_project_after_the_period(root, 
     day = datetime.date(2026, 10, 30)
     (row,) = _by_id(service_for(root).findings(day, day))["unused-listing"].table.rows
     assert row[3] == "0"
+
+
+def test_used_elsewhere_counts_a_use_in_another_project_inside_the_period(root, service_for):
+    import datetime
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", _skill("tdd", 10_000))]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "proj-a", "a1", listing + [use])
+    _session(root, "proj-b", "b1", listing)
+    day = datetime.date(2026, 10, 30)
+    (row,) = _by_id(service_for(root).findings(day, day))["unused-listing"].table.rows
+    assert row[3] == "1"
+
+
+def test_current_period_counts_a_use_inside_it(root, service_for):
+    listing = [skill_listing_line("2026-10-30T09:59:00Z", {**_skill("tdd", 10_000),
+                                                           **_skill("big", 10_000)})]
+    use = tool_use_line("2026-10-30T10:06:00Z", "t1", "Skill", {"skill": "tdd"})
+    _session(root, "p", "s1", listing + [use])
+    top = {f.id: f for f in service_for(root).top_findings("last7", NOW)}
+    assert [r[0] for r in top["unused-listing"].table.rows] == ["big"]
 
 
 def test_slash_command_use_after_the_period_does_not_count(root, service_for):

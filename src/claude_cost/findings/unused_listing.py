@@ -12,7 +12,9 @@ from .. import pricing
 from ..projects import project_display_names
 from .core import DRAIN, CollapsibleCell, Covered, Detection, DetailTable, FindingContext, FindingDef
 
+# four `?` params, in order: start, start, end, end (None bound = open)
 _IN_PERIOD = "(? IS NULL OR {0} >= ?) AND (? IS NULL OR {0} < ?)"
+
 TOP = 25  # table rows before the rest are summed into one
 
 
