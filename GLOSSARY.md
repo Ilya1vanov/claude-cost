@@ -198,6 +198,10 @@ _Avoid_: range, window
 A run of whole local days the user picks, both ends included; its baseline is the equally long run of days just before it, and it is never partial.
 _Avoid_: date range, arbitrary period
 
+**Concurrency**:
+How many Sessions made a request in the same 5-minute slot. Slots are fixed, clock-aligned and local (12:00-12:05, 12:05-12:10...); a Session is active in a slot if it or one of its Subagents made a request in it, so Subagents count toward their Session, while Side sessions and Forks count separately from their Parent session. Average concurrency is taken over slots with at least one active Session, so idle time doesn't lower it; peak concurrency is the busiest slot in the Period.
+_Avoid_: parallelism, simultaneous sessions
+
 **Comparison**:
 A view of two or more periods of the same kind side by side, against one baseline period.
 _Avoid_: diff

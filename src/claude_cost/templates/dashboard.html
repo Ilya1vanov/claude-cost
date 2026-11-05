@@ -85,6 +85,22 @@
     </div>
   </section>
 
+  <section class="card" id="parallel-sessions">
+    <h2>Parallel sessions</h2>
+    {% macro concurrency_kpi(label, key, a, b) %}
+      <div class="kpi">
+        <div class="label">{{ label }} {{ ui.info(key) }}</div>
+        <div class="value">{{ a }}</div>
+        <div class="meta">vs {{ b }} in baseline</div>
+      </div>
+    {% endmacro %}
+    {% macro concurrency(v, fmt) %}{% if v is none %}n/a{% else %}{{ fmt|format(v) }}{% endif %}{% endmacro %}
+    <div class="kpis">
+      {{ concurrency_kpi("Avg concurrency", "avg concurrency", concurrency(uc.avg_concurrency, "%.1f"), concurrency(ub.avg_concurrency, "%.1f")) }}
+      {{ concurrency_kpi("Peak concurrency", "peak concurrency", concurrency(uc.peak_concurrency, "%d"), concurrency(ub.peak_concurrency, "%d")) }}
+    </div>
+  </section>
+
   <div class="grid grid-2">
     <section class="card">
       <h2>Cost components</h2>

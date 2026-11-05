@@ -336,6 +336,7 @@ class SessionTimeline:
         return tuple(out + [("compaction", c) for c in pending])
 
 
+CONCURRENCY_SLOT_SECONDS = 5 * 60  # the clock-aligned slot Concurrency is counted in
 PERIOD_MODES = ("last7", "week", "month")
 CUSTOM_MODE = "custom"
 
@@ -367,6 +368,10 @@ class Usage:
     turns: int | None  # None when the period starts before Turn coverage (pruned transcripts)
     requests: int
     subagents: int = 0  # distinct Subagent runs with requests, nested ones included
+    # Concurrency: Sessions active per 5-minute slot, over slots with at least one active Session
+    # (a Subagent's request counts for its Session). None when the period has no requests.
+    avg_concurrency: float | None = None
+    peak_concurrency: int | None = None
 
 
 @dataclass(frozen=True)
@@ -881,7 +886,19 @@ class QueryService:
         cov = self._conn.execute("SELECT value FROM meta WHERE key = 'turns_from'").fetchone()
         turns = None if cov and lo < float(cov["value"]) else self._conn.execute(
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
-        return Usage(row["s"], turns, row["n"], row["sub"])
+        avg, peak = self._concurrency(lo, hi)
+        return Usage(row["s"], turns, row["n"], row["sub"], avg, peak)
+
+    def _concurrency(self, lo: float, hi: float) -> tuple[float | None, int | None]:
+        """(average, peak) Sessions active per clock-aligned local 5-minute slot. A Session is
+        active in a slot if it or one of its Subagents made a Request in it; slots with no
+        active Session are left out of the average. Every UTC offset is a whole number of
+        slots, so epoch slots are local clock slots, and a repeated DST hour stays two hours."""
+        row = self._conn.execute(
+            f"SELECT AVG(n) AS avg, MAX(n) AS peak FROM (SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS n "
+            f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ? "
+            "GROUP BY CAST(r.ts_epoch / ? AS INTEGER))", (lo, hi, CONCURRENCY_SLOT_SECONDS)).fetchone()
+        return row["avg"], row["peak"]
 
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""
