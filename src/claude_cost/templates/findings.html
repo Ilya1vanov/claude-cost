@@ -13,7 +13,7 @@
   <section class="card {{ kind }}">
     <h2>{{ heading }}</h2>
     <div class="table-wrap"><table id="{{ kind }}s">
-      <tr><th>Finding</th><th class="num">Attributed spend</th><th class="num">Avoidable spend (lower bound)</th><th class="num">Covers</th></tr>
+      <tr><th>Finding</th><th class="num">Attributed spend</th><th class="num">Avoidable spend</th><th class="num">Covers</th></tr>
       {% for f in findings if f.kind == kind %}
       <tr>
         <td class="title"><a href="{{ url_for('finding_detail', finding_id=f.id, since=since.isoformat() if since) }}">{{ f.title }}</a></td>

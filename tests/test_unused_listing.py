@@ -537,6 +537,7 @@ def test_drains_command_and_pages_show_the_range(root, configure):
     page = client.get("/findings/unused-listing").get_data(as_text=True)
     assert "lower bounds" not in page and "lower bound" in page  # the note and formula name both
     assert "Avoidable spend (lower bound)" not in page  # a range is not a lower bound
+    assert "Avoidable spend (lower bound)" not in client.get("/findings").get_data(as_text=True)
     assert "Avoidable (lower bound)" not in client.get("/").get_data(as_text=True)
 
 
