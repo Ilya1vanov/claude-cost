@@ -536,3 +536,57 @@ def test_drains_command_and_pages_show_the_range(root, configure):
         assert "$0.00–$0.08" in client.get(url).get_data(as_text=True), url
     page = client.get("/findings/unused-listing").get_data(as_text=True)
     assert "lower bounds" not in page and "lower bound" in page  # the note and formula name both
+
+
+# --- avoidable spend as a range (#98): the Prompt tier drop raises the upper bound ------------
+# claude-haiku-5-5: cache read $0.01/M, 1h write $0.20/M, output $0.50/M; all x5 above a 100K prompt.
+
+HAIKU = "claude-haiku-5-5"
+
+
+def _tier_drop_session(root, reader_model, reader_read, extra, **reader_kw):
+    root.write_transcript("p", "s1", [
+        req("w", "2026-10-30T10:00:00Z", model=HAIKU, write_1h=1000),
+        req("r", "2026-10-30T10:05:00Z", model=reader_model, cache_read=reader_read, **reader_kw),
+    ], extra_lines=extra)
+
+
+def test_removing_the_unused_listings_drops_a_request_under_the_tier_so_the_upper_bound_adds_4_5_of_its_cost(
+        root, service_for):
+    """105K prompt, 95K without the 10K Listing: 4/5 of the request's whole cost goes away."""
+    _tier_drop_session(root, HAIKU, 105_000,
+                       [skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    cost = 105_000 * 0.05 / 1e6           # the request's whole cost, tiered
+    low, high = _ranged(f)["r"]
+    assert low == pytest.approx(10_000 * 0.05 / 1e6)
+    assert high == pytest.approx(low + cost * 4 / 5)
+
+
+@pytest.mark.parametrize("model, cache_read", [
+    (HAIKU, 125_000),                  # still above 100K after the 10K Listing goes
+    ("claude-opus-5-5", 105_000),      # untiered model
+])
+def test_no_tier_drop_when_the_request_stays_above_or_is_untiered(root, service_for, model, cache_read):
+    _tier_drop_session(root, model, cache_read,
+                       [skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    low, high = _ranged(_by_id(service_for(root).findings())["unused-listing"])["r"]
+    assert high == pytest.approx(low)
+
+
+def test_listings_sharing_a_tier_drop_split_it_by_token_share_and_the_request_counts_once(
+        root, service_for):
+    """125K prompt, 85K without the 10K + 30K Listings; the 10M output makes the cost visible."""
+    _tier_drop_session(root, HAIKU, 125_000, [
+        skill_listing_line("2026-10-30T09:59:00Z", {**_skill("a", 10_000), **_skill("b", 30_000)}),
+    ], output=10_000_000)
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    drop = (10_000_000 * 0.5 * 5 + 125_000 * 0.05) / 1e6 * 4 / 5
+    writes = 40_000 * 0.2 / 1e6
+    low, high = _ranged(f)["r"]
+    assert low == pytest.approx(40_000 * 0.05 / 1e6)
+    assert high == pytest.approx(low + drop)                       # counted once
+    assert f.avoidable_high == pytest.approx(low + writes + drop)
+    rows = {r[0]: r[4] for r in f.table.rows}
+    assert rows == {"a": f"$0.00–${drop / 4 + 10_000 * 0.2 / 1e6:.2f}",
+                    "b": f"$0.00–${drop * 3 / 4 + 30_000 * 0.2 / 1e6:.2f}"}

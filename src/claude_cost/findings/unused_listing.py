@@ -1,6 +1,6 @@
 """Drain: Unused listing. A skill or MCP server Listing loaded into a project's sessions
 that was never invoked in that project over the period. Avoidable is a range: the lower bound is
-its read cost; the upper bound adds the write that stored it (see `_Stream.extra`)."""
+its read cost; the upper bound adds the write that stored it and any Prompt tier drop (see `_Stream.extra`)."""
 from __future__ import annotations
 
 import json
@@ -67,7 +67,9 @@ class _Stream:
     into the same array, via `_add_upper`."""
 
     def __init__(self, ctx: FindingContext, reqs: list):
+        self.ctx = ctx
         self.reqs = reqs
+        self.reads: list[tuple[int, int, int, tuple]] = []  # (first, end, tokens, key) per charged Listing
         self.ts = [r.ts for r in reqs]
         self.rates = [_read_rate(ctx, r) for r in reqs]
         self.write_rates = [_write_rate(ctx, r) for r in reqs]
@@ -76,7 +78,8 @@ class _Stream:
         # the Stream's last Request before the Period, if any (its gap is stored at ingest)
         self.prev_ts = None if reqs[0].gap is None else reqs[0].ts - reqs[0].gap
 
-    def charge(self, ts: float, gone: float | None, tokens: int) -> tuple[float, float] | None:
+    def charge(self, ts: float, gone: float | None, tokens: int,
+               key: tuple = ()) -> tuple[float, float] | None:
         """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
         the cache: those after the one that wrote it (the first at or after `ts`, possibly before
         the Period), before the removal. Returns its (lower, upper) $, or None when no request
@@ -93,6 +96,7 @@ class _Stream:
             return None
         self.delta[lo] += tokens
         self.delta[hi] -= tokens
+        self.reads.append((lo, hi, tokens, key))
         write = 0.0
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
             write = tokens * self.write_rates[writer]
@@ -103,6 +107,30 @@ class _Stream:
 
     def _add_upper(self, i: int, dollars: float) -> None:
         self.extra[i] += dollars
+
+    def _tier_drop(self, i: int, unused: int) -> float:
+        """What request i's whole cost loses when `unused` tokens leave its prompt and that takes
+        it from above its model's Prompt tier threshold to at or below it; else 0."""
+        r = self.reqs[i]
+        p = pricing.find_price(r.model, r.day, self.ctx.price_table)
+        if p is None or p.tier_threshold is None or not r.context - unused <= p.tier_threshold < r.context:
+            return 0.0
+        c = pricing.price_request(r.model, r.day, input=r.input, output=r.output, cache_read=r.cache_read,
+                                  write_5m=r.write_5m, write_1h=r.write_1h, speed=r.speed,
+                                  inference_geo=r.inference_geo, table=self.ctx.price_table)
+        return c.total * (p.tier_mult - 1) / p.tier_mult
+
+    def split_tier_drops(self) -> list[tuple[tuple, float]]:
+        """Add each request's Prompt tier drop to its upper bound, once, and return it split across
+        the unused Listings it reads, by token share, as (key, dollars). Call after every `charge`."""
+        unused = list(accumulate(self.delta))
+        drops = {i: d for i, t in enumerate(unused) if t and (d := self._tier_drop(i, t))}
+        for i, d in drops.items():
+            self._add_upper(i, d)
+        at = sorted(drops)
+        return [(key, drops[i] * tokens / unused[i])
+                for lo, hi, tokens, key in self.reads
+                for i in at[bisect_left(at, lo):bisect_left(at, hi)]]
 
     def covered(self) -> list[Covered]:
         out = []
@@ -169,7 +197,7 @@ def detect(ctx: FindingContext) -> Detection:
             stream = streams[(sid, agent)] = _Stream(ctx, reqs)
         # a removed Listing is no longer read from that point
         gone = min((t for t in removed.get((sid, agent, kind, name), ()) if t > ts), default=None)
-        charged = stream.charge(ts, gone, tokens)
+        charged = stream.charge(ts, gone, tokens, (project, kind, name))
         if charged is None:
             continue  # never read again, so it cost nothing
         cost, high = charged
@@ -177,6 +205,9 @@ def detect(ctx: FindingContext) -> Detection:
         it["sessions"].add(sid)
         it["cost"] += cost
         it["high"] += high
+    for st in streams.values():
+        for key, dollars in st.split_tier_drops():
+            items[key]["high"] += dollars
     covered = [c for st in streams.values() for c in st.covered()]
     if not items:
         return Detection(covered)
@@ -210,5 +241,8 @@ FINDING = FindingDef(
                 "that project over the period.",
     formula="avoidable = lower bound: Listing tokens (text length / 3.6) x cache read price, for "
             "every request after the one that wrote the Listing; upper bound: the lower bound "
-            "plus the Listing's tokens at write price on the Period request that wrote it",
+            "plus the Listing's tokens at write price on the Period request that wrote it, plus "
+            "(tier multiplier - 1) / tier multiplier of a request's whole cost when removing all its "
+            "unused Listings takes its prompt from above its model's Prompt tier threshold to at or "
+            "below it (split across those Listings by token share)",
     detect=detect)
