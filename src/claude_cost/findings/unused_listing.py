@@ -31,14 +31,17 @@ def _used(listing_name: str, kind: str, used: set[str]) -> bool:
 
 
 def _read_rate(ctx: FindingContext, r) -> float:
-    """Cache read $ per token for request `r`, at its own prompt size (so any prompt-size tier)."""
-    prompt = r.context
-    if not prompt:
+    """Cache read $ per token for request `r`, at its own prompt size (so any Prompt tier applies).
+
+    The whole prompt goes in as cache_read alone: `r.context` already sums input and writes,
+    so passing them too would count them twice in the tier check.
+    """
+    if not r.context:
         return 0.0
-    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=prompt,
+    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=r.context,
                               write_5m=0, write_1h=0, speed=r.speed,
                               inference_geo=r.inference_geo, table=ctx.price_table)
-    return c.cache_read / prompt if c else 0.0
+    return c.cache_read / r.context if c else 0.0
 
 
 class _Stream:
