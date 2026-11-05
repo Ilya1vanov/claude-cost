@@ -1,6 +1,10 @@
 """Seam 1 (QueryService): Concurrency, the Parallel sessions numbers on the period comparison's Usage."""
+from datetime import datetime, timezone
+
 import pytest
 
+from claude_cost import store
+from claude_cost.query import QueryService
 from conftest import NOW
 from helpers import req
 
@@ -89,3 +93,13 @@ def test_baseline_has_its_own_concurrency(root, service_for):
     c = service_for(root).period_comparison("week", NOW)
     assert (c.usage_current.avg_concurrency, c.usage_current.peak_concurrency) == (1, 1)
     assert (c.usage_baseline.avg_concurrency, c.usage_baseline.peak_concurrency) == (2, 2)
+
+
+def test_the_repeated_local_hour_at_dst_fall_back_is_two_slots(root, tmp_path, service_for):
+    # New York leaves DST on 2026-11-01: 05:30Z and 06:30Z are both 01:30 local, an hour apart.
+    root.write_transcript("p", "s1", [req("a", "2026-11-01T05:30:00Z")])
+    root.write_transcript("p", "s2", [req("b", "2026-11-01T06:30:00Z")])
+    service_for(root)
+    ny = QueryService(store.connect(tmp_path / "store.sqlite"), "America/New_York")
+    u = ny.period_comparison("week", datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)).usage_current
+    assert (u.avg_concurrency, u.peak_concurrency) == (1, 1)

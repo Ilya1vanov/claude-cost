@@ -892,17 +892,13 @@ class QueryService:
     def _concurrency(self, lo: float, hi: float) -> tuple[float | None, int | None]:
         """(average, peak) Sessions active per clock-aligned local 5-minute slot. A Session is
         active in a slot if it or one of its Subagents made a Request in it; slots with no
-        active Session are left out of the average."""
-        per_slot: dict[int, set[str]] = {}
-        for row in self._conn.execute(
-                f"SELECT {SESSION_ID_SQL} AS sid, r.ts_epoch AS ts FROM requests r {SESSION_JOIN} "
-                "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)):
-            offset = self.local_time(row["ts"]).utcoffset().total_seconds()
-            per_slot.setdefault(int((row["ts"] + offset) // CONCURRENCY_SLOT_SECONDS), set()).add(row["sid"])
-        if not per_slot:
-            return None, None
-        counts = [len(s) for s in per_slot.values()]
-        return sum(counts) / len(counts), max(counts)
+        active Session are left out of the average. Every UTC offset is a whole number of
+        slots, so epoch slots are local clock slots, and a repeated DST hour stays two hours."""
+        row = self._conn.execute(
+            f"SELECT AVG(n) AS avg, MAX(n) AS peak FROM (SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS n "
+            f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ? "
+            "GROUP BY CAST(r.ts_epoch / ? AS INTEGER))", (lo, hi, CONCURRENCY_SLOT_SECONDS)).fetchone()
+        return row["avg"], row["peak"]
 
     def project_names(self) -> dict[str, str]:
         """Project key -> display name, used wherever a Project is shown."""
