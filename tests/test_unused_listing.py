@@ -334,3 +334,17 @@ def test_listing_in_one_transcript_is_charged_for_period_requests_in_the_session
     assert {r.message_id for r in f.requests} <= {"n1", "n2"} and f.requests  # which one is #44
     assert f.avoidable > 0
     assert f.table.rows[0][0] == "big"
+
+
+def test_a_reading_request_above_the_prompt_tier_threshold_pays_the_tier_on_its_reads(
+        root, service_for):
+    """claude-haiku-5-5 reads at $0.01/M, x5 above a 100K prompt; the 50K request stays flat."""
+    haiku = "claude-haiku-5-5"
+    root.write_transcript("p", "s1", [
+        req("r1", "2026-10-30T10:00:00Z", model=haiku, write_1h=1000),
+        req("r2", "2026-10-30T10:05:00Z", model=haiku, cache_read=150_000),
+        req("r3", "2026-10-30T10:10:00Z", model=haiku, cache_read=50_000),
+    ], extra_lines=[skill_listing_line("2026-10-30T09:59:00Z", _skill("a", 10_000))])
+    f = _by_id(service_for(root).findings())["unused-listing"]
+    got = {r.message_id: r.avoidable for r in f.requests}
+    assert got == {"r2": pytest.approx(10_000 * 0.05 / 1e6), "r3": pytest.approx(10_000 * 0.01 / 1e6)}

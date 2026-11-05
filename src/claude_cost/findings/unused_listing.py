@@ -31,11 +31,14 @@ def _used(listing_name: str, kind: str, used: set[str]) -> bool:
 
 
 def _read_rate(ctx: FindingContext, r) -> float:
-    """Cache read $ per token for request `r`, below any prompt-size tier."""
-    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=1, write_5m=0,
-                              write_1h=0, speed=r.speed, inference_geo=r.inference_geo,
-                              table=ctx.price_table)
-    return c.cache_read if c else 0.0
+    """Cache read $ per token for request `r`, at its own prompt size (so any prompt-size tier)."""
+    prompt = r.context
+    if not prompt:
+        return 0.0
+    c = pricing.price_request(r.model, r.day, input=0, output=0, cache_read=prompt,
+                              write_5m=0, write_1h=0, speed=r.speed,
+                              inference_geo=r.inference_geo, table=ctx.price_table)
+    return c.cache_read / prompt if c else 0.0
 
 
 class _Stream:
