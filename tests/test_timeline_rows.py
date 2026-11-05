@@ -154,3 +154,10 @@ def test_session_page_has_a_timeline_box_pointing_at_the_endpoint_and_no_request
     html = _client(root, configure).get("/session/s1").get_data(as_text=True)
     assert 'id="timeline-box"' in html and 'data-src="/api/session/s1/timeline"' in html
     assert 'id="requests"' not in html
+
+
+def test_a_transcript_line_that_is_not_an_object_does_not_break_summary_reading(tmp_path):
+    from claude_cost import timeline_rows
+    path = tmp_path / "t.jsonl"
+    path.write_text('["isCompactSummary"]\n')
+    assert timeline_rows.read_summaries([str(path)], {"c1"}) == {}

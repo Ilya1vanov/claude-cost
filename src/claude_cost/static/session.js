@@ -1,3 +1,12 @@
+document.querySelectorAll(".copy-id").forEach(function (button) {
+  button.addEventListener("click", function () {
+    navigator.clipboard.writeText(button.dataset.copy).then(function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+    });
+  });
+});
+
 (function () {
   var d = JSON.parse(document.getElementById("chart-data").textContent);
   function marked(list, color) {
@@ -145,20 +154,19 @@
     return wrap;
   }
 
-  // The flags of a request, as badges
-  // One list of badge labels, used both to draw the badges and to search them
+  // One list of a request's flag labels, used both to draw the badges and to search them
   var LATE_COMPACT_LABEL = "Late compact";
   function requestBadgeList(row) {
     var list = [];
     if (row.cold_write) { list.push({ cls: "cold", label: "Cold write" }); }
     if (row.cold_resume) { list.push({ cls: "cold", label: "Cold resume" }); }
-    if (row.oversized) { list.push({ cls: "over", label: "Oversized context" }); }
+    if (row.oversized) { list.push({ cls: "over", label: "Oversized context (above " + row.threshold.toLocaleString() + ")" }); }
     return list;
   }
   function requestBadges(row) {
-    var box = el("div", "tl-badges");
-    requestBadgeList(row).forEach(function (b) { box.appendChild(el("span", "badge " + b.cls, b.label)); });
-    return box;
+    var badges = el("div", "tl-badges");
+    requestBadgeList(row).forEach(function (b) { badges.appendChild(el("span", "badge " + b.cls, b.label)); });
+    return badges;
   }
 
   function renderRequest(row) {
@@ -246,8 +254,6 @@
       " at " + row.time]));
   }
 
-  // A Subagent block: collapsed by default. Its rows are not drawn inside it; expanding it adds
-  // them to the flat windowed list right after it, one level deeper (see flatten below).
   // The model and Effort badges for a setting; an Effort this stylesheet has no color for stays plain.
   var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
   function settingBadges(setting, into) {
@@ -258,6 +264,8 @@
     }
   }
 
+  // A Subagent block: collapsed by default. Its rows are not drawn inside it; expanding it adds
+  // them to the flat windowed list right after it, one level deeper (see flatten below).
   function renderSubagent(row) {
     var wrap = el("div", "tl-row tl-request tl-subagent");
     var main = el("div");
@@ -339,18 +347,19 @@
     openAgents.delete(agentId);
     refresh(false);
   }
-  // The model and Effort in force at windowed row `index`: a request or block has its own; a prompt
-  // takes the next request at its depth, else the previous one.
+  // The model and Effort in force at windowed row `index`: a request has its own; any other row, a
+  // Subagent block included (it sits in its parent's stream), takes the next request at its depth,
+  // else the previous one.
   function settingAt(index) {
     var row = flat[index];
     if (!row) { return null; }
-    if (row.model) { return { model: row.model, modelLabel: row.modelLabel, modelFamily: row.modelFamily, effort: row.effort }; }
-    var near = null;
-    for (var i = index + 1; i < flat.length && flat[i].depth >= row.depth; i++) {
-      if (flat[i].depth === row.depth && flat[i].model) { near = flat[i]; break; }
+    function request(i) { return flat[i].depth === row.depth && flat[i].kind === "request"; }
+    var near = row.kind === "request" ? row : null;
+    for (var i = index + 1; !near && i < flat.length && flat[i].depth >= row.depth; i++) {
+      if (request(i)) { near = flat[i]; }
     }
     for (var j = index - 1; !near && j >= 0; j--) {
-      if (flat[j].depth === row.depth && flat[j].model) { near = flat[j]; }
+      if (request(j)) { near = flat[j]; }
     }
     return near && { model: near.model, modelLabel: near.modelLabel, modelFamily: near.modelFamily, effort: near.effort };
   }
@@ -435,7 +444,7 @@
     }).then(function (data) { return data.rows; });
   }
 
-  // timeline_window.js (a module script, so it runs after this one) windows these rows into view
+  // timeline_window.js (a module script placed after this one) windows these rows into view
   // and adds mountRows, updateRows, scrollToIndex, remeasure and onFirstVisibleChange to this object.
   window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el,
     setRowExpanded: setRowExpanded, settingBadges: settingBadges,

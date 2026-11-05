@@ -52,3 +52,19 @@ def test_timeline_header_has_search_box(client):
     html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
     head = html.split('class="tl-head"')[1].split("</div>")[0]
     assert 'id="timeline-search"' in head and 'id="timeline-search-count"' in head
+
+
+def test_session_page_serves_the_timeline_box_and_its_rows_container(client):
+    html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
+    assert 'id="timeline-box"' in html and 'id="timeline-rows"' in html
+
+
+def test_session_script_loads_as_a_module_after_its_classic_dependencies(client):
+    html = client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
+    module = '<script type="module" src="/static/session.js"></script>'
+    assert module in html
+    assert html.index("/static/theme.js") < html.index(module) < html.index("/static/timeline_window.js")
+
+
+def test_session_page_has_no_inline_event_handlers(client):
+    assert " onclick=" not in client.get(f"/session/{SESSION_ID}").get_data(as_text=True)
