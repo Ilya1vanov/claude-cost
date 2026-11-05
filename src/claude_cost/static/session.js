@@ -133,7 +133,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
 
   function renderPrompt(row) {
     var wrap = el("div", "tl-row tl-prompt");
-    wrap.appendChild(el("div", "tl-bubble", row.text));
+    wrap.appendChild(el("div", "tl-bubble" + (row.command ? " command" : ""), row.text));
     return collapsible(wrap, row);
   }
 
@@ -169,6 +169,31 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
     return badges;
   }
 
+  // A tool line is one ellipsized line; a click shows its whole argument. Kept per tool object,
+  // like `expanded`, so it survives windowing redraws.
+  var openTools = new WeakSet();
+  function renderTool(t) {
+    var line = el("div", "tl-tool");
+    line.appendChild(el("b", null, t.name));
+    var arg = document.createTextNode("");
+    line.appendChild(arg);
+    function draw() {
+      var open = openTools.has(t);
+      line.classList.toggle("open", open);
+      arg.textContent = (open ? t.full : t.summary) ? " " + (open ? t.full : t.summary) : "";
+    }
+    draw();
+    if (t.full) {
+      line.title = "Click to show or hide the whole call";
+      line.addEventListener("click", function (ev) {
+        ev.stopPropagation();  // not a click on the row, which toggles Collapse text
+        if (openTools.has(t)) { openTools.delete(t); } else { openTools.add(t); }
+        draw();
+      });
+    }
+    return line;
+  }
+
   function renderRequest(row) {
     var wrap = el("div", "tl-row tl-request" + (row.oversized ? " oversized" : ""));
     var main = el("div");
@@ -179,12 +204,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
       main.appendChild(el("div", "tl-gone", "transcript no longer on disk"));
     } else {
       if (row.text) { main.appendChild(renderText(row.text)); }
-      row.tools.forEach(function (t) {
-        var line = el("div", "tl-tool");
-        line.appendChild(el("b", null, t.name));
-        if (t.summary) { line.appendChild(document.createTextNode(" " + t.summary)); }
-        main.appendChild(line);
-      });
+      row.tools.forEach(function (t) { main.appendChild(renderTool(t)); });
     }
     wrap.appendChild(main);
     wrap.appendChild(el("div", "num ctx", row.context_tokens.toLocaleString()));

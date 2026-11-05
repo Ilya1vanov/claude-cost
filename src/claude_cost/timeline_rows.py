@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
 
 TOOL_LINE_LIMIT = 300  # characters kept of a tool line's argument
+TOOL_FULL_LIMIT = 10_000  # characters kept of that argument for the expanded line
 
 # The one argument that says what a known tool call did
 MAIN_ARGUMENT = {
@@ -28,12 +30,14 @@ MAIN_ARGUMENT = {
 class ToolLine:
     name: str
     summary: str  # "" for an unknown tool or a missing argument
+    full: str = ""  # the whole argument, shown when the line is expanded
 
 
 @dataclass(frozen=True)
 class PromptRow:
     ts: float
     text: str
+    command: bool = False  # a slash command, `text` is "/name args"
     kind: str = "prompt"
 
 
@@ -148,9 +152,23 @@ def tool_line(block: dict) -> ToolLine:
     inp = block.get("input")
     arg = MAIN_ARGUMENT.get(name)
     value = inp.get(arg) if arg and isinstance(inp, dict) else None
-    summary = value.strip().splitlines()[0][:TOOL_LINE_LIMIT] if isinstance(value, str) \
-        and value.strip() else ""
-    return ToolLine(name, summary)
+    if not isinstance(value, str) or not value.strip():
+        return ToolLine(name, "")
+    return ToolLine(name, value.strip().splitlines()[0][:TOOL_LINE_LIMIT],
+                    value.strip()[:TOOL_FULL_LIMIT])
+
+
+COMMAND_TAG = re.compile(r"<command-(name|args)>(.*?)</command-\1>", re.DOTALL)
+
+
+def prompt_row(ts: float, text: str) -> PromptRow:
+    """A slash command is stored wrapped in `<command-name>`/`<command-args>` tags: show it as
+    the command line the user typed."""
+    tags = dict(COMMAND_TAG.findall(text))
+    if "name" not in tags:
+        return PromptRow(ts, text)
+    return PromptRow(ts, " ".join(p for p in (tags["name"].strip(), tags.get("args", "").strip()) if p),
+                     command=True)
 
 
 def scan(path: str, wanted: set[str], prompts: bool
@@ -211,7 +229,7 @@ def read_content(copies: dict[str, list[str]], main_paths: Iterable[str] = ()
         found, typed = scan(path, by_path.get(path, set()), path in prompt_paths)
         content.update({m: c for m, c in found.items() if chosen.get(m) == path})
         for uuid, ts, text in typed:
-            prompts.setdefault(uuid, PromptRow(ts, text))
+            prompts.setdefault(uuid, prompt_row(ts, text))
     return content, list(prompts.values())
 
 

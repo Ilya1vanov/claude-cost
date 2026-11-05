@@ -84,3 +84,13 @@ def test_session_page_shows_times_in_the_configured_time_zone(root, tmp_path):
     assert "2026-10-30 02:00:00 CET" in page          # m1 was 01:00:00Z
     assert "2026-10-30 01:00:00 UTC" not in page
     assert '"2026-10-30 02:00:00"' in page                       # chart label
+
+
+def test_timeline_text_column_can_shrink_below_its_content():
+    """#78: a plain `1fr` track grows to the min-content of a nowrap tool line, pushing
+    the row wider than the Timeline; `minmax(0, 1fr)` keeps it inside and ellipsizes."""
+    from pathlib import Path
+    import claude_cost
+    css = (Path(claude_cost.__file__).parent / "static" / "app.css").read_text()
+    rule = css.split(".tl-head, .tl-request {")[1].split("}")[0]
+    assert "grid-template-columns: minmax(0, 1fr) 90px 80px;" in rule
