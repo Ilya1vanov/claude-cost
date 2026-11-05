@@ -161,5 +161,6 @@
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   {{ ui.chart_scripts('dashboard.js') }}
+  <script src="{{ url_for('static', filename='range_calendar.js') }}"></script>
   <script src="{{ url_for('static', filename='period_popover.js') }}"></script>
 {% endblock %}

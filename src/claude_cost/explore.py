@@ -19,8 +19,8 @@ import csv
 import functools
 import io
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import date, datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 from typing import Callable
 
 from .findings import all_findings
@@ -107,6 +107,31 @@ class Dimension:
 
     def cost_of(self, item: Item, keys: tuple[str, ...] | None) -> float:
         return item.cost if keys is None else sum(item.components[k] for k in keys)
+
+
+DATE_PRESETS = {"last-7": "Last 7 days", "last-30": "Last 30 days", "last-90": "Last 90 days",
+                "this-week": "This week", "last-week": "Last week",
+                "this-month": "This month", "last-month": "Last month"}
+
+
+def resolve_date(value: str, today: date) -> str:
+    """A Date filter value as a day (YYYY-MM-DD) or an inclusive range (A..B): a preset token
+    (`last-7`, `this-week`, ...) is resolved against `today` (weeks start on Monday)."""
+    if value not in DATE_PRESETS:
+        return value
+    if value.startswith("last-") and value[5:].isdigit():
+        lo, hi = today - timedelta(days=int(value[5:]) - 1), today
+    elif value == "this-week":
+        lo, hi = today - timedelta(days=today.weekday()), today
+    elif value == "last-week":
+        hi = today - timedelta(days=today.weekday() + 1)
+        lo = hi - timedelta(days=6)
+    elif value == "this-month":
+        lo, hi = today.replace(day=1), today
+    else:  # last-month
+        hi = today.replace(day=1) - timedelta(days=1)
+        lo = hi.replace(day=1)
+    return f"{lo.isoformat()}..{hi.isoformat()}"
 
 
 class DateDimension(Dimension):
@@ -249,6 +274,13 @@ class ExploreSpec:
     def to_query(self) -> list[tuple[str, str]]:
         return ([("group", self.group)] + [(k, v) for k in DIMENSIONS for v in self.filters.get(k, ())]
                 + ([("sort", self.sort)] if self.sort else []))
+
+    def resolved(self, today: date) -> "ExploreSpec":
+        """The spec with Date presets turned into ranges, for running; the original keeps the tokens."""
+        if "date" not in self.filters:
+            return self
+        dates = tuple(resolve_date(v, today) for v in self.filters["date"])
+        return replace(self, filters={**self.filters, "date": dates})
 
     def with_group(self, group: str) -> "ExploreSpec":
         return ExploreSpec(group, self.filters)  # the sort keys differ per group: back to default
@@ -431,6 +463,8 @@ def chips(spec: ExploreSpec, names: dict[str, dict[str, str]]) -> list[Chip]:
         values = spec.filters.get(key)
         if values:
             shown = [names.get(key, {}).get(v, v) for v in values]
+            if key == "date":
+                shown = [DATE_PRESETS.get(v) or v.replace("..", " – ") for v in values]
             out.append(Chip(key, dim.label, chip_summary(shown), f"{dim.label}: {', '.join(shown)}"))
     return out
 

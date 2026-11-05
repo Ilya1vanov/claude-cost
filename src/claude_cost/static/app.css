@@ -428,3 +428,17 @@ td.tree-node { min-width: 280px; }
   border-top: 1px solid var(--border); background: var(--surface-2); }
 .fp-foot > span { color: var(--muted); font-size: 12px; }
 .fp-foot div { display: flex; gap: 8px; }
+
+/* Date view of the filter popover: presets beside a one-month range calendar (design: Date filter) */
+.filter-pop.wide { width: 560px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.fp-date { display: flex; flex-wrap: wrap; }
+.fp-presets { margin: 0; border: none; border-right: 1px solid var(--border); padding: 8px 6px; flex: 0 0 180px; display: flex; flex-direction: column; gap: 2px; }
+.fp-presets label { min-height: 34px; padding: 0 10px; border-radius: 6px; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.fp-presets label:hover { background: var(--surface-2); }
+.fp-presets label.on { background: var(--accent-soft); font-weight: 600; }
+.fp-presets input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.fp-calbox { flex: 1 1 300px; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.fp-calbox .period-cal { border-left: 0; padding-left: 0; }
+.fp-calbox .cal-nav { left: 0; }
+.fp-range { margin: 0; font-size: 13px; color: var(--muted); min-height: 1.45em; }
