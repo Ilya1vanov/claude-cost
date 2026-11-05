@@ -52,6 +52,7 @@ class RequestRow:
     cold_write: bool
     cold_resume: bool
     oversized: bool  # context above the Compact threshold of its model
+    threshold: int | None  # that Compact threshold, None when its model has none
     content_available: bool  # False: "transcript no longer on disk"
     kind: str = "request"
 
@@ -87,7 +88,7 @@ class IdleGapRow:
 @dataclass(frozen=True)
 class ChildSessionRow:
     """A Side session or Fork started from this Session; `session_id` is its own Timeline."""
-    ts: float  # its first request
+    ts: float  # the fork point for a Fork, else its first request
     session_id: str
     label: str
     link_kind: str  # "side" | "fork"
@@ -99,11 +100,10 @@ class ChildSessionRow:
 @dataclass(frozen=True)
 class ForkedFromRow:
     """Opens a Fork's Timeline."""
-    ts: float  # its first request
+    ts: float  # the fork point: the last request it copied (its first own request when none)
     parent_session_id: str
     parent_label: str
     kind: str = "forked_from"
-
 
 
 @dataclass(frozen=True)
@@ -120,9 +120,12 @@ class SubagentRow:
     requests: int
     peak_context: int
     cost: float
-    rows: tuple
+    rows: tuple[Row, ...]
     kind: str = "subagent"
 
+
+Row = (PromptRow | RequestRow | SettingChangeRow | CompactionRow | IdleGapRow | ChildSessionRow
+       | ForkedFromRow | SubagentRow)
 
 # Order of rows with the same time: a Fork's opening row, then the prompt that starts a turn, then
 # events (any other kind), then the request, then the idle gap that follows it
@@ -233,7 +236,7 @@ def read_summaries(paths: Iterable[str], boundary_uuids: set[str]) -> dict[str, 
                 if isinstance(content, list):
                     content = "\n\n".join(b.get("text", "") for b in content
                                           if isinstance(b, dict) and b.get("type") == "text")
-                if rec.get("isCompactSummary") and parent in boundary_uuids \
+                if isinstance(rec, dict) and rec.get("isCompactSummary") and parent in boundary_uuids \
                         and isinstance(content, str):
                     found.setdefault(parent, content)
     return found

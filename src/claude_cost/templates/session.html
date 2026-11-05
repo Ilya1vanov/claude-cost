@@ -9,8 +9,7 @@
     <div>
       <h1>{% if t.agent_id %}Subagent {{ ui.sid(t.agent_id) }} <small>of session {{ session_label(t.session_id) }}</small>{% else %}Session {{ session_label(t.session_id, link=False) }}{% endif %}</h1>
       {% set full_id = t.agent_id or t.session_id %}<p class="id-row"><code class="full-id">{{ full_id }}</code>
-        <button type="button" class="ghost copy-id" data-copy="{{ full_id }}" aria-label="Copy id"
-          onclick="navigator.clipboard.writeText(this.dataset.copy).then(()=>{this.textContent='Copied';setTimeout(()=>{this.textContent='Copy'},1500)})">Copy</button></p>
+        <button type="button" class="ghost copy-id" data-copy="{{ full_id }}" aria-label="Copy id">Copy</button></p>
       {% if in_period %}<p class="sub">{{ in_period[1] }} requests, <strong>${{ "%.2f"|format(in_period[0]) }}</strong> in {{ period.start }} to {{ period.end }};
         all time: {{ t.total_requests }} requests, ${{ "%.2f"|format(t.total_cost) }}{% if t.subagent_cost %}
         (session ${{ "%.2f"|format(t.cost) }} + subagents ${{ "%.2f"|format(t.subagent_cost) }}){% endif %}</p>
@@ -53,11 +52,12 @@
     <h2>Timeline</h2>
     <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
       <div class="tl-head"><span>Prompts, requests and events <span id="timeline-setting" class="tl-setting"></span> <label class="tl-collapse"><input type="checkbox" id="timeline-collapse"> Collapse text</label> <input type="search" id="timeline-search" class="tl-search" placeholder="Search" aria-label="Search the Timeline"> <span class="tl-search-count num" id="timeline-search-count" aria-live="polite"></span></span><span class="num">Context</span><span class="num">Cost</span></div>
+      <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
     </div>
   </section>
 {% endblock %}
 {% block scripts %}
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
-  {{ ui.chart_scripts('session.js') }}
+  {{ ui.chart_scripts('session.js', module=True) }}
   <script type="module" src="{{ url_for('static', filename='timeline_window.js') }}"></script>
 {% endblock %}

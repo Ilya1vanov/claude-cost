@@ -70,10 +70,12 @@ def test_the_parent_marks_a_fork_started_and_the_fork_opens_with_forked_from(roo
     svc = service_for(root)
     fork = svc.session_timeline("s9", with_rows=True).rows
     assert kinds(fork) == ["forked_from", "request"]  # only the request the fork owns
-    assert (fork[0].parent_session_id, fork[0].ts) == ("s1", fork[1].ts)
-    [started] = of_kind(svc.session_timeline("s1", with_rows=True).rows, "child_session")
+    parent = svc.session_timeline("s1", with_rows=True).rows
+    fork_point = parent[0].ts  # the last request the fork copied: m1
+    assert (fork[0].parent_session_id, fork[0].ts) == ("s1", fork_point) and fork_point < fork[1].ts
+    [started] = of_kind(parent, "child_session")
     assert (started.session_id, started.link_kind, started.requests) == ("s9", "fork", 1)
-    assert started.ts == fork[1].ts
+    assert started.ts == fork_point
 
 
 def test_a_side_session_is_marked_started_in_its_parent_and_no_forked_from_in_it(root, desktop,

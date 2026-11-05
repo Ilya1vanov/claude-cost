@@ -72,3 +72,19 @@ def test_the_subagent_page_is_a_timeline_of_its_stream_and_404s_for_unknown_agen
     rows = client.get("/api/session/s1/agent/a1/timeline").get_json()["rows"]
     assert [r["kind"] for r in rows] == ["request", "subagent", "request"]
     assert client.get("/api/session/s1/agent/nope/timeline").status_code == 404
+
+
+def test_one_timeline_request_reads_each_transcript_once(root, service_for, monkeypatch):
+    from claude_cost import timeline_rows
+    _session(root)
+    # the launching Session's transcript also holds a copy of a Subagent's request
+    root.write_transcript("p", "s1", [
+        req("m1", "2026-10-30T01:00:10Z", output=100), req("m2", "2026-10-30T01:02:00Z", output=100),
+        req("sa1", "2026-10-30T01:00:30Z", input=500, output=100, text="agent one"),
+        req("sb1", "2026-10-30T01:00:35Z", output=100, text="nested")],
+        extra_lines=[prompt_line("u1", "2026-10-30T01:00:00Z", "go")])
+    svc, scanned = service_for(root), []
+    real = timeline_rows.scan
+    monkeypatch.setattr(timeline_rows, "scan", lambda path, *a: scanned.append(path) or real(path, *a))
+    svc.session_timeline("s1", with_rows=True)
+    assert scanned and len(scanned) == len(set(scanned))

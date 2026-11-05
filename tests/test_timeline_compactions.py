@@ -57,6 +57,8 @@ def test_timeline_rows_flag_the_request_above_the_compact_threshold_as_oversized
     _session(root)
     rows = service_for(root).session_timeline("s1", with_rows=True).rows
     assert [r.oversized for r in rows if r.kind == "request"] == [True, False, False]
+    first = next(r for r in rows if r.kind == "request")
+    assert first.threshold and first.context_tokens > first.threshold
 
 
 def test_chart_data_carries_compaction_positions(root, tmp_path):

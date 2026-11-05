@@ -14,10 +14,10 @@
 {# An (i) marker whose native hover tooltip is the wording stored under `key` in tooltips.py. #}
 {% macro info(key) %}<span class="info" title="{{ tooltip(key) }}">(i)</span>{% endmacro %}
 
-{% macro chart_scripts(page_script) %}
+{% macro chart_scripts(page_script, module=False) %}
   <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
   <script src="{{ url_for('static', filename='theme.js') }}"></script>
-  <script src="{{ url_for('static', filename=page_script) }}"></script>
+  <script{% if module %} type="module"{% endif %} src="{{ url_for('static', filename=page_script) }}"></script>
 {% endmacro %}
 
 {# Multi-chip Session picker. Chips are the picked Sessions; typing asks the search endpoint (picker.js).

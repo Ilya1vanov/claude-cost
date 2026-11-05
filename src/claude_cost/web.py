@@ -459,7 +459,8 @@ def create_app(service_factory: Callable[[], QueryService],
             abort(404)
 
         def encode(row) -> dict:
-            out = dataclasses.asdict(dataclasses.replace(row, rows=()) if row.kind == "subagent" else row)
+            flat = dataclasses.replace(row, rows=()) if row.kind == "subagent" else row
+            out = dataclasses.asdict(flat)
             out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
             if row.kind in ("request", "subagent"):
                 out["modelLabel"] = short_model(row.model)
