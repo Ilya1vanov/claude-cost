@@ -1,23 +1,23 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
-{% block title %}Explore · claude-cost{% endblock %}
+{% block title %}Breakdowns · claude-cost{% endblock %}
 {% block content %}
   <div class="page-head">
     <div>
-      <h1>Explore</h1>
+      <h1>Breakdowns</h1>
       <p class="sub">Total <strong>${{ fmt_cost(result.total_cost) }}</strong> across {{ result.total_requests }} requests</p>
     </div>
-    <a href="{{ url_for('explore_page') }}">Reset</a>
+    <a href="{{ url_for('breakdowns_page') }}">Reset</a>
   </div>
-  <form method="get" action="{{ url_for('explore_page') }}" id="explore-form" class="card">
-    <div class="form-row"><label>Group by
-      <select name="group">{% for key, d in dims.items() %}
+  <form method="get" action="{{ url_for('breakdowns_page') }}" id="explore-form" class="card">
+    <div class="form-row"><label>Breakdown by
+      <select name="group">{% for key, d in breakdown_dims.items() %}
         <option value="{{ key }}" {{ "selected" if key == spec.group }}>{{ d.label }}</option>{% endfor %}
       </select></label></div>
     {% if spec.filters %}<div>
       {% for key, values in spec.filters.items() %}{% for v in values %}
         <span class="chip">{{ dims[key].label }} = {{ project_name(v) if key == 'project' else v }}
-          <a href="{{ explore_url('explore_page', spec.without(key, v)) }}" aria-label="Remove filter">×</a></span>
+          <a href="{{ explore_url('breakdowns_page', spec.without(key, v)) }}" aria-label="Remove filter">×</a></span>
         <input type="hidden" name="{{ key }}" value="{{ v }}">
       {% endfor %}{% endfor %}</div>{% endif %}
     <details {{ "open" if not spec.filters }}><summary>Add a filter</summary>
@@ -36,17 +36,16 @@
   {% if result.overlapping %}<p class="callout">A request can use several {{ result.label|lower }} values, so rows can add up to more than the total.</p>{% endif %}
   {% if result.rows %}
   <section class="card">
-    <div class="card-head"><h2>Cost by {{ result.label|lower }}</h2><a id="csv-link" href="{{ explore_url('explore_csv', spec) }}">Export CSV</a></div>
+    <div class="card-head"><h2>Cost by {{ result.label|lower }}</h2><a id="csv-link" href="{{ explore_url('breakdowns_csv', spec) }}">Export CSV</a></div>
     <div class="chart"><canvas id="explore-chart" aria-label="Cost by {{ result.label }}"></canvas></div>
   </section>
   <section class="card">
     <div class="table-wrap"><table id="explore-table">
       <tr><th>{{ result.label }}</th><th class="num">Cost</th><th class="num">Requests</th><th class="num">Share %</th><th></th></tr>
       {% for r in result.rows %}
-      <tr><td>{% if result.group == "session" %}{{ session_label(r.value) }}{% elif result.group == "component" %}{{ ui.component(r.value) }}{% elif result.group == "project" %}{{ project_name(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
+      <tr><td>{% if result.group == "component" %}{{ ui.component(r.value) }}{% elif result.group == "project" %}{{ project_name(r.value) }}{% else %}{{ r.value }}{% endif %}</td>
         <td class="num">${{ fmt_cost(r.cost) }}</td><td class="num">{{ r.requests }}</td><td class="num">{{ fmt_share(r.share) }}</td>
-        <td class="num">{% if result.group == "session" %}<a href="{{ explore_url('explore_requests', spec.drill('session', r.value)) }}">requests</a>
-          {% else %}<a href="{{ explore_url('explore_page', spec.drill(result.group, r.value)) }}">sessions</a>{% endif %}</td></tr>
+        <td class="num"><a href="{{ explore_url('sessions_page', spec.drill(result.group, r.value)) }}">sessions</a></td></tr>
       {% endfor %}
     </table></div>
   </section>
