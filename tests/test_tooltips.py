@@ -30,15 +30,15 @@ def _row(html, label):
 def test_every_cost_component_and_cache_metric_has_a_tooltip(root, configure):
     html = _dashboard(root, configure)
     for label in ("Hit ratio", "Cache loss", "Cold writes", "Warm writes", "5m writes", "1h writes"):
-        assert 'class="info" title="' in _row(html, label), label
+        assert 'class="info" data-tip="' in _row(html, label), label
     for name in ("input", "output", "cache write (5m)", "cache write (1h)", "cache read"):
-        assert re.search(rf"{re.escape(name)}\s*<span class=\"info\" title=\"", html), name
+        assert re.search(rf"{re.escape(name)}\s*<span class=\"info\" data-tip=\"", html), name
 
 
 def test_cache_loss_kpi_tile_has_a_tooltip(root, configure):
     html = _dashboard(root, configure)
     tile = re.search(r'<div class="label">Cache loss[^<]*(<span.*?)</div>', html, re.S).group(1)
-    assert 'class="info" title="' in tile
+    assert 'class="info" data-tip="' in tile
 
 
 def test_5m_and_1h_tooltips_say_when_each_ttl_is_used(root, configure):
@@ -65,5 +65,11 @@ def test_a_missing_tooltip_key_fails_loudly(root, configure):
 
 def test_every_info_marker_on_the_dashboard_has_wording(root, configure):
     html = _dashboard(root, configure)
-    markers = re.findall(r'<span class="info" title="([^"]*)">', html)
+    markers = re.findall(r'<span class="info" data-tip="([^"]*)"', html)
     assert markers and all(m.strip() for m in markers)
+
+
+def test_dashboard_loads_the_script_that_shows_info_tooltips(root, configure):
+    html = _dashboard(root, configure)
+    src = re.search(r'<script src="([^"]*info_tip\.js)"', html).group(1)
+    assert "data-tip" in create_app(lambda: None, lambda: NOW).test_client().get(src).get_data(as_text=True)

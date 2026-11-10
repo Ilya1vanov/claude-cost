@@ -42,7 +42,7 @@ def test_parallel_sessions_card_shows_avg_and_peak_against_baseline(root, config
 def test_parallel_sessions_values_have_tooltips(root, configure):
     _busy_week(root)
     card = _card(root, configure)
-    assert card.count('class="info" title="') == 2
+    assert card.count('class="info" data-tip="') == 2
     assert ("How many Sessions were working at once, on average. Time is cut into 5-minute slots; "
             "a Session counts in a slot if it or one of its Subagents made a request in it. Only slots "
             "where at least one Session was working are averaged, so idle time doesn&#39;t pull it down."
