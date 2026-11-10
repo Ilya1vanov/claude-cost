@@ -25,6 +25,7 @@ TTL_1H = 60 * 60
 COLD, WARM, NONE = "cold", "warm", "none"
 MEDIAN_FIRST_META = "median_first_context"  # the `meta` row holding the lifetime baseline
 BARE_SUBAGENT_META = "bare_subagent_context"  # the `meta` row holding the Bare subagent context
+META_ROWS = (MEDIAN_FIRST_META, BARE_SUBAGENT_META)  # `classify_all` stores these; a missing one is stale
 BARE_MIN_RUNS = 20  # non-fork runs a subagent type needs to count as the leanest
 
 
@@ -51,8 +52,8 @@ def needs_classification(conn: sqlite3.Connection) -> bool:
         "LEFT JOIN request_cache c ON c.message_id = r.message_id "
         "LEFT JOIN request_stream s ON s.message_id = r.message_id "
         "WHERE c.message_id IS NULL OR s.message_id IS NULL) "
-        "OR (SELECT COUNT(*) FROM meta WHERE key IN (?, ?)) < 2",
-        (MEDIAN_FIRST_META, BARE_SUBAGENT_META)).fetchone()[0])
+        f"OR (SELECT COUNT(*) FROM meta WHERE key IN ({','.join('?' * len(META_ROWS))})) < {len(META_ROWS)}",
+        META_ROWS).fetchone()[0])
 
 
 def invalidate(conn: sqlite3.Connection, message_ids) -> None:

@@ -666,8 +666,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                      [(u, stem, ts, trig, pre, post)
                                       for u, ts, trig, pre, post in parsed.compactions])
                 if sub is not None:  # where this Subagent's Stream compacted
-                    conn.executemany("INSERT OR IGNORE INTO subagent_compactions VALUES (?,?,?)",
-                                     [(u, sub["agent_id"], ts) for u, ts, *_ in parsed.compactions])
+                    conn.executemany("INSERT OR IGNORE INTO subagent_compactions VALUES (?,?,?,?)",
+                                     [(u, stem, sub["agent_id"], ts) for u, ts, *_ in parsed.compactions])
                 if sub is None:  # Turns: main transcripts only, deduped by record uuid
                     conn.executemany("INSERT OR IGNORE INTO turns VALUES (?,?,?)",
                                      [(u, stem, ts) for u, ts in parsed.turns])

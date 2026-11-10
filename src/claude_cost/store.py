@@ -196,9 +196,11 @@ CREATE TABLE IF NOT EXISTS compactions (
   post_tokens INTEGER NOT NULL
 );
 -- compact_boundary records of Subagent transcripts (ticket #107): where a Subagent's Stream first
--- compacted, so a block priced over it stops there; not the Session's compactions (not in `compactions`)
+-- compacted, so a block priced over it stops there (`stem` = the parent transcript: agent ids can
+-- repeat across Sessions); not the Session's compactions (not in `compactions`)
 CREATE TABLE IF NOT EXISTS subagent_compactions (
   uuid TEXT PRIMARY KEY,
+  stem TEXT NOT NULL,
   agent_id TEXT NOT NULL,
   ts_epoch REAL NOT NULL
 );

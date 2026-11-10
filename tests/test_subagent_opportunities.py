@@ -214,6 +214,37 @@ def test_the_block_ends_at_the_streams_first_compaction(root, service_for):
                           "w-c": (0.0, 0.0)}
 
 
+def test_a_compaction_ends_only_the_block_of_the_session_it_happened_in(root, service_for):
+    """The same agent id in two Sessions: one Session's compaction does not end the other's block."""
+    for sid, day in (("s1", "10"), ("s2", "11")):
+        root.write_transcript("p", sid, [req(f"{sid}-main", f"2026-10-{day}T09:00:00Z", input=1_000)])
+        root.write_subagent_transcript(
+            "p", sid, "wide1",
+            [req(f"{sid}-a", f"2026-10-{day}T10:01:00Z", input=60_000),
+             req(f"{sid}-b", f"2026-10-{day}T10:02:00Z", cache_read=60_000),
+             req(f"{sid}-c", f"2026-10-{day}T10:03:00Z", cache_read=60_000)],
+            meta={"agentType": "general-purpose"},
+            extra_lines=[compact_line("c1", "2026-10-10T10:02:30Z", 60_000, 5_000)] if sid == "s1" else None)
+    f = _wide_finding(service_for(root))
+    assert _ranged(f) == {"s1-a": (0.0, pytest.approx(EXTRA * WRITE)),
+                          "s1-b": (0.0, pytest.approx(EXTRA * READ)),
+                          "s1-c": (0.0, 0.0),
+                          "s2-a": (0.0, pytest.approx(EXTRA * WRITE)),
+                          "s2-b": (0.0, pytest.approx(EXTRA * READ)),
+                          "s2-c": (0.0, pytest.approx(EXTRA * READ))}
+
+
+def test_the_per_request_figures_sum_to_the_upper_bound_with_a_cold_write_and_a_compaction(root, service_for):
+    _wide(root, [req("w-a", "2026-10-30T10:01:00Z", input=60_000),
+                 req("w-b", "2026-10-30T10:02:00Z", cache_read=60_000),
+                 req("w-c", "2026-10-30T10:30:00Z", write_5m=60_000),  # Cold
+                 req("w-d", "2026-10-30T10:31:00Z", cache_read=60_000)],
+          extra_lines=[compact_line("c1", "2026-10-30T10:30:30Z", 60_000, 5_000)])
+    f = _wide_finding(service_for(root))
+    assert f.avoidable_high > 0
+    assert sum(h for _, h in _ranged(f).values()) == pytest.approx(f.avoidable_high)
+
+
 def test_a_compaction_before_the_period_leaves_nothing_to_charge(root, service_for):
     _wide(root, [req("w-a", "2026-10-29T10:01:00Z", input=60_000),
                  req("w-b", "2026-10-30T10:02:00Z", cache_read=60_000)],

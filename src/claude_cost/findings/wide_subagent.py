@@ -17,7 +17,7 @@ BARE_THRESHOLD = "bare_subagent_context_tokens"
 BARE_FALLBACK = 5_000  # tokens, when no subagent type has BARE_MIN_RUNS non-fork runs
 
 
-def _k(tokens: float) -> str:
+def _thousands(tokens: float) -> str:
     return f"{tokens / 1000:.1f}K"
 
 
@@ -31,13 +31,20 @@ def bare_context(ctx: FindingContext) -> tuple[float, str]:
     return BARE_FALLBACK, "fallback"
 
 
-def _first_compactions(ctx: FindingContext, agents: set[str]) -> dict[str, float]:
-    if ctx.conn is None or not agents:
+def _first_compactions(ctx: FindingContext, streams) -> dict[tuple[str, str], float]:
+    """(session, agent) -> the Stream's first compaction, for the given (session, agent) keys."""
+    if ctx.conn is None or not streams:
         return {}
-    return {x["agent_id"]: x["ts"] for x in ctx.conn.execute(
-        "SELECT agent_id, MIN(ts_epoch) AS ts FROM subagent_compactions "
-        "WHERE agent_id IN (SELECT value FROM json_each(?)) GROUP BY agent_id",
-        (json.dumps(sorted(agents)),))}
+    stems = {t for sid, _ in streams for t in ctx.graph.transcripts(sid)}
+    first: dict[tuple[str, str], float] = {}
+    for x in ctx.conn.execute(
+            "SELECT stem, agent_id, MIN(ts_epoch) AS ts FROM subagent_compactions "
+            "WHERE stem IN (SELECT value FROM json_each(?)) GROUP BY stem, agent_id",
+            (json.dumps(sorted(stems)),)):
+        key = (ctx.graph.session_of(x["stem"]), x["agent_id"])
+        if key in streams:
+            first[key] = min(x["ts"], first.get(key, x["ts"]))
+    return first
 
 
 def detect(ctx: FindingContext) -> Detection:
@@ -48,17 +55,17 @@ def detect(ctx: FindingContext) -> Detection:
     for r in wide:
         if not r.agent_fork:
             by_stream[(r.session_id, r.agent_id)].append(r)
-    compacted = _first_compactions(ctx, {a for _, a in by_stream})
+    compacted = _first_compactions(ctx, set(by_stream))
     figures: dict[str, Covered] = {}
     streams = []
-    for (_, agent), reqs in by_stream.items():
+    for key, reqs in by_stream.items():
         extra = max(0, round(reqs[0].stream_first_context - bare))
         stream = Stream(ctx, reqs)
         streams.append(stream)
         # a Stream whose first request precedes the Period was written before it: no write to charge
-        start = reqs[0].ts if reqs[0].gap is None else float("-inf")
+        start = reqs[0].ts if stream.prev_ts is None else float("-inf")
         if extra:
-            stream.charge(start, compacted.get(agent), extra, own_writer=True)
+            stream.charge(start, compacted.get(key), extra, own_writer=True)
     for stream in streams:
         stream.split_tier_drops()
         figures.update((c.message_id, c) for c in stream.covered())
@@ -68,11 +75,11 @@ def detect(ctx: FindingContext) -> Detection:
             covered.append(Covered(r.message_id))
         else:
             c = figures.get(r.message_id)  # $0 lower bound: nothing is claimed for sure
-            covered.append(Covered(r.message_id, 0.0, c.avoidable_high if c else 0.0))
+            covered.append(Covered(r.message_id, avoidable=0.0, avoidable_high=c.avoidable_high if c else 0.0))
     return Detection(
         covered, f"first-request context >= {limit:,} tokens",
         formula=f"avoidable = $0 to an upper bound: the extra context (first-request context - bare "
-                f"context {_k(bare)} ({source})) as one block from the first request to the end or "
+                f"context {_thousands(bare)} ({source})) as one block from the first request to the end or "
                 f"first compaction: its write on the first request (if in the Period), its reads on "
                 f"every later request, each Cold write that rebuilt it (write price - read price) "
                 f"and any Prompt tier drop its removal would cause")
