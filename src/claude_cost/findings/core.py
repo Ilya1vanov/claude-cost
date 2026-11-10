@@ -114,6 +114,7 @@ class Detection:
     covered: list[Covered]
     detail: str = ""  # measured inputs to the formula, e.g. "median first context 12,000"
     table: DetailTable | None = None
+    formula: str | None = None  # replaces the definition's formula text, e.g. to name a measured input
 
 
 @dataclass(frozen=True)
@@ -185,12 +186,14 @@ class FindingContext:
                  conn: sqlite3.Connection | None = None, compact=None,
                  compare_model: str = DEFAULT_COMPARE_MODEL, *,
                  median_first_context: float | None, graph=None,
-                 period_start: float | None = None, period_end: float | None = None):
+                 bare_subagent=None, period_start: float | None = None, period_end: float | None = None):
         self.rows = rows
         # the Period's own bounds (end exclusive); None on a side that is all history
         self.period_start, self.period_end = period_start, period_end
         # lifetime, not per Period; None when the store has not stored it (Cold resume then reports nothing)
         self.median_first_context = median_first_context
+        # lifetime Bare subagent context (cache.BareSubagentContext); None = none learned
+        self.bare_subagent = bare_subagent
         if graph is None and conn is not None:
             graph = session_graph.load(conn)
         self.graph = graph  # session_graph.SessionGraph: how Transcripts group into Sessions
@@ -295,7 +298,7 @@ def build_finding(d: FindingDef, det: Detection, rows: Mapping[str, RequestRow])
          for a, rs in agents.items()),
         key=lambda s: (-s.attributed, s.agent_id)))
     return Finding(
-        d.id, d.kind, d.title, d.description, d.formula, det.detail,
+        d.id, d.kind, d.title, d.description, det.formula or d.formula, det.detail,
         sum(r.cost for r, _ in covered),
         max(0.0, sum(c.avoidable or 0.0 for _, c in covered)) if has_avoidable else None,
         sessions, requests, subagents, det.table, high([c for _, c in covered]))

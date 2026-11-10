@@ -216,15 +216,16 @@ class DataRoot:
         return f
 
     def write_subagent_transcript(self, project: str, session_id: str, agent_id: str,
-                                  reqs: list[Req], meta: dict | None = None) -> Path:
+                                  reqs: list[Req], meta: dict | None = None,
+                                  extra_lines: list[str] | None = None) -> Path:
         """`meta` is written to the sibling agent-<id>.meta.json (agentType, toolUseId, ...)."""
         d = self.path / "projects" / project / session_id / "subagents"
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"agent-{agent_id}.jsonl"
         if meta is not None:
             (d / f"agent-{agent_id}.meta.json").write_text(json.dumps(meta))
-        f.write_text("\n".join(json.dumps(rec) for r in reqs
-                               for rec in assistant_lines(r, session_id)) + "\n")
+        f.write_text("\n".join([json.dumps(rec) for r in reqs
+                                for rec in assistant_lines(r, session_id)] + (extra_lines or [])) + "\n")
         return f
 
 
