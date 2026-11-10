@@ -142,7 +142,7 @@ def test_dashboard_shows_usage_strip_above_cost_components_with_per_turn_columns
     strip = re.search(r'id="usage-strip".*?</section>', html, re.S).group(0)
     for label in ("Sessions", "Turns", "Requests", "Subagents"):
         assert label in strip
-    assert 'class="info" title="' in strip
+    assert 'class="info" data-tip="' in strip
     assert html.index('id="usage-strip"') < html.index("<h2>Cost components</h2>")
     comps = re.search(r"<h2>Cost components</h2>.*?</table>", html, re.S).group(0)
     assert "per Turn (this)" in comps and "per Turn (baseline)" in comps
