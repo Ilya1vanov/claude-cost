@@ -1,6 +1,9 @@
 """Seam 1: Compact threshold, Oversized context Drain and Late compacts through the query service."""
+from datetime import date
+
 import pytest
 
+from claude_cost import pricing
 from claude_cost.compact import WindowClamp
 from claude_cost.query import QueryService
 from helpers import compact_line, req
@@ -430,3 +433,133 @@ def test_oversized_context_avoidable_pays_fast_mode_and_region(root, service_for
     got = {r.message_id: r.avoidable for r in f.requests if r.session_id == "big"}
     excess = (600_000 - t) * 0.2e-6 * mult
     assert got == {"b0": pytest.approx(excess - 0.28 * mult), "b1": pytest.approx(excess)}
+
+
+# --- avoidable spend as a range (#104): Cold writes of the excess replace reads in the upper bound ---
+
+
+def _big(root, reqs):
+    _ramp_sessions(root, 20)
+    root.write_transcript("p", "big", reqs)
+
+
+def _oversized_big(service_for, root):
+    svc = service_for(root)
+    t = svc.compact_thresholds().for_model("claude-opus-5-5").threshold
+    f = {f.id: f for f in svc.findings()}["oversized-context"]
+    return t, f, {r.message_id: (r.avoidable, r.avoidable_high) for r in f.requests if r.session_id == "big"}
+
+
+def _prices(model="claude-opus-5-5"):
+    """$ per token (read, write_5m, write_1h) and the entry, from the price table the fixtures use."""
+    p = pricing.find_price(model, date(2026, 10, 20))
+    return (p.cache_read / 1e6, p.input * pricing.WRITE_5M_MULT / 1e6,
+            p.input * pricing.WRITE_1H_MULT / 1e6, p)
+
+
+def test_oversized_cold_write_upper_bound_swaps_the_excess_reads_for_its_write(root, service_for):
+    # b1 comes back after 10 min (> 5m TTL) and rewrites 300K tokens of its 400K context
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000),
+                req("b1", "2026-10-20T10:10:00Z", cache_read=100_000, write_1h=300_000)])
+    t, _, got = _oversized_big(service_for, root)
+    read, _, w1h, _ = _prices()
+    excess = 400_000 - t  # fewer than the 300K written, so all of it was rewritten
+    assert excess == 270_000
+    low1 = excess * read
+    assert got["b1"] == (pytest.approx(low1), pytest.approx(low1 + excess * (w1h - read)))
+
+
+def test_oversized_cold_write_excess_is_capped_at_the_tokens_written(root, service_for):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000),
+                req("b1", "2026-10-20T10:10:00Z", cache_read=350_000, write_1h=50_000)])
+    t, _, got = _oversized_big(service_for, root)
+    read, _, w1h, _ = _prices()
+    low1 = (400_000 - t) * read
+    assert got["b1"] == (pytest.approx(low1), pytest.approx(low1 + 50_000 * (w1h - read)))
+
+
+@pytest.mark.parametrize("w5, w1", [(300_000, 0), (100_000, 200_000)])
+def test_oversized_cold_write_upper_bound_prices_5m_writes_and_a_5m_1h_mix(root, service_for, w5, w1):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000),
+                req("b1", "2026-10-20T10:10:00Z", cache_read=100_000, write_5m=w5, write_1h=w1)])
+    t, _, got = _oversized_big(service_for, root)
+    read, w5m, w1h, _ = _prices()
+    excess = 400_000 - t
+    avg_write = (w5 * w5m + w1 * w1h) / (w5 + w1)
+    low1 = excess * read
+    assert got["b1"] == (pytest.approx(low1), pytest.approx(low1 + excess * (avg_write - read)))
+
+
+@pytest.mark.parametrize("kw, mult", [({"speed": "fast"}, 2.0), ({"inference_geo": "us"}, 1.1)])
+def test_oversized_cold_write_upper_bound_pays_fast_mode_and_region(root, service_for, kw, mult):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000, **kw),
+                req("b1", "2026-10-20T10:10:00Z", cache_read=100_000, write_1h=300_000, **kw)])
+    t, _, got = _oversized_big(service_for, root)
+    read, _, w1h, _ = _prices()
+    excess = 400_000 - t
+    low1 = excess * read * mult
+    assert got["b1"] == (pytest.approx(low1), pytest.approx(low1 + excess * (w1h - read) * mult))
+
+
+def test_oversized_cold_write_upper_bound_pays_the_prompt_tier(root, service_for):
+    model = "claude-haiku-5-5"
+    _ramp_sessions(root, 20, model=model, post=50_000)
+    root.write_transcript("p", "big", [req("b0", "2026-10-20T10:00:00Z", model=model, cache_read=150_000),
+                                       req("b1", "2026-10-20T10:10:00Z", model=model, cache_read=50_000,
+                                           write_1h=550_000)])
+    svc = service_for(root)
+    t = svc.compact_thresholds().for_model(model).threshold
+    f = {f.id: f for f in svc.findings()}["oversized-context"]
+    [b1] = [r for r in f.requests if r.message_id == "b1"]
+    read, _, w1h, p = _prices(model)
+    assert 600_000 > p.tier_threshold >= t  # the request is in the tier, its threshold is not
+    excess = 600_000 - t
+    low1 = 600_000 * read * p.tier_mult - t * read  # reads above T: all 600K at the tier, T flat
+    # the Cold write was priced at the tier too: swap the tier read price for the tier write price
+    assert (b1.avoidable, b1.avoidable_high) == (
+        pytest.approx(low1), pytest.approx(low1 + excess * (w1h - read) * p.tier_mult))
+
+
+def test_oversized_request_that_was_not_a_cold_write_has_upper_bound_equal_to_lower(root, service_for):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000),
+                req("b1", "2026-10-20T10:01:00Z", cache_read=100_000, write_1h=300_000)])  # warm write
+    _, _, got = _oversized_big(service_for, root)
+    assert got["b1"][1] == pytest.approx(got["b1"][0])
+
+
+def test_oversized_finding_upper_bound_is_the_sum_of_its_sessions_and_requests(root, service_for):
+    # a row can be negative (the first one above T pays the compaction), so the clamps sit on
+    # sessions and the finding: pick sessions whose totals are all positive, so they are plain sums
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=3_000_000),
+                req("b1", "2026-10-20T10:10:00Z", cache_read=100_000, write_1h=300_000)])
+    _, f, got = _oversized_big(service_for, root)
+    assert all(s.avoidable > 0 for s in f.sessions)
+    assert f.avoidable_high > f.avoidable
+    assert f.avoidable == pytest.approx(sum(s.avoidable for s in f.sessions))
+    assert f.avoidable_high == pytest.approx(sum(s.avoidable_high for s in f.sessions))
+    [s] = [s for s in f.sessions if s.session_id == "big"]
+    assert s.avoidable == pytest.approx(sum(l for l, _ in got.values()))
+    assert s.avoidable_high == pytest.approx(sum(h for _, h in got.values()))
+
+
+def test_a_request_that_is_a_cold_resume_and_oversized_counts_in_both_findings(root, service_for):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000),
+                req("b1", "2026-10-20T11:30:00Z", cache_read=100_000, write_1h=300_000)])
+    svc = service_for(root)
+    t = svc.compact_thresholds().for_model("claude-opus-5-5").threshold
+    read, _, w1h, _ = _prices()
+    excess = 400_000 - t
+    by_id = {f.id: f for f in svc.findings()}
+    for fid in ("oversized-context", "cold-resume"):
+        assert "b1" in {r.message_id for r in by_id[fid].requests}
+    [over] = [r for r in by_id["oversized-context"].requests if r.message_id == "b1"]
+    assert over.avoidable == pytest.approx(excess * read)
+    assert over.avoidable_high == pytest.approx(excess * read + excess * (w1h - read))
+    [cold] = [r for r in by_id["cold-resume"].requests if r.message_id == "b1"]
+    assert cold.avoidable_high is None  # Cold resume is a single figure; only Oversized has a range
+
+
+def test_oversized_formula_describes_the_upper_bound(root, service_for):
+    _big(root, [req("b0", "2026-10-20T10:00:00Z", cache_read=150_000)])
+    f = {f.id: f for f in service_for(root).findings()}["oversized-context"]
+    assert "upper bound" in f.formula and "Cold write" in f.formula
