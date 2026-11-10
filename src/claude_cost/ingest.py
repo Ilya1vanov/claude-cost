@@ -591,6 +591,9 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
             and not conn.execute("SELECT 1 FROM meta WHERE key = 'turns'").fetchone()):
         rebuild = True  # a store from before Turns: re-read once to record them
+    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
+            and not conn.execute("SELECT 1 FROM meta WHERE key = 'subagent_compactions'").fetchone()):
+        rebuild = True  # a store from before Subagent compactions: re-read once to record them
     changed = rebuild
     with conn:
         if not conn.execute("SELECT 1 FROM meta WHERE key = 'turns_from'").fetchone():
@@ -662,6 +665,9 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                      "VALUES (?,?,?,?,?,?)",
                                      [(u, stem, ts, trig, pre, post)
                                       for u, ts, trig, pre, post in parsed.compactions])
+                if sub is not None:  # where this Subagent's Stream compacted
+                    conn.executemany("INSERT OR IGNORE INTO subagent_compactions VALUES (?,?,?)",
+                                     [(u, sub["agent_id"], ts) for u, ts, *_ in parsed.compactions])
                 if sub is None:  # Turns: main transcripts only, deduped by record uuid
                     conn.executemany("INSERT OR IGNORE INTO turns VALUES (?,?,?)",
                                      [(u, stem, ts) for u, ts in parsed.turns])
@@ -698,6 +704,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                      (str(now.timestamp()),))
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('subagent_compactions', '1')")
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     spotlight_migration.run(conn)  # once, after the Sessions are grouped

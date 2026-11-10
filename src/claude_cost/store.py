@@ -195,6 +195,13 @@ CREATE TABLE IF NOT EXISTS compactions (
   pre_tokens INTEGER NOT NULL,
   post_tokens INTEGER NOT NULL
 );
+-- compact_boundary records of Subagent transcripts (ticket #107): where a Subagent's Stream first
+-- compacted, so a block priced over it stops there; not the Session's compactions (not in `compactions`)
+CREATE TABLE IF NOT EXISTS subagent_compactions (
+  uuid TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  ts_epoch REAL NOT NULL
+);
 -- Turns (ticket #25): prompts the user typed in main transcripts, deduped by record uuid
 -- (resume copies repeat them); `stem` is the transcript that held it first
 CREATE TABLE IF NOT EXISTS turns (

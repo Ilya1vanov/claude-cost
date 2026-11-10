@@ -128,7 +128,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 81. As a user, I want an Unused listing Drain for skills and MCP servers listed in a project's sessions but never invoked there in the period, with avoidable spend a range: the read cost of their Listings as the lower bound, plus the write that stored them, Cold writes that rebuilt them and any Prompt tier drop as the upper bound (ADR-0006), so that I know what to disable per project.
 82. As a user, I want "unused" judged per project, so that a skill used daily in one project isn't flagged because another project never uses it.
 83. As a user, I want a Fable usage Opportunity, with avoidable spend = Fable cost minus the same tokens at Opus 5.5 prices, so that I can decide when Fable is worth it.
-84. As a user, I want a Wide subagent Opportunity for Subagents whose first request has at least 50K context, so that I can spot expensive delegations.
+84. As a user, I want a Wide subagent Opportunity for Subagents whose first request has at least 50K context, with avoidable spend a range from $0 to an upper bound that prices the extra context (first-request context minus the Bare subagent context, learned from my leanest subagent type with 20+ non-fork runs, fallback 5,000, overridable by `bare_subagent_context_tokens`) as one block, so that I can spot expensive delegations and judge what a lean start could have saved.
 85. As a user, I want a Fork subagent Opportunity, so that I can review forks without them being called waste.
 86. As a user, I want every threshold configurable, so that I can tune findings to my workflow.
 87. As a user, I want to drill from a finding to the sessions and requests it covers, so that I can see concrete examples.
@@ -177,7 +177,8 @@ All terms in this spec are defined in `GLOSSARY.md`.
   - Oversized context = reads above T minus the cost of compacting at T.
   - Unused listing = read cost of the unused Listings (lower bound); the upper bound adds their write, Cold-write rebuilds and any Prompt tier drop (ADR-0006).
   - Fable usage = Fable cost minus the same tokens at Opus 5.5 prices.
-  - Wide subagent and Fork subagent: Attributed spend only.
+  - Wide subagent = $0 (lower bound); the upper bound prices the extra context (first-request context minus the Bare subagent context, never below 0) as one block to the Stream's end or first compaction: its write on the first request (if in the Period), reads on later requests, Cold-write rebuilds and any Prompt tier drop, as for Unused listing. Fork subagents are covered with no avoidable figure.
+  - Fork subagent: Attributed spend only.
   - Negative results are shown as $0. Avoidable figures are not additive across findings.
 - **Periods:** local time zone; weeks start Monday; modes `last7` (with Include today), calendar week, calendar month; partial periods compared on equal elapsed days; Comparison only between periods of one mode, with a user-chosen Baseline (default: earliest selected).
 - **Retention:** the store never deletes rows when transcripts disappear.

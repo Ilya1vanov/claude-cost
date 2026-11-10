@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import statistics
+from collections import defaultdict
+from dataclasses import dataclass
 
 from .sql import SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
@@ -22,6 +24,8 @@ TTL_5M = 5 * 60
 TTL_1H = 60 * 60
 COLD, WARM, NONE = "cold", "warm", "none"
 MEDIAN_FIRST_META = "median_first_context"  # the `meta` row holding the lifetime baseline
+BARE_SUBAGENT_META = "bare_subagent_context"  # the `meta` row holding the Bare subagent context
+BARE_MIN_RUNS = 20  # non-fork runs a subagent type needs to count as the leanest
 
 
 def classify_session(requests: list[tuple[str, float, int, int]]) -> dict[str, str]:
@@ -47,7 +51,8 @@ def needs_classification(conn: sqlite3.Connection) -> bool:
         "LEFT JOIN request_cache c ON c.message_id = r.message_id "
         "LEFT JOIN request_stream s ON s.message_id = r.message_id "
         "WHERE c.message_id IS NULL OR s.message_id IS NULL) "
-        "OR NOT EXISTS (SELECT 1 FROM meta WHERE key = ?)", (MEDIAN_FIRST_META,)).fetchone()[0])
+        "OR (SELECT COUNT(*) FROM meta WHERE key IN (?, ?)) < 2",
+        (MEDIAN_FIRST_META, BARE_SUBAGENT_META)).fetchone()[0])
 
 
 def invalidate(conn: sqlite3.Connection, message_ids) -> None:
@@ -108,6 +113,8 @@ def classify_all(conn: sqlite3.Connection) -> None:
         "WHERE s.gap IS NULL AND a.agent_id IS NULL")]
     conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (MEDIAN_FIRST_META, repr(
         statistics.median(firsts) if firsts else 0.0)))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (BARE_SUBAGENT_META, json.dumps(
+        _learn_bare_subagent(conn))))
 
 
 def median_first_context(conn: sqlite3.Connection) -> float | None:
@@ -115,3 +122,36 @@ def median_first_context(conn: sqlite3.Connection) -> float | None:
     ingest); None when the store has not stored it yet."""
     row = conn.execute("SELECT value FROM meta WHERE key = ?", (MEDIAN_FIRST_META,)).fetchone()
     return float(row["value"]) if row else None
+
+
+@dataclass(frozen=True)
+class BareSubagentContext:
+    """The learned Bare subagent context: the median first-request context of the leanest
+    subagent type, with that type and its run count (for the formula text)."""
+    tokens: float
+    agent_type: str
+    runs: int
+
+
+def _learn_bare_subagent(conn: sqlite3.Connection) -> list | None:
+    """[median, type, runs] of the subagent type with the lowest median first-request context among
+    those with BARE_MIN_RUNS+ non-fork runs, over all history; None when no type qualifies."""
+    by_type: dict[str, list[int]] = defaultdict(list)
+    for x in conn.execute(
+            "SELECT f.agent_type AS t, s.first_context AS c FROM request_stream s "
+            "JOIN request_surface a ON a.message_id = s.message_id "
+            "JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
+            "      FROM subagent_files GROUP BY agent_id) f ON f.agent_id = a.agent_id "
+            "WHERE s.gap IS NULL AND f.is_fork = 0 AND f.agent_type IS NOT NULL "
+            "AND f.agent_type != 'fork'"):
+        by_type[x["t"]].append(x["c"])
+    medians = [(statistics.median(cs), t, len(cs)) for t, cs in by_type.items() if len(cs) >= BARE_MIN_RUNS]
+    return list(min(medians)) if medians else None
+
+
+def bare_subagent_context(conn: sqlite3.Connection) -> BareSubagentContext | None:
+    """The stored Bare subagent context (lifetime, all projects); None when no type qualifies or
+    the store has not stored it yet."""
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (BARE_SUBAGENT_META,)).fetchone()
+    learned = json.loads(row["value"]) if row else None
+    return BareSubagentContext(float(learned[0]), learned[1], int(learned[2])) if learned else None

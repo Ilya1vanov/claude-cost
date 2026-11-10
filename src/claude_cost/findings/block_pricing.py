@@ -55,11 +55,13 @@ class Stream:
         self.prev_ts = None if reqs[0].gap is None else reqs[0].ts - reqs[0].gap
 
     def charge(self, ts: float, gone: float | None, tokens: int,
-               key: tuple = ()) -> tuple[float, float] | None:
+               key: tuple = (), own_writer: bool = False) -> tuple[float, float] | None:
         """Charge a Listing written at `ts` (removed at `gone`) to the requests that read it from
         the cache: those after the one that wrote it (the first at or after `ts`, possibly before
         the Period), before the removal. Returns its (lower, upper) $, or None when no request
-        read it. The upper bound adds the write when the writer is a Period Request, and swaps the
+        read it. With `own_writer`, the block is the writer's own starting context: its write is
+        charged even when nothing read it, and what it sent uncached is charged at its input rate.
+        The upper bound adds the write when the writer is a Period Request, and swaps the
         read for the write on each Cold-write Request in the range."""
         lo = bisect_left(self.ts, ts)
         # a Period Request precedes the Listing, or no Request between the Listing and the
@@ -75,7 +77,11 @@ class Stream:
             self.sitting[writer] += tokens
             self.sitting[writer + 1] -= tokens
         if lo >= hi:
-            return None
+            if not own_writer or writer is None or writer >= hi:
+                return None
+            write = self._write_cost(writer, tokens, own_writer)
+            self._add_upper(writer, write)
+            return 0.0, write
         self.delta[lo] += tokens
         self.delta[hi] -= tokens
         self.reads.append((lo, hi, tokens, key))
@@ -83,7 +89,7 @@ class Stream:
         self.sitting[hi] -= tokens
         write = 0.0
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
-            write = self._written(writer, tokens) * self.write_rates[writer]
+            write = self._write_cost(writer, tokens, own_writer)
             self._add_upper(writer, write)
         # a Cold write rebuilds the Listing too: what it wrote pays the write in place of the read
         for j in self.cold[bisect_left(self.cold, lo):bisect_left(self.cold, hi)]:
@@ -93,6 +99,18 @@ class Stream:
         # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
         reads = tokens * sum(self.rates[lo:hi])
         return reads, reads + write
+
+    def _write_cost(self, i: int, tokens: int, own_writer: bool) -> float:
+        """What request i paid to put `tokens` of a block in its prompt: the part it wrote at its
+        write rate and, for `own_writer`, the rest it sent uncached at its input rate."""
+        cost = self._written(i, tokens) * self.write_rates[i]
+        r = self.reqs[i]
+        uncached = min(tokens - self._written(i, tokens), r.input) if own_writer else 0
+        if uncached:
+            c = _price(self.ctx, r, input=r.input, output=0, cache_read=r.cache_read,
+                       write_5m=r.write_5m, write_1h=r.write_1h)
+            cost += uncached * c.input / r.input if c else 0.0
+        return cost
 
     def _written(self, i: int, tokens: int) -> int:
         """How many of a Listing's `tokens` request i can have written: no more than it wrote (the
