@@ -1,6 +1,6 @@
 # Avoidable spend is a range; the lower bound ranks
 
-An Unused listing costs more than its cache reads: the write that first stored it, the Cold writes that rebuild it, and, when it pushes a request over the Prompt tier threshold, the tier surcharge on the whole request. Those effects are real but less certain than the reads, so we give a finding's avoidable spend an optional upper bound beside the conservative lower bound, shown as `$low–$high`, while sorting and ranking keep using the lower bound alone. Unused listing is the first finding with an upper bound; the others show a single figure until they get one.
+An Unused listing costs more than its cache reads: the write that first stored it, the Cold writes that rebuild it, and, when it pushes a request over the Prompt tier threshold, the tier surcharge on the whole request. Those effects are real but less certain than the reads, so we give a finding's avoidable spend an optional upper bound beside the conservative lower bound, shown as `$low–$high`, while sorting and ranking keep using the lower bound alone. Unused listing was the first finding with an upper bound, and Oversized context followed (it adds the Cold writes that rebuilt the excess); the others show a single figure until they get one.
 
 ## Considered Options
 
