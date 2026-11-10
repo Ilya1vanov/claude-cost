@@ -17,7 +17,8 @@ def detect(ctx: FindingContext) -> Detection:
         if t is None or rates is None or r.context <= t.threshold:
             continue
         # reads above T; at T the context may be back under the Prompt tier
-        avoidable = rates.read_cost(r.context) - rates.read_cost(t.threshold)
+        read_cost = rates.read_cost(r.context)
+        avoidable = read_cost - rates.read_cost(t.threshold)
         stream = (r.session_id, r.agent_id)
         if stream not in charged:  # one compaction per stream pays for all its excess reads
             charged.add(stream)
@@ -27,7 +28,7 @@ def detect(ctx: FindingContext) -> Detection:
         if r.cache_event == COLD and written > 0:
             # at T the Cold write would have rebuilt only T tokens: swap the excess's read for its write
             excess = min(r.context - t.threshold, written)
-            read_price = rates.read_cost(r.context) / r.context
+            read_price = read_cost / r.context
             high += excess * (r.write_cost / written - read_price)
         covered.append(Covered(r.message_id, avoidable, high))
     g = analysis.global_
