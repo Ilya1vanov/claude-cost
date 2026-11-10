@@ -37,7 +37,7 @@ class Stream:
 
     `extra[i]` is what the upper bound adds to request i beyond its reads: the write of the
     Listings it wrote, the rebuild of Listings it re-wrote as a Cold write, and its Prompt tier
-    drop. All add into the same array, via `_add_upper`."""
+    drop. All add into the same array."""
 
     def __init__(self, ctx: FindingContext, reqs: list):
         self.ctx = ctx
@@ -80,7 +80,7 @@ class Stream:
             if not own_writer or writer is None or writer >= hi:
                 return None
             write = self._write_cost(writer, tokens, own_writer)
-            self._add_upper(writer, write)
+            self.extra[writer] += write
             return 0.0, write
         self.delta[lo] += tokens
         self.delta[hi] -= tokens
@@ -90,11 +90,11 @@ class Stream:
         write = 0.0
         if writer is not None:  # read at least once, so its write was avoidable too (upper bound)
             write = self._write_cost(writer, tokens, own_writer)
-            self._add_upper(writer, write)
+            self.extra[writer] += write
         # a Cold write rebuilds the Listing too: what it wrote pays the write in place of the read
         for j in self.cold[bisect_left(self.cold, lo):bisect_left(self.cold, hi)]:
             rebuild = self._written(j, tokens) * (self.write_rates[j] - self.rates[j])
-            self._add_upper(j, rebuild)
+            self.extra[j] += rebuild
             write += rebuild
         # summed, not prefix-subtracted, so equal reads give equal $ and ties sort by name
         reads = tokens * sum(self.rates[lo:hi])
@@ -118,9 +118,6 @@ class Stream:
         r = self.reqs[i]
         return min(tokens, r.write_5m + r.write_1h)
 
-    def _add_upper(self, i: int, dollars: float) -> None:
-        self.extra[i] += dollars
-
     def _tier_drop(self, i: int, unused: int) -> float:
         """What request i's whole cost loses when `unused` tokens leave its prompt and that takes
         it from above its model's Prompt tier threshold to at or below it; else 0."""
@@ -138,7 +135,7 @@ class Stream:
         unused = list(accumulate(self.sitting))
         drops = {i: d for i, t in enumerate(unused) if t and (d := self._tier_drop(i, t))}
         for i, d in drops.items():
-            self._add_upper(i, d)
+            self.extra[i] += d
         at = sorted(drops)
         return [(key, drops[i] * tokens / unused[i])
                 for lo, hi, tokens, key in self.reads
@@ -149,5 +146,5 @@ class Stream:
         for r, rate, tokens, extra in zip(self.reqs, self.rates, accumulate(self.delta), self.extra):
             if tokens or extra:
                 low = tokens * rate
-                out.append(Covered(r.message_id, low, low + extra))
+                out.append(Covered(r.message_id, avoidable=low, avoidable_high=low + extra))
         return out
