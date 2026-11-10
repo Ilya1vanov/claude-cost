@@ -180,6 +180,10 @@ _Avoid_: tool definitions, manifest
 A Listing never invoked in its project during the Period.
 _Avoid_: dead listing, idle skill
 
+**Bare subagent context**:
+The first-request context of the user's leanest subagent type: the smallest start a delegation could have had.
+_Avoid_: bare agent, baseline context, minimal agent
+
 **Oversized context**:
 Requests whose context is above the compact threshold, whether or not the session later compacts.
 _Avoid_: overflow, context bloat
