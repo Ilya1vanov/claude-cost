@@ -497,7 +497,7 @@ def test_a_listing_never_read_adds_no_write_to_the_upper_bound(root, service_for
 
 def test_other_findings_have_no_upper_bound(root, service_for):
     _session(root, "p", "s1", [skill_listing_line("2026-10-30T09:59:00Z", _skill("big", 10_000))])
-    others = [f for f in service_for(root).findings() if f.id != "unused-listing"]
+    others = [f for f in service_for(root).findings() if f.id not in ("unused-listing", "oversized-context")]
     assert others and all(f.avoidable_high is None for f in others)
     assert all(r.avoidable_high is None for f in others for r in f.requests)
 
