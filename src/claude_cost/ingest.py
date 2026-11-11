@@ -27,6 +27,10 @@ def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+# `meta` rows a store gets once it holds what a newer version records; a store lacking one re-reads
+# every transcript once (Explore attributes, Turns, Subagent compactions keyed by stem and agent)
+REBUILD_MARKERS = ("explore_dims", "turns", "subagent_compactions_v2")
+
 RETENTION_DAYS = 60
 
 CHARS_PER_TOKEN = 3.6  # Listing size estimate: characters / 3.6
@@ -585,15 +589,10 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
     price_table = pricing.PRICE_TABLE if price_table is None else price_table
     now = now or datetime.now(timezone.utc)
     touched: set[str] = set()
-    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
-            and not conn.execute("SELECT 1 FROM meta WHERE key = 'explore_dims'").fetchone()):
-        rebuild = True  # a store from before the Explore attributes: re-read once to fill them
-    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
-            and not conn.execute("SELECT 1 FROM meta WHERE key = 'turns'").fetchone()):
-        rebuild = True  # a store from before Turns: re-read once to record them
-    if (not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone()
-            and not conn.execute("SELECT 1 FROM meta WHERE key = 'subagent_compactions'").fetchone()):
-        rebuild = True  # a store from before Subagent compactions: re-read once to record them
+    if not rebuild and conn.execute("SELECT 1 FROM ingest_files LIMIT 1").fetchone():
+        # a store from before one of these (Explore attributes, Turns, Subagent compactions): re-read once
+        rebuild = any(not conn.execute("SELECT 1 FROM meta WHERE key = ?", (marker,)).fetchone()
+                      for marker in REBUILD_MARKERS)
     changed = rebuild
     with conn:
         if not conn.execute("SELECT 1 FROM meta WHERE key = 'turns_from'").fetchone():
@@ -665,12 +664,12 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                      "VALUES (?,?,?,?,?,?)",
                                      [(u, stem, ts, trig, pre, post)
                                       for u, ts, trig, pre, post in parsed.compactions])
-                if sub is not None:  # where this Subagent's Stream compacted
-                    conn.executemany("INSERT OR IGNORE INTO subagent_compactions VALUES (?,?,?,?)",
-                                     [(u, stem, sub["agent_id"], ts) for u, ts, *_ in parsed.compactions])
-                if sub is None:  # Turns: main transcripts only, deduped by record uuid
+                    # Turns: main transcripts only, deduped by record uuid
                     conn.executemany("INSERT OR IGNORE INTO turns VALUES (?,?,?)",
                                      [(u, stem, ts) for u, ts in parsed.turns])
+                else:  # where this Subagent's Stream compacted (resumed copies replay the uuids)
+                    conn.executemany("INSERT OR IGNORE INTO subagent_compactions VALUES (?,?,?,?)",
+                                     [(u, stem, sub["agent_id"], ts) for u, ts, *_ in parsed.compactions])
                 agent = sub["agent_id"] if sub is not None else ""
                 conn.executemany("INSERT OR IGNORE INTO listings VALUES (?,?,?,?,?,?,?)",
                                  [(stem, agent, project, k, n, ts, tok)
@@ -700,11 +699,13 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             _regroup_sessions(conn)
         if changed or desktop_changed or cache.needs_classification(conn):
             cache.classify_all(conn)
+        else:
+            cache.store_missing_baselines(conn)
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('last_ingest_epoch', ?)",
                      (str(now.timestamp()),))
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('subagent_compactions', '1')")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('subagent_compactions_v2', '1')")
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     spotlight_migration.run(conn)  # once, after the Sessions are grouped

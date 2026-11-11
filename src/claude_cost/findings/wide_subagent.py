@@ -2,7 +2,8 @@
 range from $0 (delegating wide may be intentional) to an upper bound: the cost of the subagent's
 extra context, its first-request context minus the Bare subagent context, priced as one block
 from its first request to its Stream's end or first compaction (see `Stream`). Forks stay covered
-with no figure."""
+with no figure, as do subagents with no extra context and ones whose block ended (first compaction)
+before the Period."""
 from __future__ import annotations
 
 import json
@@ -23,7 +24,8 @@ def _thousands(tokens: float) -> str:
 
 def bare_context(ctx: FindingContext) -> tuple[float, str]:
     """(tokens, source text): the configured value, else the learned one, else the fallback."""
-    if configured := ctx.threshold(BARE_THRESHOLD):
+    configured = ctx.threshold(BARE_THRESHOLD)  # 0 is a real value; None = unset, so learn it
+    if configured is not None:
         return configured, "config"
     learned = ctx.bare_subagent
     if learned is not None:
@@ -49,37 +51,44 @@ def _first_compactions(ctx: FindingContext, streams) -> dict[tuple[str, str], fl
 
 def detect(ctx: FindingContext) -> Detection:
     limit = ctx.threshold(THRESHOLD)
-    bare, source = bare_context(ctx)
     wide = [r for r in ctx.rows if r.agent_id and r.stream_first_context >= limit]
+    bare, source = bare_context(ctx) if wide else (0, "")  # a Period without Wide subagents never loads it
+    named = f"bare context {_thousands(bare)} ({source})" if wide else "bare context"
     by_stream: dict[tuple[str, str], list] = defaultdict(list)  # (session, agent) -> requests, oldest first
     for r in wide:
         if not r.agent_fork:
             by_stream[(r.session_id, r.agent_id)].append(r)
     compacted = _first_compactions(ctx, set(by_stream))
     figures: dict[str, Covered] = {}
-    streams = []
+    streams, priced = [], set()
     for key, reqs in by_stream.items():
         extra = max(0, round(reqs[0].stream_first_context - bare))
+        # The block ends at the Stream's first compaction over all history (story 5): one before the
+        # Period's first request leaves no block in the Period, and no extra context leaves none to
+        # price. Such a stream stays covered, with no figure (not a definite $0).
+        gone = compacted.get(key)
+        if not extra or (gone is not None and gone <= reqs[0].ts):
+            continue
         stream = Stream(ctx, reqs)
         streams.append(stream)
+        priced.add(key)
         # a Stream whose first request precedes the Period was written before it: no write to charge
         start = reqs[0].ts if stream.prev_ts is None else float("-inf")
-        if extra:
-            stream.charge(start, compacted.get(key), extra, own_writer=True)
+        stream.charge(start, gone, extra, own_writer=True)
     for stream in streams:
         stream.split_tier_drops()
         figures.update((c.message_id, c) for c in stream.covered())
     covered = []
     for r in wide:
-        if r.agent_fork:
+        if r.agent_fork or (r.session_id, r.agent_id) not in priced:
             covered.append(Covered(r.message_id))
         else:
             c = figures.get(r.message_id)  # $0 lower bound: nothing is claimed for sure
             covered.append(Covered(r.message_id, avoidable=0.0, avoidable_high=c.avoidable_high if c else 0.0))
     return Detection(
         covered, f"first-request context >= {limit:,} tokens",
-        formula=f"avoidable = $0 to an upper bound: the extra context (first-request context - bare "
-                f"context {_thousands(bare)} ({source})) as one block from the first request to the end or "
+        formula=f"avoidable = $0 to an upper bound: the extra context (first-request context - "
+                f"{named}) as one block from the first request to the end or "
                 f"first compaction: its write on the first request (if in the Period), its reads on "
                 f"every later request, each Cold write that rebuilt it (write price - read price) "
                 f"and any Prompt tier drop its removal would cause")
@@ -95,7 +104,8 @@ FINDING = FindingDef(
     thresholds=(
         Threshold(THRESHOLD, 50_000, "Minimum first-request context (tokens) of a Wide subagent",
                   minimum=1),
-        Threshold(BARE_THRESHOLD, 0, "Bare subagent context (tokens) Wide subagent compares against; "
-                  f"0 = learn it from your history (leanest subagent type with {BARE_MIN_RUNS}+ "
-                  f"runs, else {BARE_FALLBACK:,}).", minimum=0),
+        Threshold(BARE_THRESHOLD, None, "Bare subagent context (tokens) Wide subagent compares against; "
+                  f"unset = learn it from your history (leanest subagent type with {BARE_MIN_RUNS}+ "
+                  f"runs, else {BARE_FALLBACK:,}).", minimum=0, default_text="(learned)",
+                  example=BARE_FALLBACK),
     ))

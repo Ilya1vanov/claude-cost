@@ -307,8 +307,21 @@ def test_store_missing_the_median_baseline_gets_it_at_the_next_ingest(root, tmp_
     with conn:
         conn.execute("DELETE FROM meta WHERE key = ?", (cache.MEDIAN_FIRST_META,))
     ingest.ingest(conn, [root.path])
-    assert len(classify_calls) == 2
+    assert len(classify_calls) == 1  # only the missing baseline is computed, no Stream is reclassified
     assert cache.median_first_context(conn) == 20_000
+
+
+def test_store_missing_the_bare_subagent_baseline_gets_only_that_row_at_the_next_ingest(
+        root, tmp_path, classify_calls):
+    from claude_cost import cache
+    _cold_session(root)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("DELETE FROM meta WHERE key = ?", (cache.BARE_SUBAGENT_META,))
+    ingest.ingest(conn, [root.path])
+    assert len(classify_calls) == 1
+    assert conn.execute("SELECT 1 FROM meta WHERE key = ?", (cache.BARE_SUBAGENT_META,)).fetchone()
 
 
 def test_findings_on_a_store_from_before_the_change_work_after_the_cli_ingests(root, configure, tmp_path):

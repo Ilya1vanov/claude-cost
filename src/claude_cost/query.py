@@ -1073,7 +1073,6 @@ class QueryService:
                                           self.compact_thresholds(), self._compare_model,
                                           median_first_context=cache.median_first_context(self._conn),
                                           graph=self.graph,
-                                          bare_subagent=cache.bare_subagent_context(self._conn),
                                           period_start=lo, period_end=hi)
         return [findings_mod.build_finding(d, d.detect(ctx), by_id) for d in defs]
 
