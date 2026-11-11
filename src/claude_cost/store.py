@@ -199,10 +199,11 @@ CREATE TABLE IF NOT EXISTS compactions (
 -- compacted, so a block priced over it stops there (`stem` = the parent transcript: agent ids can
 -- repeat across Sessions); not the Session's compactions (not in `compactions`)
 CREATE TABLE IF NOT EXISTS subagent_compactions (
-  uuid TEXT PRIMARY KEY,
+  uuid TEXT NOT NULL,
   stem TEXT NOT NULL,
   agent_id TEXT NOT NULL,
-  ts_epoch REAL NOT NULL
+  ts_epoch REAL NOT NULL,
+  PRIMARY KEY (stem, agent_id, uuid)  -- resumed Sessions replay the uuids of their Subagents' records
 );
 -- Turns (ticket #25): prompts the user typed in main transcripts, deduped by record uuid
 -- (resume copies repeat them); `stem` is the transcript that held it first
@@ -254,6 +255,8 @@ def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     if schema:
+        if any(r[1] == "uuid" and r[5] for r in conn.execute("PRAGMA table_info(subagent_compactions)")):
+            conn.execute("DROP TABLE subagent_compactions")  # keyed by uuid alone: ingest refills it
         conn.executescript(SCHEMA)
         _migrate_spotlight_ids(conn)
         if not any(r[1] == "locked" for r in conn.execute("PRAGMA table_info(auto_spotlights)")):

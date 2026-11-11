@@ -149,8 +149,9 @@ def test_the_config_override_wins_over_the_learned_context(root, service_for):
 def test_extra_context_is_never_below_zero(root, service_for):
     _wide(root)
     f = _wide_finding(service_for(root, thresholds={BARE: 80_000}))
-    assert f.avoidable == 0.0 and f.avoidable_high == 0.0
-    assert _ranged(f) == {"w-a": (0.0, 0.0), "w-b": (0.0, 0.0), "w-c": (0.0, 0.0)}
+    assert f.avoidable == 0.0
+    assert _ranged(f) == {"w-a": (None, None), "w-b": (None, None), "w-c": (None, None)}  # nothing to price
+    assert f.avoidable_high is None
 
 
 def test_a_fork_stays_covered_without_an_avoidable_figure(root, service_for):
@@ -250,7 +251,65 @@ def test_a_compaction_before_the_period_leaves_nothing_to_charge(root, service_f
                  req("w-b", "2026-10-30T10:02:00Z", cache_read=60_000)],
           extra_lines=[compact_line("c1", "2026-10-29T12:00:00Z", 60_000, 5_000)])
     f = _wide_finding(service_for(root), date(2026, 10, 30), date(2026, 10, 30))
-    assert _ranged(f) == {"w-b": (0.0, 0.0)}
+    assert _ranged(f) == {"w-b": (None, None)}  # the block ended before the Period: no figure
+
+
+def test_a_zero_config_value_is_a_real_bare_context_not_learn_it(root, service_for):
+    _runs(root, "web-fetch", 20, 3_800)
+    _wide(root)
+    f = _wide_finding(service_for(root, thresholds={BARE: 0}))
+    assert "bare context 0.0K (config)" in f.formula
+    assert f.avoidable_high == pytest.approx(60_000 * (WRITE + 2 * READ))
+
+
+def test_an_unset_bare_context_is_listed_as_learned_and_zero_can_be_set(root, configure):
+    env = configure(root)
+    out = io.StringIO()
+    cli.main(["config"], env=env, now=NOW, out=out)
+    assert f"{BARE} = (learned)" in out.getvalue()
+    cli.main(["config", "set", BARE, "0"], env=env, now=NOW, out=io.StringIO())
+    out = io.StringIO()
+    cli.main(["config"], env=env, now=NOW, out=out)
+    assert f"{BARE} = 0 " in out.getvalue()
+
+
+def test_repeated_agent_ids_across_sessions_keep_their_own_type_and_fork_flag(root, service_for):
+    """A forked run reusing a leaner run's agent id in another Session does not take it out of its type."""
+    _runs(root, "web-fetch", 20, 3_800)
+    root.write_subagent_transcript("p", "other-s", "web-fetch-0",
+                                   [req("dup-a", "2026-10-21T10:00:00Z", input=100)],
+                                   meta={"agentType": "fork", "isFork": True})
+    _wide(root)
+    f = _wide_finding(service_for(root))
+    assert "bare context 3.8K (web-fetch median, 20 runs)" in f.formula
+
+
+def test_a_replayed_compaction_uuid_ends_the_block_in_each_session(root, service_for):
+    """A resumed Session replays its Subagent transcripts, compact_boundary uuids included."""
+    for sid, day in (("s1", "10"), ("s2", "11")):
+        root.write_transcript("p", sid, [req(f"{sid}-main", f"2026-10-{day}T09:00:00Z", input=1_000)])
+        root.write_subagent_transcript(
+            "p", sid, "wide1",
+            [req(f"{sid}-a", f"2026-10-{day}T10:01:00Z", input=60_000),
+             req(f"{sid}-b", f"2026-10-{day}T10:03:00Z", cache_read=60_000)],
+            meta={"agentType": "general-purpose"},
+            extra_lines=[compact_line("c1", f"2026-10-{day}T10:02:00Z", 60_000, 5_000)])
+    f = _wide_finding(service_for(root))
+    assert _ranged(f) == {"s1-a": (0.0, pytest.approx(EXTRA * WRITE)), "s1-b": (0.0, 0.0),
+                          "s2-a": (0.0, pytest.approx(EXTRA * WRITE)), "s2-b": (0.0, 0.0)}
+
+
+def test_the_bare_context_is_loaded_only_when_a_wide_subagent_needs_it(root, service_for, monkeypatch):
+    from claude_cost import cache
+    calls = []
+    real = cache.bare_subagent_context
+    monkeypatch.setattr(cache, "bare_subagent_context", lambda conn: (calls.append(1), real(conn))[1])
+    root.write_transcript("p", "s1", [req("main", "2026-10-30T10:00:00Z", input=1_000)])
+    service_for(root).findings()
+    assert calls == []
+    _wide(root)
+    service_for(root).findings()
+    assert calls == [1]
 
 
 def test_drains_command_and_pages_show_the_wide_subagent_range(root, configure):

@@ -38,7 +38,7 @@ class Config:
     prices: dict[str, dict[str, float]] = field(default_factory=dict)  # model -> price override
     spotlight_key_pattern: str | None = None  # regex; one Auto-spotlight per key it finds
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
-    thresholds: dict[str, int] = field(default_factory=dict)  # finding thresholds in effect
+    thresholds: dict[str, int | None] = field(default_factory=dict)  # finding thresholds in effect
     fable_compare_model: str = DEFAULT_COMPARE_MODEL
 
 
@@ -190,7 +190,8 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
 
 # Finding thresholds: declared by each finding module (findings/*.py), exposed here as settings.
 for _t in all_thresholds().values():
-    SETTINGS[_t.name] = Setting(_t.name, _t.doc, _t.default, str(_t.default), str(_t.default),
+    SETTINGS[_t.name] = Setting(_t.name, _t.doc, _t.default, _t.default_text or str(_t.default),
+                                str(_t.default if _t.default is not None else _t.example),
                                 _int_in(_t.name, _t.minimum), _parse_int(_t.name))
 
 

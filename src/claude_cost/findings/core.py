@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from functools import cached_property
 from datetime import date, datetime, tzinfo
 from typing import Callable, Mapping
 
-from .. import compact, pricing, session_graph
+from .. import cache, compact, pricing, session_graph
 from ..localtime import local_day
 from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
@@ -35,9 +36,11 @@ def format_avoidable(low: float, high: float | None = None) -> str:
 class Threshold:
     """A configurable number. Becomes a config.toml setting of the same name automatically."""
     name: str  # e.g. "cold_resume_idle_minutes"
-    default: int
+    default: int | None  # None = unset: the finding works the value out itself (shown as `default_text`)
     doc: str
     minimum: int = 0
+    default_text: str | None = None  # how an unset default is shown
+    example: int | None = None  # the commented line of the default config file when unset
 
 
 # Thresholds that belong to no single finding (Compact analysis, timeline, web refresh); they
@@ -186,14 +189,12 @@ class FindingContext:
                  conn: sqlite3.Connection | None = None, compact=None,
                  compare_model: str = DEFAULT_COMPARE_MODEL, *,
                  median_first_context: float | None, graph=None,
-                 bare_subagent=None, period_start: float | None = None, period_end: float | None = None):
+                 period_start: float | None = None, period_end: float | None = None):
         self.rows = rows
         # the Period's own bounds (end exclusive); None on a side that is all history
         self.period_start, self.period_end = period_start, period_end
         # lifetime, not per Period; None when the store has not stored it (Cold resume then reports nothing)
         self.median_first_context = median_first_context
-        # lifetime Bare subagent context (cache.BareSubagentContext); None = none learned
-        self.bare_subagent = bare_subagent
         if graph is None and conn is not None:
             graph = session_graph.load(conn)
         self.graph = graph  # session_graph.SessionGraph: how Transcripts group into Sessions
@@ -203,7 +204,13 @@ class FindingContext:
         self.compare_model = compare_model  # model the Fable usage Opportunity prices against
         self._thresholds, self._defs = thresholds, defs
 
-    def threshold(self, name: str) -> int:
+    @cached_property
+    def bare_subagent(self):
+        """Lifetime Bare subagent context (cache.BareSubagentContext), loaded when first asked for;
+        None = none learned."""
+        return cache.bare_subagent_context(self.conn) if self.conn is not None else None
+
+    def threshold(self, name: str) -> int | None:
         return self._thresholds.get(name, self._defs[name].default)
 
     def price(self, model: str, r: RequestRow) -> pricing.CostComponents | None:

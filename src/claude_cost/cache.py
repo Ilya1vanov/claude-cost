@@ -46,14 +46,12 @@ def classify_session(requests: list[tuple[str, float, int, int]]) -> dict[str, s
 
 
 def needs_classification(conn: sqlite3.Connection) -> bool:
-    """True when a Request lacks its stored cache event or Stream facts, or the median is absent."""
+    """True when a Request lacks its stored cache event or Stream facts."""
     return bool(conn.execute(
         "SELECT EXISTS (SELECT 1 FROM requests r "
         "LEFT JOIN request_cache c ON c.message_id = r.message_id "
         "LEFT JOIN request_stream s ON s.message_id = r.message_id "
-        "WHERE c.message_id IS NULL OR s.message_id IS NULL) "
-        f"OR (SELECT COUNT(*) FROM meta WHERE key IN ({','.join('?' * len(META_ROWS))})) < {len(META_ROWS)}",
-        META_ROWS).fetchone()[0])
+        "WHERE c.message_id IS NULL OR s.message_id IS NULL)").fetchone()[0])
 
 
 def invalidate(conn: sqlite3.Connection, message_ids) -> None:
@@ -108,14 +106,27 @@ def classify_all(conn: sqlite3.Connection) -> None:
     invalidate(conn, [mid for mid, *_ in facts])
     conn.executemany("INSERT INTO request_cache VALUES (?,?)", events)
     conn.executemany("INSERT INTO request_stream VALUES (?,?,?)", facts)
-    firsts = [r[0] for r in conn.execute(  # each Session's main Stream starts where the gap is NULL
-        "SELECT s.first_context FROM request_stream s "
-        "LEFT JOIN request_surface a ON a.message_id = s.message_id "
-        "WHERE s.gap IS NULL AND a.agent_id IS NULL")]
-    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (MEDIAN_FIRST_META, repr(
-        statistics.median(firsts) if firsts else 0.0)))
-    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (BARE_SUBAGENT_META, json.dumps(
-        _learn_bare_subagent(conn))))
+    for key in META_ROWS:
+        _store_baseline(conn, key)
+
+
+def store_missing_baselines(conn: sqlite3.Connection) -> None:
+    """Compute only the lifetime baselines (`meta` rows) a store lacks, from the stored Stream facts."""
+    for key in META_ROWS:
+        if not conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone():
+            _store_baseline(conn, key)
+
+
+def _store_baseline(conn: sqlite3.Connection, key: str) -> None:
+    if key == MEDIAN_FIRST_META:
+        firsts = [r[0] for r in conn.execute(  # each Session's main Stream starts where the gap is NULL
+            "SELECT s.first_context FROM request_stream s "
+            "LEFT JOIN request_surface a ON a.message_id = s.message_id "
+            "WHERE s.gap IS NULL AND a.agent_id IS NULL")]
+        value = repr(statistics.median(firsts) if firsts else 0.0)
+    else:
+        value = json.dumps(_learn_bare_subagent(conn))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
 
 
 def median_first_context(conn: sqlite3.Connection) -> float | None:
@@ -141,8 +152,9 @@ def _learn_bare_subagent(conn: sqlite3.Connection) -> list | None:
     for x in conn.execute(
             "SELECT f.agent_type AS t, s.first_context AS c FROM request_stream s "
             "JOIN request_surface a ON a.message_id = s.message_id "
-            "JOIN (SELECT agent_id, MAX(agent_type) AS agent_type, MAX(is_fork) AS is_fork "
-            "      FROM subagent_files GROUP BY agent_id) f ON f.agent_id = a.agent_id "
+            "JOIN requests r ON r.message_id = a.message_id "
+            "JOIN ingest_files i ON i.file_stem = r.session_id "  # agent ids repeat across Sessions
+            "JOIN subagent_files f ON f.path = i.path AND f.agent_id = a.agent_id "
             "WHERE s.gap IS NULL AND f.is_fork = 0 AND f.agent_type IS NOT NULL "
             "AND f.agent_type != 'fork'"):
         by_type[x["t"]].append(x["c"])
