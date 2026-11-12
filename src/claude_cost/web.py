@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Callable
+from urllib.parse import urlsplit
 
 from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, url_for
 from markupsafe import Markup, escape
@@ -64,6 +65,14 @@ def setting_label(model: str, effort: str) -> str:
     return f"{short_model(model)} {effort}" if effort else short_model(model)
 
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
+def _host_name(netloc: str) -> str:
+    """The host of a Host header or Origin netloc, without its port."""
+    return netloc.rpartition(":")[0] if netloc.rpartition(":")[2].isdigit() else netloc
+
+
 HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a running instance
 
 
@@ -73,6 +82,17 @@ def create_app(service_factory: Callable[[], QueryService],
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
+
+    @app.before_request
+    def local_requests_only():
+        """The server binds to loopback, but a web page can still reach it by DNS rebinding or a
+        cross-site form post: refuse a foreign Host (reads) and a foreign Origin (posts)."""
+        if _host_name(request.host) not in LOCAL_HOSTS:
+            abort(400, "this server answers only on localhost")
+        origin = request.headers.get("Origin")
+        if request.method == "POST" and origin and _host_name(urlsplit(origin).netloc) not in LOCAL_HOSTS:
+            abort(403, "cross-site request refused")
+
     app.jinja_env.globals["avoidable"] = format_avoidable
     app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory

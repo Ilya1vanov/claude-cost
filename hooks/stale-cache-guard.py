@@ -2,11 +2,10 @@
 """UserPromptSubmit hook: warn once before resuming a big session whose prompt cache expired.
 
 Resuming after >1h re-writes the whole context at the 1h cache-write price
-(Opus 5.5: $8/MTok). At 300K tokens that is ~$2.40 for one prompt. Over Sep 29-Oct 27
-these rebuilds cost $689 (25% of spend). The hook blocks the first prompt and
+(Opus 5.5: $8/MTok). At 300K tokens that is ~$2.40 for one prompt. The hook blocks the first prompt and
 explains; sending the same prompt again goes through.
 """
-import json, os, sys, time, datetime as dt
+import json, os, re, sys, tempfile, time, datetime as dt
 
 IDLE_S = int(os.environ.get('STALE_CACHE_IDLE_S', 3300))      # 55 min: 1h TTL minus margin
 MIN_CTX = int(os.environ.get('STALE_CACHE_MIN_CTX', 120000))
@@ -29,9 +28,12 @@ def main():
     ctx = sum(u.get(k, 0) or 0 for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
     idle = time.time() - dt.datetime.fromisoformat(last['timestamp'].replace('Z', '+00:00')).timestamp()
     if idle < IDLE_S or ctx < MIN_CTX: return 0
-    marker = f"/tmp/stale-cache-ack-{h.get('session_id')}-{last['timestamp']}"
-    if os.path.exists(marker): return 0
-    open(marker, 'w').close()
+    name = re.sub(r'[^A-Za-z0-9._:-]', '_', f"stale-cache-ack-{h.get('session_id')}-{last['timestamp']}")
+    marker = os.path.join(tempfile.gettempdir(), name)
+    try:  # never follow a pre-planted link; an existing marker means already acknowledged
+        os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+    except FileExistsError:
+        return 0
     model = (last['message'].get('model') or '')
     rate = next((v for k, v in WRITE_PER_MTOK.items() if k in model), 8.0)
     print(f"Prompt cache expired ({idle/3600:.1f}h idle). This prompt re-writes {ctx/1000:.0f}K tokens "
