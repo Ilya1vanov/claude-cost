@@ -2,8 +2,8 @@
 """UserPromptSubmit hook: warn once before resuming a big session whose prompt cache expired.
 
 Resuming after >1h re-writes the whole context at the 1h cache-write price
-(Opus 5.5: $8/MTok). At 300K tokens that is ~$2.40 for one prompt. The hook blocks the first prompt and
-explains; sending the same prompt again goes through.
+(Opus 5.5: $8/MTok). At 300K tokens that is ~$2.40 for one prompt. The hook blocks the first
+prompt and explains; sending the same prompt again goes through.
 """
 import json, os, re, sys, tempfile, time, datetime as dt
 

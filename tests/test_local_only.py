@@ -1,6 +1,5 @@
 """Seam: the dashboard answers only requests addressed to, and posted from, the local machine
 (a DNS-rebinding or cross-site page must not read prompts or change Spotlights)."""
-import importlib.util
 import json
 import os
 import subprocess
@@ -44,6 +43,11 @@ def test_a_post_from_another_local_port_is_refused(client):
     assert client.post("/refresh", headers={"Origin": "http://localhost:9999"}).status_code == 403
 
 
+@pytest.mark.parametrize("method", ["put", "patch", "delete"])
+def test_other_unsafe_methods_from_a_foreign_origin_are_refused(client, method):
+    assert getattr(client, method)("/refresh", headers={"Origin": "https://evil.example"}).status_code == 403
+
+
 @pytest.mark.parametrize("site", ["cross-site", "same-site"])
 def test_a_browser_post_not_from_this_origin_is_refused(client, site):
     assert client.post("/refresh", headers={"Sec-Fetch-Site": site}).status_code == 403
@@ -55,12 +59,11 @@ def test_a_browser_post_from_this_origin_is_allowed(client):
 
 def _hook():
     path = Path(__file__).parent.parent / "hooks" / "stale-cache-guard.py"
-    spec = importlib.util.spec_from_file_location("stale_cache_guard", path)
-    return path, spec
+    return path
 
 
 def test_hook_marker_is_not_written_through_a_planted_symlink(tmp_path):
-    path, _ = _hook()
+    path = _hook()
     ts = "2026-01-01T00:00:00Z"
     transcript = tmp_path / "t.jsonl"
     usage = {"input_tokens": 1, "cache_creation_input_tokens": 200000, "cache_read_input_tokens": 0}
@@ -79,7 +82,7 @@ def test_hook_marker_is_not_written_through_a_planted_symlink(tmp_path):
 
 
 def test_hook_session_id_cannot_escape_the_temp_directory(tmp_path):
-    path, _ = _hook()
+    path = _hook()
     ts = "2026-01-01T00:00:00Z"
     transcript = tmp_path / "t.jsonl"
     usage = {"input_tokens": 1, "cache_creation_input_tokens": 200000, "cache_read_input_tokens": 0}
@@ -88,13 +91,13 @@ def test_hook_session_id_cannot_escape_the_temp_directory(tmp_path):
     tmpdir = tmp_path / "tmp"
     tmpdir.mkdir()
     run = subprocess.run([sys.executable, str(path)], capture_output=True, text=True,
-                   input=json.dumps({"transcript_path": str(transcript), "session_id": "../escaped"}),
-                   env={**os.environ, "TMPDIR": str(tmpdir)})
+                         input=json.dumps({"transcript_path": str(transcript), "session_id": "../escaped"}),
+                         env={**os.environ, "TMPDIR": str(tmpdir)})
     assert run.returncode == 2 and list(tmpdir.glob("stale-cache-ack-*"))  # marker lands in the temp dir
     assert not (tmp_path / "escaped-2026-01-01T00:00:00Z").exists()
     assert not [p for p in tmp_path.rglob("*escaped*") if p.parent != tmpdir]
 
 
 def test_hook_docstring_carries_no_real_usage_figures():
-    path, _ = _hook()
+    path = _hook()
     assert "$689" not in path.read_text()
