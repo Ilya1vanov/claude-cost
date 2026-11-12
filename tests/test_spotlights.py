@@ -514,12 +514,12 @@ def test_search_returns_at_most_ten(root, service_for):
 
 
 def test_a_key_cut_by_the_first_prompt_limit_is_ignored_but_one_before_the_cut_is_found(root, service_for):
-    cut = "PROJ-1 " + "x" * 284 + " PROJ-8908"   # stored as ...PROJ-890 (300 characters)
+    cut = "PROJ-1 " + "x" * 284 + " PROJ-7345"   # stored as ...PROJ-734 (300 characters)
     root.write_transcript("p", "s1", [req("m1", "2026-10-30T01:00:00Z", output=M)], prompt=cut)
     root.write_transcript("p", "s2", [req("m2", "2026-10-30T01:00:00Z", output=M)],
-                          title="PROJ-8908", prompt=cut)
+                          title="PROJ-7345", prompt=cut)
     svc = service_for(root, key_pattern=KEY)
     keys = svc.session_keys()
     assert keys["s1"] == ["PROJ-1"]
-    assert keys["s2"] == ["PROJ-8908", "PROJ-1"]   # title unaffected
-    assert {s.name for s in svc.spotlights()} == {"PROJ-8908"}   # s1's PROJ-1 is prompt-only: suggested
+    assert keys["s2"] == ["PROJ-7345", "PROJ-1"]   # title unaffected
+    assert {s.name for s in svc.spotlights()} == {"PROJ-7345"}   # s1's PROJ-1 is prompt-only: suggested
