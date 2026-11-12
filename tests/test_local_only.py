@@ -35,8 +35,22 @@ def test_a_foreign_host_name_is_refused(client, host):
 
 def test_a_post_from_a_foreign_origin_is_refused_and_a_local_one_allowed(client):
     assert client.post("/refresh", headers={"Origin": "https://evil.example"}).status_code == 403
-    assert client.post("/refresh", headers={"Origin": "http://127.0.0.1:8787"}).status_code == 302
+    assert client.post("/refresh", headers={"Origin": "http://localhost"}).status_code == 302
     assert client.post("/refresh").status_code == 302  # no Origin: not a browser cross-site post
+
+
+def test_a_post_from_another_local_port_is_refused(client):
+    """A page served by another local program (same host name, different port) is not this dashboard."""
+    assert client.post("/refresh", headers={"Origin": "http://localhost:9999"}).status_code == 403
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_a_browser_post_not_from_this_origin_is_refused(client, site):
+    assert client.post("/refresh", headers={"Sec-Fetch-Site": site}).status_code == 403
+
+
+def test_a_browser_post_from_this_origin_is_allowed(client):
+    assert client.post("/refresh", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 302
 
 
 def _hook():

@@ -3,13 +3,13 @@ name = "claude-cost"
 version = "0.1.0"
 description = "Local, AI-free analysis of what Claude Code usage costs"
 requires-python = ">=3.11"
-dependencies = ["flask>=3.0"]
+dependencies = ["flask>=3.0,<4"]
 
 [project.scripts]
 claude-cost = "claude_cost.cli:main_entry"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8,<10"]
 
 [build-system]
 requires = ["hatchling"]

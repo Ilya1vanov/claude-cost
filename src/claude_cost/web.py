@@ -86,11 +86,17 @@ def create_app(service_factory: Callable[[], QueryService],
     @app.before_request
     def local_requests_only():
         """The server binds to loopback, but a web page can still reach it by DNS rebinding or a
-        cross-site form post: refuse a foreign Host (reads) and a foreign Origin (posts)."""
+        cross-site form post. Refuse a foreign Host (reads); refuse a post that a browser says came from
+        another origin, including another local port (CSRF). The browser-set Origin and Sec-Fetch-Site
+        headers stand in for a token: a page cannot forge them."""
         if _host_name(request.host) not in LOCAL_HOSTS:
             abort(400, "this server answers only on localhost")
+        if request.method != "POST":
+            return
         origin = request.headers.get("Origin")
-        if request.method == "POST" and origin and _host_name(urlsplit(origin).netloc) not in LOCAL_HOSTS:
+        if origin and urlsplit(origin).netloc != request.host:
+            abort(403, "cross-site request refused")
+        if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
             abort(403, "cross-site request refused")
 
     app.jinja_env.globals["avoidable"] = format_avoidable
