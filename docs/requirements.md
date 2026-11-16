@@ -207,7 +207,6 @@ All terms in this spec are defined in `GLOSSARY.md`.
 - A file watcher or live push updates.
 - Remote or multi-user hosting.
 - Subscription-share pricing (cost is API list-price equivalent only).
-- The stale-cache guard hook: it stays in the repo but is not part of v1.
 - Budget alerts or notifications.
 
 ## Further Notes
