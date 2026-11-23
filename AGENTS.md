@@ -25,9 +25,21 @@ When work is done, offer two ways to deliver it:
 
 ## Public repo hygiene
 
-This repo is public. Keep it free of anything private:
+This repo is public, and so is everything that leaves the machine: file contents, commit messages, branch names, GitHub issues and comments. Write each of them as if the whole internet reads it.
 
-- No employer or work-project references (company, product or project names, ticket keys) in code, docs, commits or issues. Use `PROJ-` for example ticket keys.
-- No real usage data, local paths or usernames. Use `/Users/me/...` in examples.
-- Commits use the GitHub noreply email.
-- No secrets.
+Keep out of all of them:
+
+- Credentials: passwords, Wi-Fi PSKs, API keys, tokens, private keys.
+- Network details of the owner's setup: IP addresses, MAC addresses, hostnames, domain names, SSIDs, router model or settings.
+- Personal data: real names, emails, usernames, home paths (`/Users/<name>`), location (coordinates, address, city).
+- Device identifiers: serial numbers, PARTUUIDs, machine IDs.
+- Work references: employer, company, product or project names, ticket keys.
+- Real usage data.
+
+Use placeholders instead (`<name>`, `example.com`, `192.0.2.1`, `PROJ-` for ticket keys). Commits use the GitHub noreply email.
+
+Run `sh scripts/git-hooks.sh install` before your first commit in a clone. The hook scans staged changes for secrets with gitleaks. It catches key-shaped secrets only; the other categories above, and commit messages, branch names and issues, are up to you.
+
+When the hook blocks a commit, stop and ask the owner. Bypass it (`--no-verify`, `gitleaks:allow`, `.gitleaksignore`) only with the owner's approval.
+
+When you find a leak already committed or pushed, stop and report it to the owner. The owner decides the cleanup; leave history as it is.
