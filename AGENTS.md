@@ -14,15 +14,6 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 Glossary and ADR edits are changes too: write them in your worktree under `.claude/worktrees/`, creating one before the first write if the session (e.g. `/grill-with-docs`) started without it.
 
-## Git workflow
-
-Make every change in a worktree under `.claude/worktrees/`, never in the main checkout.
-
-When work is done, offer two ways to deliver it:
-
-1. Merge to `main`, push `main`, then delete the worktree and its branch, locally and on the remote.
-2. Push the branch and open a pull request.
-
 ## Public repo hygiene
 
 This repo is public, and so is everything that leaves the machine: file contents, commit messages, branch names, GitHub issues and comments. Write each of them as if the whole internet reads it.
@@ -43,3 +34,5 @@ Run `sh scripts/git-hooks.sh install` before your first commit in a clone. The h
 When the hook blocks a commit, stop and ask the owner. Bypass it (`--no-verify`, `gitleaks:allow`, `.gitleaksignore`) only with the owner's approval.
 
 When you find a leak already committed or pushed, stop and report it to the owner. The owner decides the cleanup; leave history as it is.
+Work only in a worktree, made with Claude's built-in worktree tool and named after the branch (`/` replaced by `-`).
+Read docs/agents/git.md before any commit, merge, push or release.
