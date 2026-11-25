@@ -252,7 +252,7 @@ def test_a_non_search_result_in_a_later_ingest_is_not_stored(root, tmp_path):
 
 def test_the_search_lookup_columns_are_indexed_and_the_step_is_idempotent(tmp_path):
     conn = store.connect(tmp_path / "s.sqlite")
-    store._to_v2(conn)  # again over a store that already has it
+    store._to_v3(conn)  # again over a store that already has it
     cols = {tuple(c[2] for c in conn.execute(f"PRAGMA index_info({i[1]})"))
             for i in conn.execute("PRAGMA index_list(web_search_calls)")}
     assert {("tool_use_id",), ("message_id",)} <= cols
