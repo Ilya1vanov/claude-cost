@@ -25,7 +25,7 @@ from typing import ClassVar, Mapping
 
 from . import pricing
 from .localtime import price_day
-from .sql import CONTEXT_SQL, SESSION_ID_SQL, SESSION_JOIN
+from .sql import CONTEXT_SQL, NOT_ADVISOR_SQL, SESSION_ID_SQL, SESSION_JOIN
 
 MIN_SAMPLE = 20  # compactions a model needs before it gets its own threshold
 STEP = 10_000  # candidate thresholds are multiples of this many tokens
@@ -220,6 +220,7 @@ def analyze(conn: sqlite3.Connection, table=None, min_sample: int = MIN_SAMPLE,
         f"{SESSION_JOIN} "
         "LEFT JOIN request_surface a ON a.message_id = r.message_id "
         "LEFT JOIN request_attrs ra ON ra.message_id = r.message_id "
+        f"WHERE {NOT_ADVISOR_SQL} "
         "ORDER BY r.ts_epoch, r.message_id").fetchall()
     reqs: list[_Req] = []
     last_model: dict[str, list[tuple[float, str]]] = {}

@@ -290,9 +290,37 @@ def _to_v1(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE auto_spotlights ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
 
 
+V2 = """
+-- Advisor calls (ADR-0009): a row in `requests` with is_advisor = 1 and the id
+-- `<message id>#advisor-<n>`. copy_advisors: the advisor iterations each copy of a Request
+-- carries, so ownership recompute can rebuild its Advisor calls without the transcript.
+CREATE TABLE IF NOT EXISTS copy_advisors (
+  path TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  cache_read_tokens INTEGER NOT NULL,
+  cache_write_5m_tokens INTEGER NOT NULL,
+  cache_write_1h_tokens INTEGER NOT NULL,
+  PRIMARY KEY (path, message_id, n)
+);
+"""
+
+
+def _to_v2(conn: sqlite3.Connection) -> None:
+    """Advisor calls. Stores from before hold none; the next ingest re-reads every transcript
+    while its `advisor_calls` marker is absent (see `ingest.REBUILD_MARKERS`)."""
+    if not any(r[1] == "is_advisor" for r in conn.execute("PRAGMA table_info(requests)")):
+        conn.execute("ALTER TABLE requests ADD COLUMN is_advisor INTEGER NOT NULL DEFAULT 0")
+    for statement in _statements(V2):
+        conn.execute(statement)
+
+
 # Ordered migration steps: step N takes a store at version N-1 to version N. To change the schema
 # append a step; never edit SCHEMA or an earlier step (SCHEMA is the version-1 shape).
-MIGRATIONS = [_to_v1]
+MIGRATIONS = [_to_v1, _to_v2]
 LATEST_VERSION = len(MIGRATIONS)
 
 

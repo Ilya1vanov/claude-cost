@@ -13,6 +13,17 @@ from pathlib import Path
 
 
 @dataclass
+class Advisor:
+    """One advisor iteration of a Request: the advisor's model and its own billed tokens."""
+    model: str = "claude-opus-5-5"
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    write_5m: int = 0
+    write_1h: int = 0
+
+
+@dataclass
 class Req:
     message_id: str
     ts: str
@@ -34,10 +45,28 @@ class Req:
     skills: tuple[str, ...] = ()  # Skill tool calls (input.skill) on the last streamed line
     text: str = "x"  # assistant text block, on the first streamed line ("" = none)
     tool_calls: tuple[tuple[str, dict], ...] = ()  # (name, input) tool_use blocks, last streamed line
+    advisor: Advisor | None = None  # usage.iterations = [message, advisor_message, message]
 
 
 def req(message_id: str, ts: str, **kw) -> Req:
     return Req(message_id, ts, **kw)
+
+
+def _iterations(r: Req) -> list[dict]:
+    """[message, advisor_message, message]: the executor's tokens split over its two passes, so
+    the top-level usage is their sum."""
+    def message(inp, out, cr, w5, w1) -> dict:
+        return {"type": "message", "input_tokens": inp, "output_tokens": out,
+                "cache_read_input_tokens": cr, "cache_creation_input_tokens": w5 + w1,
+                "cache_creation": {"ephemeral_5m_input_tokens": w5,
+                                   "ephemeral_1h_input_tokens": w1}}
+    a = r.advisor
+    first = message(r.input // 2, r.output // 2, r.cache_read // 2, r.write_5m // 2, r.write_1h // 2)
+    second = message(r.input - r.input // 2, r.output - r.output // 2, r.cache_read - r.cache_read // 2,
+                     r.write_5m - r.write_5m // 2, r.write_1h - r.write_1h // 2)
+    advisor = message(a.input, a.output, a.cache_read, a.write_5m, a.write_1h)
+    advisor.update(type="advisor_message", model=a.model)
+    return [first, advisor, second]
 
 
 def assistant_lines(r: Req, session_id: str) -> list[dict]:
@@ -56,6 +85,8 @@ def assistant_lines(r: Req, session_id: str) -> list[dict]:
             usage["speed"] = r.speed
         if r.inference_geo:
             usage["inference_geo"] = r.inference_geo
+        if r.advisor:
+            usage["iterations"] = _iterations(r)
         rec = {
             "type": "assistant", "uuid": f"{r.message_id}-u{i}", "timestamp": r.ts,
             "sessionId": r.session_id or session_id,

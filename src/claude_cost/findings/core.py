@@ -16,7 +16,7 @@ from typing import Callable, Mapping
 
 from .. import cache, compact, pricing, session_graph
 from ..localtime import local_day
-from ..sql import COST_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
+from ..sql import COST_SQL, NOT_ADVISOR_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 DRAIN, OPPORTUNITY = "drain", "opportunity"
 DEFAULT_COMPARE_MODEL = "claude-opus-5-5"  # Fable usage compares against it (fable_compare_model)
@@ -239,8 +239,9 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
     """The Requests from `lo` up to `hi` (all when None), oldest first, with their stored Stream
     facts; only those whose cache event is `event` when given."""
     where, args = ts_where("r.ts_epoch", lo, hi)
+    where += ("AND " if where else "WHERE ") + f"{NOT_ADVISOR_SQL} "
     if event is not None:
-        where += ("AND " if where else "WHERE ") + "c.event = ? "
+        where += "AND c.event = ? "
         args.append(event)
     sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "

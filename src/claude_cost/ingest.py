@@ -29,7 +29,7 @@ def _parse_ts(value: str) -> datetime:
 
 # `meta` rows a store gets once it holds what a newer version records; a store lacking one re-reads
 # every transcript once (Explore attributes, Turns, Subagent compactions keyed by stem and agent)
-REBUILD_MARKERS = ("explore_dims", "turns", "subagent_compactions_v2")
+REBUILD_MARKERS = ("explore_dims", "turns", "subagent_compactions_v2", "advisor_calls")
 
 RETENTION_DAYS = 60
 
@@ -205,6 +205,33 @@ def _tool_use(content: object, attribution_skill: object) -> tuple[set[str], set
     return tools, skills
 
 
+def _write_split(usage: dict) -> tuple[int, int]:
+    """(5m, 1h) cache write tokens of a usage block; writes without a split count as 5m."""
+    total_w = usage.get("cache_creation_input_tokens") or 0
+    cc = usage.get("cache_creation") or {}
+    w1h = cc.get("ephemeral_1h_input_tokens") or 0
+    w5m = cc.get("ephemeral_5m_input_tokens") or 0
+    if w5m + w1h < total_w:
+        w5m = total_w - w1h
+    return w5m, w1h
+
+
+def _advisor_iterations(usage: dict) -> list[dict]:
+    """The `advisor_message` entries of `usage.iterations`, in order (ADR-0009). The top-level
+    usage already sums the executor's `message` entries; other entry types are ignored."""
+    its = usage.get("iterations")
+    out = []
+    for it in its if isinstance(its, list) else []:
+        if isinstance(it, dict) and it.get("type") == "advisor_message" \
+                and isinstance(it.get("model"), str) and it["model"]:
+            w5m, w1h = _write_split(it)
+            out.append({"model": it["model"], "input": it.get("input_tokens") or 0,
+                        "output": it.get("output_tokens") or 0,
+                        "cache_read": it.get("cache_read_input_tokens") or 0,
+                        "write_5m": w5m, "write_1h": w1h})
+    return out
+
+
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
     """Group assistant lines by message id: first line wins, output = max over lines."""
     parsed = Parsed()
@@ -275,12 +302,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
         sid = fork_sid or rec.get("sessionId") or stem
         if not fork_sid and sid != stem:
             parsed.links.add(sid)  # resume or /clear copy: same conversation
-        total_w = usage.get("cache_creation_input_tokens") or 0
-        cc = usage.get("cache_creation") or {}
-        w1h = cc.get("ephemeral_1h_input_tokens") or 0
-        w5m = cc.get("ephemeral_5m_input_tokens") or 0
-        if w5m + w1h < total_w:
-            w5m = total_w - w1h
+        w5m, w1h = _write_split(usage)
         try:
             ts = _parse_ts(rec["timestamp"])
         except (KeyError, TypeError, ValueError):
@@ -302,6 +324,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             "effort": _str_or_empty(rec.get("effort")),
             "tools": tools,
             "skills": skills,
+            "advisors": _advisor_iterations(usage),  # every streamed line repeats them
         }
     return parsed
 
@@ -335,10 +358,59 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
                          [(mid, t) for t in sorted(r["tools"])])
         conn.executemany("INSERT OR IGNORE INTO request_skills VALUES (?,?)",
                          [(mid, s) for s in sorted(r["skills"])])
+        conn.executemany("INSERT OR IGNORE INTO copy_advisors VALUES (?,?,?,?,?,?,?,?,?)",
+                         [(str(path), mid, n, a["model"], a["input"], a["output"], a["cache_read"],
+                           a["write_5m"], a["write_1h"]) for n, a in enumerate(r["advisors"], 1)])
 
 
 def _epoch_dt(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, timezone.utc)
+
+
+def _upsert_request(conn: sqlite3.Connection, mid: str, owner: dict, r: dict, cost,
+                    is_advisor: bool = False) -> None:
+    c = cost or pricing.CostComponents()
+    conn.execute(
+        "INSERT OR REPLACE INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (mid, owner["root"], owner["project"], owner["file_stem"],
+         r["ts"].timestamp(), r["model"], r["input"], r["output"], r["cache_read"],
+         r["write_5m"], r["write_1h"], 1 if cost else 0,
+         c.input, c.output, c.cache_write_5m, c.cache_write_1h, c.cache_read,
+         1 if is_advisor else 0),
+    )
+
+
+def _recompute_advisors(conn: sqlite3.Connection, mid: str, owner: dict, attrs, table: dict) -> None:
+    """(Re)write the Advisor calls of Request `mid` from its owner copy: owned like the parent,
+    priced at the advisor's model and tokens with the parent's `inference_geo` at standard
+    speed, Surface and Subagent of the parent, effort not recorded, tool `advisor` (ADR-0009)."""
+    prefix = f"{mid}#advisor-"
+    old = [x[0] for x in conn.execute(
+        "SELECT message_id FROM requests WHERE is_advisor = 1 AND substr(message_id, 1, ?) = ?",
+        (len(prefix), prefix))]
+    for table_name in ("requests", "request_surface", "request_attrs", "request_dims",
+                       "request_tools"):
+        conn.executemany(f"DELETE FROM {table_name} WHERE message_id = ?", [(i,) for i in old])
+    parent = owner["req"]
+    dims = conn.execute("SELECT git_branch FROM request_dims WHERE message_id = ?", (mid,)).fetchone()
+    geo = attrs["inference_geo"] if attrs else None
+    for a in conn.execute("SELECT * FROM copy_advisors WHERE path = ? AND message_id = ? ORDER BY n",
+                          (owner["path"], mid)).fetchall():
+        aid = f"{prefix}{a['n']}"
+        call = {"ts": parent["ts"], "model": a["model"], "input": a["input_tokens"],
+                "output": a["output_tokens"], "cache_read": a["cache_read_tokens"],
+                "write_5m": a["cache_write_5m_tokens"], "write_1h": a["cache_write_1h_tokens"]}
+        cost = pricing.price_request(
+            call["model"], price_day(call["ts"].timestamp()), input=call["input"],
+            output=call["output"], cache_read=call["cache_read"], write_5m=call["write_5m"],
+            write_1h=call["write_1h"], speed="standard", inference_geo=geo, table=table)
+        _upsert_request(conn, aid, owner, call, cost, is_advisor=True)
+        conn.execute("INSERT OR REPLACE INTO request_surface VALUES (?,?,?)",
+                     (aid, owner["surface"], owner["agent_id"]))
+        conn.execute("INSERT OR REPLACE INTO request_attrs VALUES (?,?,?)", (aid, "standard", geo or ""))
+        conn.execute("INSERT OR REPLACE INTO request_dims VALUES (?,?,?)",
+                     (aid, dims["git_branch"] if dims else "", ""))
+        conn.execute("INSERT OR REPLACE INTO request_tools VALUES (?,?)", (aid, "advisor"))
 
 
 def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
@@ -357,7 +429,7 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
             "file_stem": row["file_stem"], "session_id": row["session_id"],
             "file_first_ts": _epoch_dt(row["first_ts_epoch"]), "root": row["data_root"],
             "project": row["project"], "is_copy": bool(row["is_copy"]),
-            "relocated": bool(row["relocated"]),
+            "relocated": bool(row["relocated"]), "path": row["path"],
             "is_subagent": row["agent_id"] is not None, "agent_id": row["agent_id"],
             "surface": row["surface"] or "Other",
             "req": {"session_id": row["session_id"], "ts": _epoch_dt(row["ts_epoch"]),
@@ -376,16 +448,10 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
             speed=attrs["speed"] if attrs else None,
             inference_geo=attrs["inference_geo"] if attrs else None, table=table,
         )
-        c = cost or pricing.CostComponents()
         conn.execute("INSERT OR REPLACE INTO request_surface VALUES (?,?,?)",
                      (mid, owner["surface"], owner["agent_id"]))
-        conn.execute(
-            "INSERT OR REPLACE INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (mid, owner["root"], owner["project"], owner["file_stem"],
-             r["ts"].timestamp(), r["model"], r["input"], r["output"], r["cache_read"],
-             r["write_5m"], r["write_1h"], 1 if cost else 0,
-             c.input, c.output, c.cache_write_5m, c.cache_write_1h, c.cache_read),
-        )
+        _upsert_request(conn, mid, owner, r, cost)
+        _recompute_advisors(conn, mid, owner, attrs, table)
 
 
 def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) -> dict[str, str]:
@@ -613,7 +679,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             existing = {str(t[0]) for root in roots for t in _transcripts(root)}
             for (path,) in conn.execute("SELECT path FROM ingest_files").fetchall():
                 if path in existing:
-                    for table in ("request_copies", "transcript_links", "ingest_files"):
+                    for table in ("request_copies", "copy_advisors", "transcript_links", "ingest_files"):
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
             touched.update(r[0] for r in conn.execute(
                 "SELECT message_id FROM requests").fetchall())
@@ -630,7 +696,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                    (str(path),)).fetchone()
                 offset = row["offset"] if row else 0
                 if path.stat().st_size < offset:  # truncated or replaced: read it afresh
-                    for table in ("request_copies", "transcript_links"):
+                    for table in ("request_copies", "copy_advisors", "transcript_links"):
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (str(path),))
                     offset = 0
                 lines, new_offset = _read_new(path, offset)
@@ -706,6 +772,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('explore_dims', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('subagent_compactions_v2', '1')")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('advisor_calls', '1')")
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     spotlight_migration.run(conn)  # once, after the Sessions are grouped

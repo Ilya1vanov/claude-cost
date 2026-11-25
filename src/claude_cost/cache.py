@@ -18,7 +18,7 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 
-from .sql import SESSION_ID_SQL, SESSION_JOIN, context_tokens
+from .sql import NOT_ADVISOR_SQL, SESSION_ID_SQL, SESSION_JOIN, context_tokens
 
 TTL_5M = 5 * 60
 TTL_1H = 60 * 60
@@ -51,7 +51,7 @@ def needs_classification(conn: sqlite3.Connection) -> bool:
         "SELECT EXISTS (SELECT 1 FROM requests r "
         "LEFT JOIN request_cache c ON c.message_id = r.message_id "
         "LEFT JOIN request_stream s ON s.message_id = r.message_id "
-        "WHERE c.message_id IS NULL OR s.message_id IS NULL)").fetchone()[0])
+        f"WHERE {NOT_ADVISOR_SQL} AND (c.message_id IS NULL OR s.message_id IS NULL))").fetchone()[0])
 
 
 def invalidate(conn: sqlite3.Connection, message_ids) -> None:
@@ -81,7 +81,7 @@ def classify_all(conn: sqlite3.Connection) -> None:
         f"SELECT DISTINCT {SESSION_ID_SQL} FROM requests r {SESSION_JOIN} "
         "LEFT JOIN request_cache c ON c.message_id = r.message_id "
         "LEFT JOIN request_stream s ON s.message_id = r.message_id "
-        "WHERE c.message_id IS NULL OR s.message_id IS NULL")])
+        f"WHERE {NOT_ADVISOR_SQL} AND (c.message_id IS NULL OR s.message_id IS NULL)")])
     streams: dict[tuple[str, str | None], list[tuple[str, float, int, int]]] = {}
     context: dict[str, int] = {}
     for r in conn.execute(
@@ -90,7 +90,8 @@ def classify_all(conn: sqlite3.Connection) -> None:
             "r.input_tokens AS inp, r.cache_read_tokens AS cr, a.agent_id AS agent "
             f"FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
-            f"WHERE {SESSION_ID_SQL} IN (SELECT value FROM json_each(?))", (dirty,)):
+            f"WHERE {NOT_ADVISOR_SQL} AND {SESSION_ID_SQL} IN (SELECT value FROM json_each(?))",
+            (dirty,)):
         streams.setdefault((r["sid"], r["agent"]), []).append(  # a Subagent has its own cache
             (r["message_id"], r["ts_epoch"], r["w5"], r["w1"]))
         context[r["message_id"]] = context_tokens(r["inp"], r["cr"], r["w5"], r["w1"])

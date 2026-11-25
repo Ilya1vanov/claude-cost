@@ -4,6 +4,7 @@ Slow (builds two wheels, installs with uv); not gated, like the uv tool install 
 user's tools, store or config: everything lives under tmp_path.
 """
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -13,14 +14,15 @@ from pathlib import Path
 import pytest
 
 from claude_cost.releases import wheel_url_for
+from claude_cost.store import LATEST_VERSION
 
 REAL_HOME = os.environ.get("HOME", "")  # captured before the autouse fixture swaps it
 REPO = Path(__file__).resolve().parent.parent
 OLD_VERSION = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]  # the repo as it stands
 NEW_VERSION = "99.0.0"  # the fake newer Release, always ahead of the repo
 
-NEW_STEP = "def _v2(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n\n\n"
-FAILING_STEP = "def _v2(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n    raise RuntimeError('boom')\n\n\n"
+NEW_STEP = "def _next(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n\n\n"
+FAILING_STEP = "def _next(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n    raise RuntimeError('boom')\n\n\n"
 
 # Runs inside the installed tool's Python so the real UvToolInstaller sees a tool install. The fake Release
 # points at the new local wheel; the "published" old wheel URL is mapped to the local old wheel.
@@ -57,8 +59,9 @@ def _build_new_wheel(tmp_path: Path, env, step: str) -> Path:
     assert f'version = "{NEW_VERSION}"' in pyproject
     (src / "pyproject.toml").write_text(pyproject)
     store = src / "src" / "claude_cost" / "store.py"
-    text = store.read_text().replace("MIGRATIONS = [_to_v1]", step + "MIGRATIONS = [_to_v1, _v2]")
-    assert "_v2" in text
+    text, n = re.subn(r"MIGRATIONS = \[(.*)\]", lambda m: f"{step}MIGRATIONS = [{m.group(1)}, _next]",
+                      store.read_text())
+    assert n == 1
     store.write_text(text)
     return _build_wheel(src, tmp_path / "new", env)
 
@@ -97,7 +100,7 @@ def test_update_installs_the_new_wheel_and_migrates_the_store(machine):
     assert done.returncode == 0, done.stdout + done.stderr
     assert _installed_version(env, tmp_path) == NEW_VERSION
     conn = sqlite3.connect(tmp_path / "data" / "store.sqlite")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION + 1
     conn.close()
 
 

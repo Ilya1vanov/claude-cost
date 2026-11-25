@@ -20,7 +20,8 @@ from . import timeline_rows as timeline_rows_mod
 from .findings import cold_resume as cold_resume_mod
 from .localtime import day_end, day_start, local_day, today
 from .projects import project_display_names
-from .sql import COMPONENTS, CONTEXT_SQL, COST_SQL, SESSION_ID_SQL, SESSION_JOIN
+from .sql import (COMPONENTS, CONTEXT_SQL, COST_SQL, NOT_ADVISOR_SQL, SESSION_ID_SQL,
+                  SESSION_JOIN)
 
 
 
@@ -684,7 +685,7 @@ class QueryService:
             "LEFT JOIN request_dims d ON d.message_id = r.message_id "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
             "LEFT JOIN request_cache c ON c.message_id = r.message_id "
-            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
+            f"WHERE {NOT_ADVISOR_SQL} AND {SESSION_ID_SQL} = ? AND a.agent_id IS ? "
             "ORDER BY r.ts_epoch, r.message_id", (session_id, agent_id)).fetchall()
         if not rows:
             return None
@@ -770,7 +771,8 @@ class QueryService:
         return [r["message_id"] for r in self._conn.execute(
             f"SELECT r.message_id, a.agent_id FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
-            f"WHERE {SESSION_ID_SQL} = ?", (t.session_id,)) if under(r["agent_id"])]
+            f"WHERE {NOT_ADVISOR_SQL} AND {SESSION_ID_SQL} = ?", (t.session_id,))
+            if under(r["agent_id"])]
 
     def _timeline_rows(self, t: SessionTimeline, stems: list[str], main_paths: list[str],
                        content: dict[str, timeline_rows_mod.Content],
@@ -863,7 +865,7 @@ class QueryService:
         return self._conn.execute(
             f"SELECT MIN(r.ts_epoch) FROM requests r {SESSION_JOIN} "
             "LEFT JOIN request_surface a ON a.message_id = r.message_id "
-            f"WHERE {SESSION_ID_SQL} = ? AND a.agent_id IS ?",
+            f"WHERE {NOT_ADVISOR_SQL} AND {SESSION_ID_SQL} = ? AND a.agent_id IS ?",
             (session_id, agent_id)).fetchone()[0]
 
     def _subagent_starts(self, session_id: str) -> list[tuple[SubagentSummary, float]]:
@@ -919,8 +921,8 @@ class QueryService:
         slots, so epoch slots are local clock slots, and a repeated DST hour stays two hours."""
         row = self._conn.execute(
             f"SELECT AVG(n) AS avg, MAX(n) AS peak FROM (SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS n "
-            f"FROM requests r {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ? "
-            "GROUP BY CAST(r.ts_epoch / ? AS INTEGER))", (lo, hi, CONCURRENCY_SLOT_SECONDS)).fetchone()
+            f"FROM requests r {SESSION_JOIN} WHERE {NOT_ADVISOR_SQL} AND r.ts_epoch >= ? "
+            "AND r.ts_epoch < ? GROUP BY CAST(r.ts_epoch / ? AS INTEGER))", (lo, hi, CONCURRENCY_SLOT_SECONDS)).fetchone()
         return row["avg"], row["peak"]
 
     def project_names(self) -> dict[str, str]:
@@ -1002,11 +1004,12 @@ class QueryService:
             "COALESCE(SUM(r.cost_cache_write_5m), 0) AS w5, COALESCE(SUM(r.cost_cache_write_1h), 0) AS w1, "
             "COALESCE(SUM(c.event = 'cold'), 0) AS rebuilds "
             "FROM requests r LEFT JOIN request_cache c ON c.message_id = r.message_id "
-            "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
+            f"WHERE {NOT_ADVISOR_SQL} AND r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()
         total = row["rd"] + row["wr"] + row["inp"]
         loss = self._cache_loss(lo, hi)
         spend = self._conn.execute(f"SELECT COALESCE(SUM({COST_SQL}), 0) FROM requests r "
-                                   "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?", (lo, hi)).fetchone()[0]
+                                   f"WHERE {NOT_ADVISOR_SQL} AND r.ts_epoch >= ? AND r.ts_epoch < ?",
+                                   (lo, hi)).fetchone()[0]
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
                           row["w5"], row["w1"], row["rebuilds"], sum(loss.values()),
                           sum(loss.values()) / spend if spend else None,
@@ -1052,7 +1055,8 @@ class QueryService:
         out = [CacheEventSpend(f"{r['ev']} write", r["cost"], r["tok"], r["n"]) for r in rows]
         rd = self._conn.execute(
             "SELECT SUM(cost_cache_read) AS cost, SUM(cache_read_tokens) AS tok, COUNT(*) AS n "
-            "FROM requests WHERE ts_epoch >= ? AND ts_epoch < ? AND cache_read_tokens > 0",
+            "FROM requests WHERE is_advisor = 0 AND ts_epoch >= ? AND ts_epoch < ? "
+            "AND cache_read_tokens > 0",
             (lo, hi)).fetchone()
         if rd["n"]:
             out.append(CacheEventSpend("cache read", rd["cost"], rd["tok"], rd["n"]))
