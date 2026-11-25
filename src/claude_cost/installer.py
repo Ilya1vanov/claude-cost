@@ -12,8 +12,10 @@ from __future__ import annotations
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Mapping, Protocol
 
@@ -64,17 +66,34 @@ class UvToolInstaller:
         _run([str(command), "migrate"], env={**os.environ, **env})
 
 
+def _listening(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 class Dashboard:
     """The real stop/restart of a dashboard started by `claude-cost serve`."""
 
+    def __init__(self, timeout: float = 10.0, interval: float = 0.1) -> None:
+        self.timeout, self.interval = timeout, interval
+
     def stop(self, port: int) -> None:
-        """Terminate whatever listens on 127.0.0.1:`port` (the caller checked it is our dashboard)."""
+        """Terminate whatever listens on 127.0.0.1:`port` (the caller checked it is our dashboard)
+        and wait until the port is free, so a restart does not meet the old server."""
         try:
             pids = _run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"]).split()
         except InstallError as e:
             raise InstallError(f"could not find the dashboard process: {e}") from None
         for pid in pids:
             os.kill(int(pid), signal.SIGTERM)
+        deadline = time.monotonic() + self.timeout
+        while _listening(port):
+            if time.monotonic() >= deadline:
+                raise InstallError(f"the dashboard did not stop within {self.timeout:g} seconds")
+            time.sleep(self.interval)
 
     def start(self) -> None:
         """Start the (possibly just reinstalled) dashboard in the background, without a browser tab."""
