@@ -59,6 +59,9 @@ def test_parallel_sessions_card_says_n_a_without_requests(root, configure):
     card = _card(root, configure)
     assert card.count('<div class="value">n/a</div>') == 4
     assert card.count("vs n/a in baseline") == 4
+    for label in ("Subagents / session", "Sessions using Subagents"):
+        assert re.search(label + r".*?<div class=\"value\">n/a</div>\s*<div class=\"meta\">vs n/a in baseline",
+                         card, re.S)
 
 
 def test_parallel_sessions_card_shows_subagents_per_session_against_baseline(root, configure):
@@ -67,7 +70,7 @@ def test_parallel_sessions_card_shows_subagents_per_session_against_baseline(roo
     root.write_subagent_transcript("p", "s1", "x2", [req("i", D + "10:06:00Z")])
     root.write_subagent_transcript("p", "s4", "x3", [req("j", B + "10:05:00Z")])
     card = _card(root, configure)
-    assert re.search(r"Subagents / session.*?<div class=\"value\">0.7</div>\s*<div class=\"meta\">vs 0.3 in baseline",
+    assert re.search(r"Subagents / session.*?<div class=\"value\">0\.7</div>\s*<div class=\"meta\">vs 0.3 in baseline",
                      card, re.S)
 
 

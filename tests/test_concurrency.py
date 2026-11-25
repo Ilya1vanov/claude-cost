@@ -132,21 +132,25 @@ def test_sessions_with_subagents_share_counts_only_sessions_that_ran_one(root, s
 def test_a_subagent_of_a_side_session_counts_for_the_side_session_not_its_parent(root, desktop, service_for):
     root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")])
     root.write_transcript("p", "side1", [req("b", D + "10:01:00Z")])
+    root.write_subagent_transcript("p", "s1", "x0", [req("z", D + "10:03:00Z")])
     root.write_subagent_transcript("p", "side1", "x1", [req("c", D + "10:02:00Z")])
     desktop.write_session("a", "s1")
     desktop.write_session("b", "side1", spawnedFrom={"sessionId": "local_a", "sideSession": True})
     u = _usage(service_for(root, desktop=desktop))
-    assert (u.sessions, u.sessions_with_subagents) == (2, 1)
-    assert u.share_sessions_with_subagents == 0.5
+    # each of the two Sessions ran its own Subagent; crediting the side one to its Parent would give 1
+    assert (u.sessions, u.sessions_with_subagents) == (2, 2)
+    assert u.share_sessions_with_subagents == 1
 
 
 def test_a_subagent_of_a_fork_counts_for_the_fork_not_its_parent(root, service_for):
     root.write_transcript("p", "s1", [req("m1", D + "10:00:00Z")])
     root.write_transcript("p", "fork1", [req("m1", D + "10:00:00Z", forked_from="s1"),
                                          req("m9", D + "10:20:00Z")])
+    root.write_subagent_transcript("p", "s1", "x0", [req("z", D + "10:05:00Z")])
     root.write_subagent_transcript("p", "fork1", "x1", [req("c", D + "10:21:00Z")])
     u = _usage(service_for(root))
-    assert (u.sessions, u.sessions_with_subagents) == (2, 1)
+    # each of the two Sessions ran its own Subagent; crediting the Fork's to its Parent would give 1
+    assert (u.sessions, u.sessions_with_subagents) == (2, 2)
 
 
 def test_a_session_active_only_through_its_subagent_is_a_session_using_subagents(root, service_for):
