@@ -33,6 +33,12 @@ sys.exit(cli.main(["update", "--yes"], releases=lambda: release, installer=Local
                   probe_server=lambda url: None))
 """
 
+UNINSTALL_DRIVER = """
+import sys
+from claude_cost import cli
+sys.exit(cli.main(["uninstall"], probe_server=lambda url: None, ask=lambda prompt: "n"))
+"""
+
 
 def _build_wheel(project: Path, out: Path, env) -> Path:
     subprocess.run(["uv", "build", "--wheel", "--no-config", "--out-dir", str(out), str(project)],
@@ -101,3 +107,15 @@ def test_failing_migration_restores_the_old_version_and_the_store(machine):
     assert "left unchanged" in done.stderr
     assert _installed_version(env, tmp_path) == "0.1.0"
     assert store.read_bytes() == before
+
+
+def test_uninstall_removes_the_command_and_keeps_the_data(machine):
+    env, tmp_path, _ = machine
+    command = tmp_path / "bin" / "claude-cost"
+    python = tmp_path / "tools" / "claude-cost" / "bin" / "python"
+    assert command.exists()
+    done = subprocess.run([str(python), "-c", UNINSTALL_DRIVER], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not command.exists()
+    assert not (tmp_path / "tools" / "claude-cost").exists()
+    assert (tmp_path / "data" / "store.sqlite").exists()
