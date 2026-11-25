@@ -183,6 +183,8 @@ def cmd_prices(config: Config, now: datetime, out, err) -> int:
         print(f"{r.model:<22}{r.effective_from.isoformat():<12}{r.input:>8.4g}{r.output:>8.4g}"
               f"{r.cache_write_5m:>9.4g}{r.cache_write_1h:>9.4g}{r.cache_read:>8.4g}  {note}".rstrip(),
               file=out)
+    fee = pricing.web_search_fee(svc.today(now))
+    print(f"web search: ${fee:g} per search (not tokens)", file=out)
     unpriced = svc.unpriced_models()
     print("Unpriced models found: " + (", ".join(unpriced) if unpriced else "none"), file=out)
     return 0

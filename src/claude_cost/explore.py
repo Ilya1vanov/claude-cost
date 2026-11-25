@@ -180,7 +180,7 @@ class CacheEventDimension(SplitDimension):
     def split(self, item, data):
         event = (data.get(item.message_id) or ["none"])[0]
         writes = ("cost_cache_write_5m", "cost_cache_write_1h")
-        out = [("cache read", ("cost_cache_read",))]
+        out = [("cache read", ("cost_cache_read",)), ("web search", ("cost_web_search",))]
         if event in ("cold", "warm"):
             out += [("uncached", ("cost_input", "cost_output")), (f"{event} write", writes)]
         else:  # no write event (an Advisor call has none): its writes stay in the total as uncached
