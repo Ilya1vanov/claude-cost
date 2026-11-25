@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from claude_cost import cli
 from claude_cost.config import load_config
+from claude_cost.installer import InstallError
 from claude_cost.web import HEALTH
 from test_update_command import FakeDashboard, FakeInstaller, make_store
 
@@ -92,3 +93,19 @@ def test_failed_removal_keeps_data(env):
                     dashboard=FakeDashboard([]), ask=lambda p: "y", probe_server=lambda u: None)
     assert code == 1 and "busy" in err.getvalue()
     assert all(f.exists() for f in files)
+
+
+def test_failed_uninstall_restarts_the_dashboard_that_was_running(env, monkeypatch):
+    make_store(env)
+    installer_log = []
+
+    class Failing(FakeInstaller):
+        def uninstall(self):
+            self.log.append(("uninstall",))
+            raise InstallError("uv missing")
+    code, out, err = 0, io.StringIO(), io.StringIO()
+    code = cli.main(["uninstall"], env=env, now=NOW, out=out, err=err,
+                    installer=Failing(log=installer_log), dashboard=FakeDashboard(installer_log),
+                    ask=lambda p: "n", probe_server=lambda url: HEALTH)
+    assert code == 1 and "uv missing" in err.getvalue()
+    assert installer_log == [("stop", 8765), ("uninstall",), ("start",)]

@@ -457,7 +457,11 @@ def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
     except Exception as e:
         print(f"claude-cost: could not look up the latest Release ({e}). Nothing was changed.", file=err)
         return 1
-    if release is None or not releases_mod.is_newer(release, current):
+    if release is None:
+        print("claude-cost: the latest Release has no installable wheel, so it cannot be installed. "
+              "Nothing was changed.", file=err)
+        return 1
+    if not releases_mod.is_newer(release, current):
         print(f"claude-cost {current} is up to date.", file=out)
         return 0
     print(f"claude-cost {release.version} is available (you have {current}).", file=out)
@@ -468,16 +472,6 @@ def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
         return 0
 
     running = probe_server(f"http://{HOST}:{config.port}/") == HEALTH
-    try:
-        if running:
-            print("Stopping the dashboard...", file=out)
-            dashboard.stop(config.port)
-        if config.store_path.exists():
-            print("Backing up your data...", file=out)
-            store.backup(config.store_path, current)
-    except (InstallError, OSError, sqlite3.Error) as e:
-        print(f"claude-cost: {e}. Nothing changed.", file=err)
-        return 1
 
     def restart() -> None:
         if running:
@@ -486,6 +480,22 @@ def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
                 dashboard.start()
             except InstallError as e:
                 print(f"claude-cost: {e}. Start it with `claude-cost serve`.", file=err)
+
+    try:
+        if running:
+            print("Stopping the dashboard...", file=out)
+            dashboard.stop(config.port)
+    except InstallError as e:
+        print(f"claude-cost: {e}. Nothing changed.", file=err)
+        return 1
+    try:
+        if config.store_path.exists():
+            print("Backing up your data...", file=out)
+            store.backup(config.store_path, current)
+    except (OSError, sqlite3.Error) as e:
+        print(f"claude-cost: {e}. Nothing changed.", file=err)
+        restart()
+        return 1
 
     print(f"Installing claude-cost {release.version}...", file=out)
     try:
@@ -525,14 +535,23 @@ def cmd_uninstall(config: Config, out, err, *, purge: bool, installer: Installer
             *store_file.parent.glob(f"{store_file.name}.*.bak"),
             store_file.parent / "update-check.json", config.config_path]
     delete = purge or ask("Also delete your data (Spotlights, settings)? [y/N] ").strip().lower() in ("y", "yes")
+    running = probe_server(f"http://{HOST}:{config.port}/") == HEALTH
+    stopped = False
     try:
-        if probe_server(f"http://{HOST}:{config.port}/") == HEALTH:
+        if running:
             print("Stopping the dashboard...", file=out)
             dashboard.stop(config.port)
+            stopped = True
         print("Removing claude-cost...", file=out)
         installer.uninstall()
     except InstallError as e:
         print(f"claude-cost: {e}. Nothing was deleted.", file=err)
+        if stopped:
+            print("Restarting the dashboard...", file=out)
+            try:
+                dashboard.start()
+            except InstallError as again:
+                print(f"claude-cost: {again}. Start it with `claude-cost serve`.", file=err)
         return 1
     if delete:
         for path in data:

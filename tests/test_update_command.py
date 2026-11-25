@@ -159,3 +159,21 @@ def test_dashboard_collaborator_defaults_exist():
 def test_real_installer_sees_a_dev_checkout_as_not_a_tool_install():
     from claude_cost.installer import UvToolInstaller
     assert UvToolInstaller().is_tool_install() is False
+
+
+def test_failed_backup_restarts_the_dashboard_and_changes_nothing(env, monkeypatch):
+    make_store(env)
+
+    def broken(path, version):
+        raise OSError("disk full")
+    monkeypatch.setattr(store, "backup", broken)
+    code, out, err, log, _ = run(["update", "--yes"], env, running=True)
+    assert code == 1
+    assert log == [("stop", 8765), ("start",)]
+    assert "disk full" in err and "Nothing changed." in err
+
+
+def test_release_without_a_wheel_is_not_reported_as_up_to_date(env):
+    code, out, err, log, _ = run(["update", "--yes"], env, release=None)
+    assert code == 1 and log == []
+    assert "up to date" not in out and "wheel" in err and "Nothing was changed" in err
