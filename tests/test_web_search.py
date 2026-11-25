@@ -1,6 +1,7 @@
 """The web search fee: $0.01 per recorded search, charged to the Request that issued the call."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date
 
@@ -8,7 +9,7 @@ import pytest
 
 from claude_cost import ingest, pricing, store
 from claude_cost.query import QueryService
-from helpers import req, web_search_result_line, web_search_use_line
+from helpers import req, tool_use_line, web_search_result_line, web_search_use_line
 
 DAY = date(2026, 10, 30)
 TS = "2026-10-30T01:00:00Z"
@@ -37,10 +38,29 @@ def test_the_fee_is_added_to_the_token_cost(root, service_for):
     assert [s.cost for s in svc.session_summaries()] == [pytest.approx(20.01)]
 
 
-def test_a_result_without_a_search_count_or_an_error_adds_no_fee_yet(root, service_for):
+def test_a_result_without_a_search_count_counts_as_one_search(root, service_for):
     svc = _one(root, service_for,
-               web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", None),
-               web_search_use_line(TS, "tu2", "m1"), web_search_result_line(TS2, "tu2", error=True))
+               web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", None))
+    assert total(svc) == pytest.approx(0.01)
+
+
+def test_an_error_result_costs_nothing(root, service_for):
+    svc = _one(root, service_for,
+               web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", error=True))
+    assert total(svc) == 0
+
+
+def test_a_call_with_no_result_line_costs_nothing(root, service_for):
+    assert total(_one(root, service_for, web_search_use_line(TS, "tu1", "m1"))) == 0
+
+
+def test_an_agent_results_tool_stats_search_count_is_not_a_web_search(root, service_for):
+    result = {"type": "user", "uuid": "r-ag1", "timestamp": TS2,
+              "toolUseResult": {"status": "completed", "toolStats": {"searchCount": 4}},
+              "message": {"role": "user", "content": [
+                  {"type": "tool_result", "tool_use_id": "ag1", "content": "done"}]}}
+    svc = _one(root, service_for, tool_use_line(TS, "ag1", "Agent", {"prompt": "p"}, "m1"),
+               json.dumps(result))
     assert total(svc) == 0
 
 

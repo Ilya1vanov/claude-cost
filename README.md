@@ -70,6 +70,7 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 - **Runs that leave no transcript in a Data root.** `claude plugin eval` runs its sessions in a sandbox, so their cost is not counted, whether you start them by hand or from a Claude session.
 - **Static prices.** Prices come from a table in `pricing.py` and are not fetched or updated automatically. Each model has a single price with no history, so a price change also reprices past requests. A model missing from the table costs $0 and is listed under "Unpriced models". A price override in `config.toml` replaces the whole entry, including any long-context rate.
 - **Cache-write duration.** When a transcript records cache writes without splitting them into 5-minute and 1-hour writes, the unsplit part is priced at the 5-minute rate.
+- **Web searches.** A search whose result carries no count is treated as one search, and a search that errored costs nothing. Tokens the search backend may use are not counted. The $0.01 fee assumes Anthropic API billing; Bedrock has no server-side search.
 
 ## Developer conventions
 

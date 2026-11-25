@@ -262,10 +262,12 @@ def _search_calls(msg: dict, parsed: Parsed) -> None:
 
 
 def _search_count(rec: dict, block: dict) -> int:
-    """Searches a tool_result ran: `toolUseResult.searchCount` (the result may carry none)."""
+    """Searches a tool_result ran: 0 for an error, else `toolUseResult.searchCount`, or 1 when it has none."""
+    if block.get("is_error"):
+        return 0
     result = rec.get("toolUseResult")
     count = result.get("searchCount") if isinstance(result, dict) else None
-    return count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 0
+    return count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 1
 
 
 def _search_results(rec: dict, parsed: Parsed) -> None:
