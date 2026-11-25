@@ -21,6 +21,7 @@ from . import pricing
 from . import store
 from . import config as config_mod
 from . import releases as releases_mod
+from .installer import Dashboard, InstallError, Installer, UvToolInstaller
 from .config import Config, ConfigError, load_config
 from .findings import DRAIN, all_thresholds, format_avoidable, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
@@ -441,6 +442,76 @@ def cmd_migrate(config: Config, out) -> int:
     return 0
 
 
+def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
+               releases: releases_mod.Releases, installer: Installer, dashboard: Dashboard,
+               probe_server: Callable[[str], str | None], ask: Callable[[str], str]) -> int:
+    from .web import HEALTH
+
+    if not installer.is_tool_install():
+        print("claude-cost: this is not a `uv tool` install (a development checkout?), so it cannot "
+              "update itself. Pull the latest changes with `git pull` instead.", file=err)
+        return 1
+    current = _version()
+    try:
+        release = releases()
+    except Exception as e:
+        print(f"claude-cost: could not look up the latest Release ({e}). Nothing was changed.", file=err)
+        return 1
+    if release is None or not releases_mod.is_newer(release, current):
+        print(f"claude-cost {current} is up to date.", file=out)
+        return 0
+    print(f"claude-cost {release.version} is available (you have {current}).", file=out)
+    if release.notes.strip():
+        print(f"\n{release.notes.strip()}\n", file=out)
+    if not yes and ask("Update now? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("Update cancelled. Nothing was changed.", file=out)
+        return 0
+
+    running = probe_server(f"http://{HOST}:{config.port}/") == HEALTH
+    try:
+        if running:
+            print("Stopping the dashboard...", file=out)
+            dashboard.stop(config.port)
+        if config.store_path.exists():
+            print("Backing up your data...", file=out)
+            store.backup(config.store_path, current)
+    except (InstallError, OSError, sqlite3.Error) as e:
+        print(f"claude-cost: {e}. Nothing changed.", file=err)
+        return 1
+
+    def restart() -> None:
+        if running:
+            print("Restarting the dashboard...", file=out)
+            try:
+                dashboard.start()
+            except InstallError as e:
+                print(f"claude-cost: {e}. Start it with `claude-cost serve`.", file=err)
+
+    print(f"Installing claude-cost {release.version}...", file=out)
+    try:
+        installer.install(release.wheel_url)
+    except InstallError as e:
+        print(f"claude-cost: the install failed: {e}\nNothing changed: you are still on {current}.", file=err)
+        restart()
+        return 1
+    print("Upgrading your data...", file=out)
+    try:
+        installer.migrate(env)
+    except InstallError as e:
+        print(f"claude-cost: upgrading your data failed: {e}\n"
+              f"Your data was left unchanged. Going back to the previous version ({current})...", file=err)
+        try:
+            installer.install(releases_mod.wheel_url_for(current))
+        except InstallError as back:
+            print(f"claude-cost: could not reinstall {current}: {back}\nReinstall it by hand: "
+                  f"uv tool install --force {releases_mod.wheel_url_for(current)}", file=err)
+        restart()
+        return 1
+    restart()
+    print(f"Updated to {release.version}.", file=out)
+    return 0
+
+
 def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[list[str]], object]) -> int:
     """`config` shows every setting; get/set/path/edit work on the file. Works even if the file is broken."""
     config_mod.ensure_config_file(path, env)
@@ -467,7 +538,9 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
          focus_tab: Callable[[str], bool] | None = None,
          probe_server: Callable[[str], str | None] | None = None,
          run_editor: Callable[[list[str]], object] = subprocess.run,
-         releases: releases_mod.Releases | None = None) -> int:
+         releases: releases_mod.Releases | None = None,
+         installer: Installer | None = None, dashboard: Dashboard | None = None,
+         ask: Callable[[str], str] = input) -> int:
     """Entry point with injectable env/clock/server so tests never touch real state."""
     env = os.environ if env is None else env
     out = out or sys.stdout
@@ -484,6 +557,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
+    p_update = sub.add_parser("update", help="install the latest Release")
+    p_update.add_argument("--yes", action="store_true", help="don't ask for confirmation")
     sub.add_parser("migrate", help="bring the store up to date with this version")
     p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
     p_serve.add_argument("--browser", choices=["default", "none"],
@@ -549,10 +624,10 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     update_available = _update_checker(config, now_fn, releases)
     try:
         code = _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
-                         probe_server, update_available)
+                         probe_server, update_available, releases, installer, dashboard, ask)
     except store.StoreError as e:
         return _store_failure(e, config, err)
-    if args.command not in ("serve", "config") and not getattr(args, "json", False) and code == 0:
+    if args.command not in ("serve", "config", "update") and not getattr(args, "json", False) and code == 0:
         if update_available():
             print(UPDATE_NOTICE, file=err)
     return code
@@ -562,7 +637,11 @@ UPDATE_NOTICE = "Update available: run `claude-cost update`"
 
 
 def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
-              probe_server, update_available) -> int:
+              probe_server, update_available, releases, installer, dashboard, ask) -> int:
+    if args.command == "update":
+        return cmd_update(config, env, out, err, yes=args.yes, releases=releases or releases_mod.github_latest,
+                          installer=installer or UvToolInstaller(), dashboard=dashboard or Dashboard(),
+                          probe_server=probe_server or _probe_server, ask=ask)
     if args.command == "migrate":
         return cmd_migrate(config, out)
     if args.command == "today":

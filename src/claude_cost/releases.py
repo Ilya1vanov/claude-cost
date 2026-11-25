@@ -47,6 +47,11 @@ def github_latest(fetch: Callable[[str], bytes] = _http_get) -> Release | None:
     return Release(str(data["tag_name"]).removeprefix("v"), data.get("body") or "", wheel)
 
 
+def wheel_url_for(version: str) -> str:
+    """Where a published Release's wheel lives, for reinstalling a version we hold no Release object for."""
+    return f"https://github.com/{REPO}/releases/download/{version}/claude_cost-{version}-py3-none-any.whl"
+
+
 def parse_version(text: str) -> tuple[int, ...] | None:
     """`0.10.2` or `v0.10.2` as a tuple; None when it is not a plain dotted number."""
     match = re.fullmatch(r"v?(\d+(?:\.\d+)*)", text.strip())

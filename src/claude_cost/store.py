@@ -347,6 +347,22 @@ def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
     return conn
 
 
+def backup(path: Path, version: str) -> Path:
+    """Copy the store beside itself as `<name>.<version>.bak`, keeping only that one backup."""
+    target = path.with_name(f"{path.name}.{version}.bak")
+    source = sqlite3.connect(path)
+    dest = sqlite3.connect(target)
+    try:
+        source.backup(dest)
+    finally:
+        dest.close()
+        source.close()
+    for old in path.parent.glob(f"{path.name}.*.bak"):
+        if old != target:
+            old.unlink()
+    return target
+
+
 def set_auto_state(conn: sqlite3.Connection, key: str, name: str | None = None,
                    locked: bool | None = None) -> None:
     """Set an Auto-spotlight's custom name and/or Locked state, keeping the per-key row only while
