@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,8 @@ from claude_cost.releases import wheel_url_for
 
 REAL_HOME = os.environ.get("HOME", "")  # captured before the autouse fixture swaps it
 REPO = Path(__file__).resolve().parent.parent
+OLD_VERSION = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]  # the repo as it stands
+NEW_VERSION = "99.0.0"  # the fake newer Release, always ahead of the repo
 
 NEW_STEP = "def _v2(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n\n\n"
 FAILING_STEP = "def _v2(conn):\n    conn.execute('CREATE TABLE update_e2e (x)')\n    raise RuntimeError('boom')\n\n\n"
@@ -28,7 +31,7 @@ new_wheel, old_wheel, old_url = sys.argv[1:4]
 class Local(installer.UvToolInstaller):
     def install(self, wheel_url):
         super().install(old_wheel if wheel_url == old_url else wheel_url)
-release = releases.Release("0.2.0", "Test release.", new_wheel)
+release = releases.Release(sys.argv[4], "Test release.", new_wheel)
 sys.exit(cli.main(["update", "--yes"], releases=lambda: release, installer=Local(),
                   probe_server=lambda url: None))
 """
@@ -47,11 +50,11 @@ def _build_wheel(project: Path, out: Path, env) -> Path:
 
 
 def _build_new_wheel(tmp_path: Path, env, step: str) -> Path:
-    """A copy of the repo at version 0.2.0 with one extra store migration (`step`)."""
+    """A copy of the repo at NEW_VERSION with one extra store migration (`step`)."""
     src = tmp_path / "new-src"
     shutil.copytree(REPO / "src", src / "src", ignore=shutil.ignore_patterns("__pycache__"))
-    pyproject = (REPO / "pyproject.toml").read_text().replace('version = "0.1.0"', 'version = "0.2.0"')
-    assert 'version = "0.2.0"' in pyproject
+    pyproject = (REPO / "pyproject.toml").read_text().replace(f'version = "{OLD_VERSION}"', f'version = "{NEW_VERSION}"')
+    assert f'version = "{NEW_VERSION}"' in pyproject
     (src / "pyproject.toml").write_text(pyproject)
     store = src / "src" / "claude_cost" / "store.py"
     text = store.read_text().replace("MIGRATIONS = [_to_v1]", step + "MIGRATIONS = [_to_v1, _v2]")
@@ -84,7 +87,7 @@ def _installed_version(env, tmp_path) -> str:
 def _update(env, tmp_path, old_wheel, step):
     new_wheel = _build_new_wheel(tmp_path, env, step)
     python = tmp_path / "tools" / "claude-cost" / "bin" / "python"
-    return subprocess.run([str(python), "-c", DRIVER, str(new_wheel), str(old_wheel), wheel_url_for("0.1.0")],
+    return subprocess.run([str(python), "-c", DRIVER, str(new_wheel), str(old_wheel), wheel_url_for(OLD_VERSION), NEW_VERSION],
                           env=env, capture_output=True, text=True)
 
 
@@ -92,7 +95,7 @@ def test_update_installs_the_new_wheel_and_migrates_the_store(machine):
     env, tmp_path, old_wheel = machine
     done = _update(env, tmp_path, old_wheel, NEW_STEP)
     assert done.returncode == 0, done.stdout + done.stderr
-    assert _installed_version(env, tmp_path) == "0.2.0"
+    assert _installed_version(env, tmp_path) == NEW_VERSION
     conn = sqlite3.connect(tmp_path / "data" / "store.sqlite")
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
     conn.close()
@@ -105,7 +108,7 @@ def test_failing_migration_restores_the_old_version_and_the_store(machine):
     done = _update(env, tmp_path, old_wheel, FAILING_STEP)
     assert done.returncode == 1, done.stdout + done.stderr
     assert "left unchanged" in done.stderr
-    assert _installed_version(env, tmp_path) == "0.1.0"
+    assert _installed_version(env, tmp_path) == OLD_VERSION
     assert store.read_bytes() == before
 
 
