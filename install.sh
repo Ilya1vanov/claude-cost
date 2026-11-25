@@ -17,6 +17,8 @@ esac
 
 command -v curl >/dev/null 2>&1 || fail "curl is required but was not found."
 
+ORIG_PATH=$PATH  # what the user's own terminal sees, before this script adds anything
+
 tmp=$(mktemp -d) || fail "could not create a temporary folder."
 trap 'rm -rf "$tmp"' EXIT
 
@@ -55,8 +57,11 @@ fi
 
 say ""
 say "Installed: $("$command_path" --version)"
-say "Open the dashboard with:  claude-cost serve"
-if ! command -v claude-cost >/dev/null 2>&1; then
+if PATH=$ORIG_PATH command -v claude-cost >/dev/null 2>&1; then
+  say "Open the dashboard with:  claude-cost serve"
+else
   say ""
-  say "The claude-cost command is not on your PATH yet. Run 'uv tool update-shell', then open a new terminal."
+  say "Open a new Terminal window first (it adds claude-cost to your PATH), then start the dashboard with:"
+  say "  claude-cost serve"
+  say "If that says 'command not found', run 'uv tool update-shell' and open another new Terminal window."
 fi
