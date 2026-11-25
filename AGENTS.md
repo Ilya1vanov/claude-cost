@@ -14,6 +14,10 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 Glossary and ADR edits are changes too: write them in your worktree under `.claude/worktrees/`, creating one before the first write if the session (e.g. `/grill-with-docs`) started without it.
 
+## Git workflow
+
+`develop` is the default branch: branch from it and land on it. `main` moves only by release (tagged `vX.Y.Z`, fast-forwarded from `develop`); never land day-to-day work on `main`. See `docs/agents/git.md` and ADR-0007.
+
 ## Public repo hygiene
 
 This repo is public, and so is everything that leaves the machine: file contents, commit messages, branch names, GitHub issues and comments. Write each of them as if the whole internet reads it.
