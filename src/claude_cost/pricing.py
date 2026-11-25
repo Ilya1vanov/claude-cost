@@ -49,7 +49,7 @@ _EPOCH = date(2020, 1, 1)
 
 
 def _p(i: float, o: float, read_mult: float = DEFAULT_READ_MULT, **kw) -> list[PriceEntry]:
-    """Input $/M, output $/M, cache-read multiplier of input (0.025 Fable 5.1, 0.05 Opus/Sonnet 5.5)."""
+    """Input $/M, output $/M, cache-read multiplier of input (0.025 Fable 5.1/5.2 and Mythos 5.2, 0.05 Opus/Sonnet 5.5)."""
     return [PriceEntry(_EPOCH, i, o, round(i * read_mult, 6), **kw)]
 
 
@@ -71,13 +71,16 @@ class PriceTable(dict):
 
 
 PRICE_TABLE: PriceTable = PriceTable({
+    "claude-fable-5-2": _p(8, 40, 0.025),
     "claude-fable-5-1": _p(10, 50, 0.025),
     "claude-fable-5": _p(10, 50),
     "claude-opus-5-5": _p(4, 20, 0.05),
     "claude-opus-5": _p(5, 25),
+    "claude-mythos-5-2": _p(8, 40, 0.025),
     "claude-opus-4-8": _p(5, 25),
     "claude-opus-4-7": _p(5, 25),
     "claude-opus-4-6": _p(5, 25),
+    "claude-opus-4-5": _p(5, 25),
     "claude-sonnet-5-5": _p(2, 10, 0.05),
     "claude-sonnet-5": _p(2, 10),
     "claude-sonnet-4-6": _p(3, 15),
@@ -86,6 +89,8 @@ PRICE_TABLE: PriceTable = PriceTable({
     # skill model table (cached 2026-10-06). Fast mode 2x: Opus 5.5 fast $8/$40 vs $4/$20, same
     # source; request flag is usage.speed == "fast".
     "claude-haiku-4-5": _p(1, 5),
+    # Fable 5.2, Mythos 5.2 ($8/$40, read 0.025x) and Opus 4.5 ($5/$25, read 0.1x): Claude API
+    # pricing page (checked 2026-11-25). Fast mode on 5.2 models is $16/$80, the same 2x.
 })
 
 

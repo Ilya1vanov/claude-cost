@@ -116,3 +116,14 @@ def test_lookups_stay_per_table():
         assert pricing.find_price("claude-opus-5-5", DAY, override).input == 1
         assert pricing.find_price("claude-opus-5-5", DAY).input == 4
         assert pricing.find_price("claude-opus-5-5", DAY, {}) is None
+
+
+@pytest.mark.parametrize("model, input_, output, read", [
+    ("claude-fable-5-2", 8, 40, 0.20),    # 0.025x of $8
+    ("claude-mythos-5-2", 8, 40, 0.20),   # 0.025x of $8
+    ("claude-opus-4-5", 5, 25, 0.50),     # 0.1x of $5
+])
+def test_current_models_are_priced_per_pricing_page(root, service_for, model, input_, output, read):
+    # distinct token counts per component, so a swapped or cancelling rate still fails
+    kw = dict(model=model, input=M, output=2 * M, cache_read=4 * M)
+    assert total(one(root, service_for, **kw)) == pytest.approx(input_ + 2 * output + 4 * read)
