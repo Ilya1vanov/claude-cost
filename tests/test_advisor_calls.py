@@ -279,3 +279,45 @@ def test_session_header_request_count_matches_its_cost(root, service_for):
     root.write_transcript("p", "s1", [advised()])
     t = service_for(root).session_timeline("s1")
     assert (t.requests, t.cost) == (2, pytest.approx(EXECUTOR + ADVISOR))
+
+
+def test_session_combinations_add_up_to_the_total_with_the_advisor_model_and_no_effort(root, service_for):
+    root.write_transcript("p", "s1", [advised(effort="high")])
+    t = service_for(root).session_timeline("s1")
+    by = {(c.model, c.effort): c for c in t.combinations}
+    assert by[SONNET, "high"].cost == pytest.approx(EXECUTOR)
+    assert (by[OPUS, ""].requests, by[OPUS, ""].cost) == (1, pytest.approx(ADVISOR))
+    assert sum(c.cost for c in t.combinations) == pytest.approx(t.cost)
+    assert sum(c.requests for c in t.combinations) == t.requests
+
+
+def test_session_chart_bars_sum_to_the_session_cost(root, tmp_path):
+    import re
+    from claude_cost.web import create_app
+    root.write_transcript("p", "s1", [advised(), req("m2", "2026-10-30T10:05:00Z", model=SONNET,
+                                                     input=1000, output=2000)])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    page = create_app(lambda: QueryService(conn, "UTC"), lambda: NOW).test_client().get(
+        "/session/s1").get_data(as_text=True)
+    chart = json.loads(re.search(r'id="chart-data"[^>]*>(.*?)</script>', page, re.S)[1])
+    assert len(chart["cost"]) == 2
+    assert sum(chart["cost"]) == pytest.approx(2 * EXECUTOR + ADVISOR, abs=1e-3)
+
+
+def test_an_unknown_advisor_model_is_replaced_once_a_later_chunk_names_it(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", model=SONNET, input=1000, output=2000,
+                                         advisor=Advisor(model="", input=100_000, output=1000))])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    root.append_to_transcript("p", "s1", [advised()])  # later streamed line, model now present
+    ingest.ingest(conn, [root.path])
+    assert conn.execute("SELECT model FROM copy_advisors").fetchone()[0] == OPUS
+    assert conn.execute("SELECT model FROM requests WHERE is_advisor = 1").fetchone()[0] == OPUS
+
+
+def test_advisor_lookup_by_parent_uses_the_primary_key_index(tmp_path):
+    conn = store.connect(tmp_path / "s.sqlite")
+    plan = " ".join(str(r[-1]) for r in conn.execute(
+        "EXPLAIN QUERY PLAN " + ingest.ADVISOR_LOOKUP_SQL, ("m1#advisor-", "m1#advisor-$")))
+    assert "SEARCH" in plan and "SCAN" not in plan

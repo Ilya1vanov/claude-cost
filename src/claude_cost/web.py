@@ -586,10 +586,14 @@ def create_app(service_factory: Callable[[], QueryService],
                 abort(400, "from and to must both be dates like 2026-10-01")
             if agent_id is None:
                 in_period = service.session_spend(session_id, period)
+        advisor_cost: dict[str, float] = {}  # folded into the parent point's bar
+        for a in timeline.advisor_calls:
+            advisor_cost[a.parent_message_id] = advisor_cost.get(a.parent_message_id, 0.0) + a.cost
         chart = {"labels": [service.local_time(p.ts).strftime("%Y-%m-%d %H:%M:%S")
                             for p in timeline.points],
                  "context": [p.context_tokens for p in timeline.points],
-                 "cost": [round(p.cost, 4) for p in timeline.points],
+                 "cost": [round(p.cost + advisor_cost.get(p.message_id, 0.0), 4)
+                          for p in timeline.points],
                  "cold": [i for i, p in enumerate(timeline.points) if p.cache_event == COLD],
                  "idle": [i for i, p in enumerate(timeline.points) if p.idle],
                  "threshold": [p.threshold for p in timeline.points],

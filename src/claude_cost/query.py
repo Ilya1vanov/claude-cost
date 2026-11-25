@@ -331,13 +331,17 @@ class SessionTimeline:
 
     @property
     def combinations(self) -> tuple[ModelEffort, ...]:
-        """The model + Effort combinations of this timeline's own requests, in order of first use."""
+        """The model + Effort combinations of this timeline's own requests and Advisor calls, in order of first use."""
         requests: dict[tuple[str, str], int] = {}
         costs: dict[tuple[str, str], float] = {}
         for p in self.points:
             key = (p.model, p.effort)
             requests[key] = requests.get(key, 0) + 1
             costs[key] = costs.get(key, 0.0) + p.cost
+        for a in self.advisor_calls:  # the advisor's own model, effort not recorded
+            key = (a.model, "")
+            requests[key] = requests.get(key, 0) + 1
+            costs[key] = costs.get(key, 0.0) + a.cost
         return tuple(ModelEffort(m, e, requests[m, e], costs[m, e]) for m, e in requests)
 
     @property

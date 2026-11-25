@@ -378,7 +378,8 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
                          [(mid, s) for s in sorted(r["skills"])])
         conn.executemany(
             "INSERT INTO copy_advisors VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(path, message_id, n) "
-            "DO UPDATE SET input_tokens = MAX(input_tokens, excluded.input_tokens), "
+            "DO UPDATE SET model = CASE WHEN model = 'unknown' THEN excluded.model ELSE model END, "
+            "input_tokens = MAX(input_tokens, excluded.input_tokens), "
             "output_tokens = MAX(output_tokens, excluded.output_tokens), "
             "cache_read_tokens = MAX(cache_read_tokens, excluded.cache_read_tokens), "
             "cache_write_5m_tokens = MAX(cache_write_5m_tokens, excluded.cache_write_5m_tokens), "
@@ -404,14 +405,17 @@ def _upsert_request(conn: sqlite3.Connection, mid: str, owner: dict, r: dict, co
     )
 
 
+# A PK range ('$' is the character after '#'), so the lookup uses the requests index.
+ADVISOR_LOOKUP_SQL = ("SELECT message_id FROM requests WHERE message_id >= ? AND message_id < ? "
+                      "AND is_advisor = 1")
+
+
 def _recompute_advisors(conn: sqlite3.Connection, mid: str, owner: dict, attrs, table: dict) -> None:
     """(Re)write the Advisor calls of Request `mid` from its owner copy: owned like the parent,
     priced at the advisor's model and tokens with the parent's `inference_geo` at standard
     speed, Surface and Subagent of the parent, effort not recorded, tool `advisor` (ADR-0009)."""
     prefix = f"{mid}#advisor-"
-    old = [x[0] for x in conn.execute(
-        "SELECT message_id FROM requests WHERE is_advisor = 1 AND substr(message_id, 1, ?) = ?",
-        (len(prefix), prefix))]
+    old = [x[0] for x in conn.execute(ADVISOR_LOOKUP_SQL, (prefix, prefix + "$"))]
     for table_name in ("requests", "request_surface", "request_attrs", "request_dims",
                        "request_tools"):
         conn.executemany(f"DELETE FROM {table_name} WHERE message_id = ?", [(i,) for i in old])
