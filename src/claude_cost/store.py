@@ -330,6 +330,8 @@ def _to_v3(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS web_search_calls (path TEXT NOT NULL, tool_use_id TEXT NOT NULL, "
                  "message_id TEXT NOT NULL, search_count INTEGER NOT NULL DEFAULT 0, "
                  "PRIMARY KEY (path, tool_use_id))")
+    conn.execute("CREATE INDEX IF NOT EXISTS web_search_calls_tool_use ON web_search_calls (tool_use_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS web_search_calls_message ON web_search_calls (message_id)")
     conn.execute("DELETE FROM meta WHERE key = 'web_searches'")
 
 

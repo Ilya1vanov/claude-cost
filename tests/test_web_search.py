@@ -208,3 +208,69 @@ def test_the_fee_survives_deleting_the_transcript_that_held_the_result(root, tmp
     gone.unlink()
     ingest.ingest(conn, [root.path])
     assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
+
+
+def _other_result(tool_use_id: str, **top) -> str:
+    """A successful tool result of some other tool (Read, Bash...), as the transcript stores it."""
+    rec = {"type": "user", "uuid": f"r-{tool_use_id}", "timestamp": TS2,
+           "message": {"role": "user", "content": [
+               {"type": "tool_result", "tool_use_id": tool_use_id, "content": "file text"}]}, **top}
+    return json.dumps(rec)
+
+
+def _stored_search_rows(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM web_search_calls").fetchone()[0]
+
+
+def test_results_of_other_tools_are_not_stored_and_cost_nothing(root, tmp_path):
+    others = [tool_use_line(TS, f"r{i}", "Read", {"file_path": "f"}, "m1") for i in range(3)]
+    others += [_other_result(f"r{i}", toolUseResult={"type": "text", "file": {}}) for i in range(3)]
+    root.write_transcript("p", "s1", [req("m1", TS)], extra_lines=others)
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert (total(QueryService(conn, "UTC")), _stored_search_rows(conn)) == (0, 0)
+
+
+def test_a_search_result_seen_before_its_call_is_kept_and_charged(root, tmp_path):
+    root.write_transcript("p", "a", [req("m1", TS)], extra_lines=[web_search_result_line(TS2, "tu1", 2)])
+    root.write_transcript("p", "b", [req("m1", TS, session_id="a")],
+                          extra_lines=[web_search_use_line(TS, "tu1", "m1")])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
+
+
+def test_a_non_search_result_in_a_later_ingest_is_not_stored(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", TS)],
+                          extra_lines=[web_search_use_line(TS, "tu1", "m1")])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    root.append_to_transcript("p", "s1", [], raw=_other_result("rd1") + "\n")
+    ingest.ingest(conn, [root.path])
+    assert _stored_search_rows(conn) == 1
+
+
+def test_the_search_lookup_columns_are_indexed_and_the_step_is_idempotent(tmp_path):
+    conn = store.connect(tmp_path / "s.sqlite")
+    store._to_v2(conn)  # again over a store that already has it
+    cols = {tuple(c[2] for c in conn.execute(f"PRAGMA index_info({i[1]})"))
+            for i in conn.execute("PRAGMA index_list(web_search_calls)")}
+    assert {("tool_use_id",), ("message_id",)} <= cols
+
+
+def test_the_fee_goes_when_the_transcript_holding_the_call_is_rewritten_without_it(root, tmp_path):
+    uses = [web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2)]
+    root.write_transcript("p", "s1", [req("m1", TS)], extra_lines=uses)
+    root.write_transcript("p", "s2", [req("m1", TS, session_id="s1")])
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
+    root.write_transcript("p", "s1", [req("m2", TS)])  # replaced by a shorter file, call gone
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == 0
+
+
+def test_a_negative_search_count_costs_nothing(root, service_for):
+    svc = _one(root, service_for, web_search_use_line(TS, "tu1", "m1"),
+               web_search_result_line(TS2, "tu1", -3))
+    assert total(svc) == 0

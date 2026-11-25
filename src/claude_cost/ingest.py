@@ -112,6 +112,7 @@ class Parsed:
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
     search_calls: dict[str, str] = field(default_factory=dict)  # WebSearch tool_use_id -> message id
     search_results: dict[str, int] = field(default_factory=dict)  # tool_use_id -> searches it ran
+    search_shaped: set[str] = field(default_factory=set)  # result ids that look like WebSearch's
     # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
     title: str | None = None
     cwd: str | None = None
@@ -266,21 +267,32 @@ def _search_calls(msg: dict, parsed: Parsed) -> None:
 
 
 def _search_count(rec: dict, block: dict) -> int:
-    """Searches a tool_result ran: 0 for an error, else an integer `toolUseResult.searchCount` as is
-    (0 included), or 1 when it has none."""
+    """Searches a tool_result ran: 0 for an error, else an integer `toolUseResult.searchCount`
+    (at least 0), or 1 when it has none."""
     if block.get("is_error"):
         return 0
     result = rec.get("toolUseResult")
     count = result.get("searchCount") if isinstance(result, dict) else None
-    return count if isinstance(count, int) and not isinstance(count, bool) else 1
+    return max(0, count) if isinstance(count, int) and not isinstance(count, bool) else 1
+
+
+def _looks_like_search(rec: dict) -> bool:
+    """Whether a result's `toolUseResult` has WebSearch's own shape (a top-level `searchCount`, or
+    `query` with `results`); an Agent result's `toolStats.searchCount` is nested, so it does not."""
+    result = rec.get("toolUseResult")
+    return isinstance(result, dict) and ("searchCount" in result
+                                         or ("query" in result and "results" in result))
 
 
 def _search_results(rec: dict, parsed: Parsed) -> None:
-    """Every tool_result of a user line, by tool_use_id; storage keeps only those of WebSearch calls."""
+    """Every tool_result of a user line, by tool_use_id; storage keeps only those of WebSearch calls
+    (or, when the call is not known yet, those shaped like a WebSearch result)."""
     content = (rec.get("message") or {}).get("content")
     for blk in content if isinstance(content, list) else []:
         if isinstance(blk, dict) and blk.get("type") == "tool_result" and isinstance(blk.get("tool_use_id"), str):
             parsed.search_results[blk["tool_use_id"]] = _search_count(rec, blk)
+            if _looks_like_search(rec):
+                parsed.search_shaped.add(blk["tool_use_id"])
 
 
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
@@ -429,31 +441,41 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
 
 
 def _store_searches(conn: sqlite3.Connection, path: Path, parsed: Parsed) -> set[str]:
-    """Keep this transcript's WebSearch calls and tool results (a result may arrive in a later
+    """Keep this transcript's WebSearch calls and their tool results (a result may arrive in a later
     batch than its call, or in another Transcript: resumed ones replay either), one row per
-    tool_use_id and file; a result seen without its call has the empty message id until the call
-    shows up. A search is counted once per tool_use_id, whichever Transcript holds its result,
+    tool_use_id and file. A result is kept when its call is known (in this batch or stored) or, the
+    call not seen yet, when it is shaped like a WebSearch result; it has the empty message id until
+    the call shows up. Results of other tools are dropped. A search is counted once per tool_use_id, whichever Transcript holds its result,
     on every copy of the Request that issued it. Returns the message ids concerned."""
     p = str(path)
     conn.executemany(
         "INSERT INTO web_search_calls VALUES (?,?,?,0) ON CONFLICT(path, tool_use_id) DO UPDATE "
         "SET message_id = excluded.message_id WHERE web_search_calls.message_id = ''",
         [(p, tid, mid) for tid, mid in parsed.search_calls.items()])
+    kept = {tid: n for tid, n in parsed.search_results.items()
+            if tid in parsed.search_calls or tid in parsed.search_shaped or conn.execute(
+                "SELECT 1 FROM web_search_calls WHERE tool_use_id = ? AND message_id != '' LIMIT 1",
+                (tid,)).fetchone()}
     conn.executemany(
         "INSERT INTO web_search_calls VALUES (?,?,'',?) ON CONFLICT(path, tool_use_id) DO UPDATE "
         "SET search_count = excluded.search_count",
-        [(p, tid, n) for tid, n in parsed.search_results.items() if n or tid in parsed.search_calls])
+        [(p, tid, n) for tid, n in kept.items()])
     mids = set(parsed.search_calls.values()) | set(parsed.reqs)
-    for tid in parsed.search_results:
+    for tid in kept:
         mids.update(r[0] for r in conn.execute(
             "SELECT message_id FROM web_search_calls WHERE tool_use_id = ? AND message_id != ''", (tid,)))
+    _sync_web_searches(conn, mids)
+    return mids
+
+
+def _sync_web_searches(conn: sqlite3.Connection, mids: set[str]) -> None:
+    """Recount the searches of every copy of the given Requests from the kept calls and results."""
     conn.executemany(
         "UPDATE request_copies SET web_searches = (SELECT COALESCE(SUM(c), 0) FROM ("
         "SELECT MAX(search_count) AS c FROM web_search_calls WHERE tool_use_id IN ("
         "SELECT tool_use_id FROM web_search_calls WHERE message_id = ?) GROUP BY tool_use_id)) "
         "WHERE message_id = ?",
         [(mid, mid) for mid in mids])
-    return mids
 
 
 def _epoch_dt(epoch: float) -> datetime:
@@ -803,8 +825,14 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                    (str(path),)).fetchone()
                 offset = row["offset"] if row else 0
                 if path.stat().st_size < offset:  # truncated or replaced: read it afresh
+                    gone = {r[0] for table in ("web_search_calls", "request_copies")
+                            for r in conn.execute(
+                                f"SELECT message_id FROM {table} WHERE path = ?", (str(path),))}
+                    gone.discard("")
                     for table in _PATH_TABLES:
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (str(path),))
+                    _sync_web_searches(conn, gone)  # other copies lose the fee too
+                    touched.update(gone)
                     offset = 0
                 lines, new_offset = _read_new(path, offset)
                 if row and new_offset == offset:
