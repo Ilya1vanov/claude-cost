@@ -394,6 +394,11 @@ class Usage:
     avg_concurrency: float | None = None
     peak_concurrency: int | None = None
 
+    @property
+    def subagents_per_session(self) -> float | None:
+        """Subagents ÷ Sessions, the same two counts as the strip; None without Sessions."""
+        return self.subagents / self.sessions if self.sessions else None
+
 
 @dataclass(frozen=True)
 class RankedSpend:

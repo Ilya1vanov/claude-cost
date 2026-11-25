@@ -95,6 +95,28 @@ def test_baseline_has_its_own_concurrency(root, service_for):
     assert (c.usage_baseline.avg_concurrency, c.usage_baseline.peak_concurrency) == (2, 2)
 
 
+def test_subagents_per_session_is_the_strips_subagents_over_sessions(root, service_for):
+    root.write_transcript("p", "s1", [req("a", D + "10:00:00Z")])
+    root.write_subagent_transcript("p", "s1", "x1", [req("b", D + "10:01:00Z")])
+    root.write_subagent_transcript("p", "s1", "x2", [req("c", D + "10:02:00Z")],
+                                   meta={"parentAgentId": "x1", "spawnDepth": 2})  # nested counts
+    root.write_subagent_transcript("p", "s1", "f1", [req("d", D + "10:03:00Z")],
+                                   meta={"agentType": "fork", "isFork": True})  # Fork subagent counts
+    root.write_transcript("p", "s2", [req("e", D + "10:04:00Z")])  # no Subagents, still in the denominator
+    u = _usage(service_for(root))
+    assert (u.sessions, u.subagents) == (2, 3)
+    assert u.subagents_per_session == 1.5
+
+
+def test_subagents_per_session_is_none_without_sessions_and_baseline_has_its_own(root, service_for):
+    root.write_transcript("p", "s1", [req("a", B + "10:00:00Z")])
+    root.write_subagent_transcript("p", "s1", "x1", [req("b", B + "10:01:00Z")])
+    root.write_transcript("p", "s2", [req("c", B + "10:02:00Z")])
+    c = service_for(root).period_comparison("week", NOW)
+    assert c.usage_current.subagents_per_session is None
+    assert c.usage_baseline.subagents_per_session == 0.5
+
+
 def test_the_repeated_local_hour_at_dst_fall_back_is_two_slots(root, tmp_path, service_for):
     # New York leaves DST on 2026-11-01: 05:30Z and 06:30Z are both 01:30 local, an hour apart.
     root.write_transcript("p", "s1", [req("a", "2026-11-01T05:30:00Z")])

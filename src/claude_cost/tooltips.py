@@ -26,6 +26,8 @@ TOOLTIPS = {
                         "time doesn't pull it down."),
     "peak concurrency": ("The most Sessions working at once in any single 5-minute slot of the period. "
                          "A Session counts in a slot if it or one of its Subagents made a request in it."),
+    "subagents / session": ("Subagent runs per Session in the period, nested ones included; "
+                            "Sessions that launched none still count."),
     "per turn": ("The component's cost divided by the Turns in the period. A flat cost per Turn "
                  "with a falling total means less usage, not savings."),
     "input": "The uncached input tokens of requests, at the list price.",
