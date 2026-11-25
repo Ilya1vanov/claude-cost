@@ -45,10 +45,10 @@ uv tool install --force "$wheel" || fail "installation failed."
 
 # Step 4: report
 bin_dir=$(uv tool dir --bin 2>/dev/null || printf '%s' "$HOME/.local/bin")
-if command -v claude-cost >/dev/null 2>&1; then
-  command_path=claude-cost
-elif [ -x "$bin_dir/claude-cost" ]; then
+if [ -x "$bin_dir/claude-cost" ]; then
   command_path="$bin_dir/claude-cost"
+elif command -v claude-cost >/dev/null 2>&1; then
+  command_path=claude-cost
 else
   fail "installed, but the claude-cost command was not found. Run 'uv tool update-shell', open a new terminal and try again."
 fi
@@ -56,7 +56,7 @@ fi
 say ""
 say "Installed: $("$command_path" --version)"
 say "Open the dashboard with:  claude-cost serve"
-if [ "$command_path" != "claude-cost" ]; then
+if ! command -v claude-cost >/dev/null 2>&1; then
   say ""
   say "The claude-cost command is not on your PATH yet. Run 'uv tool update-shell', then open a new terminal."
 fi
