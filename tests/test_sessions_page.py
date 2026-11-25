@@ -1,7 +1,7 @@
 """Seam: the Sessions page lists logical Sessions (QueryService.sessions, /sessions, /sessions.csv)."""
 import pytest
 
-from claude_cost import cli, ingest, store
+from claude_cost import cli, explore, ingest, store
 from claude_cost.explore import ExploreSpec
 from claude_cost.query import QueryService
 from claude_cost.web import create_app
@@ -86,3 +86,14 @@ def test_chart_and_csv_respect_filters(client):
     lines = res.get_data(as_text=True).strip().splitlines()
     assert lines[0] == "Session,Session id,Project,Last activity,Cost,Requests,Share %"
     assert lines[1:] == ["Cart,s2bbbbbbbb-2222,proj-b,2026-10-30 10:00,10.00,1,100.0"]
+
+
+def test_csv_session_cost_includes_the_web_search_fee(root, service_for):
+    from helpers import web_search_result_line, web_search_use_line
+    ts = "2026-10-29T10:00:00Z"
+    root.write_transcript("proj-a", "s1aaaaaaaa-1111", [req("m1", ts, output=M)], title="Login work",
+                          extra_lines=[web_search_use_line(ts, "tu1", "m1"),
+                                       web_search_result_line(ts, "tu1", 2)])
+    csv_text = explore.sessions_to_csv(service_for(root).sessions(ExploreSpec("project", {})))
+    assert csv_text.strip().splitlines()[1:] == [
+        "Login work,s1aaaaaaaa-1111,proj-a,2026-10-29 10:00,20.02,1,100.0"]

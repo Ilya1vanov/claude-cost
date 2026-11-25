@@ -196,3 +196,13 @@ def test_a_request_computes_the_findings_once_although_two_finding_dimensions_ar
     svc.findings = lambda *a, **k: calls.append(1) or real(*a, **k)
     svc.explore(_spec("drain", opportunity=["Fable usage"]))
     assert calls == [1]  # one pipeline run although two finding dimensions are used
+
+
+def test_cost_component_has_a_web_search_value(root, service_for):
+    from helpers import web_search_result_line, web_search_use_line
+    ts = "2026-10-29T10:00:00Z"
+    root.write_transcript("proj-a", "s1", [req("m1", ts, output=M)], extra_lines=[
+        web_search_use_line(ts, "tu1", "m1"), web_search_result_line(ts, "tu1", 3)])
+    rows = _rows(service_for(root), "component")
+    assert rows["web search"].cost == pytest.approx(0.03)
+    assert rows["output"].cost == pytest.approx(20.0)

@@ -145,3 +145,27 @@ def test_schema_version_reads_a_store_without_opening_it_for_migration(tmp_path)
 def test_a_script_ending_without_a_semicolon_is_refused():
     with pytest.raises(ValueError, match="unterminated"):
         list(store._statements("CREATE TABLE a (x);\nCREATE TABLE b (y)"))
+
+
+def test_a_failing_v2_step_rolls_the_store_back_to_version_1_unchanged(tmp_path, monkeypatch):
+    path = tmp_path / "store.sqlite"
+    old = sqlite3.connect(path)  # the store as the previous release left it
+    old.row_factory = sqlite3.Row
+    old.isolation_level = None
+    old.execute("BEGIN")
+    store.MIGRATIONS[0](old)
+    old.execute("PRAGMA user_version = 1")
+    old.execute("COMMIT")
+    old.close()
+    before = path.read_bytes()
+    real_v2 = store.MIGRATIONS[1]
+
+    def failing_v2(conn):
+        real_v2(conn)  # applies its changes, then dies before the end
+        raise RuntimeError("boom")
+    monkeypatch.setattr(store, "MIGRATIONS", [store.MIGRATIONS[0], failing_v2])
+    monkeypatch.setattr(store, "LATEST_VERSION", 2)
+    with pytest.raises(store.MigrationError, match="boom"):
+        store.connect(path)
+    assert path.read_bytes() == before
+    assert version(path) == 1
