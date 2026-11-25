@@ -13,7 +13,7 @@ from claude_cost.web import HEALTH
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
 WHEEL = "https://example.com/claude_cost-0.2.0-py3-none-any.whl"
 NEW = Release("0.2.0", "Faster dashboard.", WHEEL)
-OLD_WHEEL = "https://github.com/Ilya1vanov/claude-cost/releases/download/0.1.0/claude_cost-0.1.0-py3-none-any.whl"
+OLD_WHEEL = "https://github.com/Ilya1vanov/claude-cost/releases/download/v0.1.0/claude_cost-0.1.0-py3-none-any.whl"
 
 
 class FakeInstaller:
@@ -128,6 +128,20 @@ def test_failed_migration_reinstalls_previous_release_and_restarts_dashboard(env
     assert code == 1
     assert log == [("stop", 8765), ("install", WHEEL), ("migrate",), ("install", OLD_WHEEL), ("start",)]
     assert "migration exploded" in err and "previous version" in err
+
+
+def test_failed_migration_leaves_the_store_unchanged_and_says_so(env):
+    path = make_store(env)
+    before = path.read_bytes()
+    code, out, err, log, _ = run(["update", "--yes"], env, fail_migrate=True)
+    assert code == 1 and path.read_bytes() == before
+    assert "left unchanged" in err
+
+
+def test_failed_rollback_prints_the_manual_reinstall_command(env):
+    make_store(env)
+    code, out, err, log, _ = run(["update", "--yes"], env, fail_migrate=True, fail_install=OLD_WHEEL)
+    assert code == 1 and f"uv tool install --force {OLD_WHEEL}" in err
 
 
 def test_failed_install_keeps_old_version_and_restarts_dashboard(env):

@@ -87,3 +87,8 @@ def test_disabled_makes_no_lookup(tmp_path):
     releases = FakeReleases()
     assert checker(releases, tmp_path, enabled=False)() is None
     assert releases.calls == 0
+
+
+def test_wheel_url_for_uses_the_v_prefixed_tag():
+    from claude_cost.releases import wheel_url_for
+    assert wheel_url_for("0.1.0").endswith("/releases/download/v0.1.0/claude_cost-0.1.0-py3-none-any.whl")

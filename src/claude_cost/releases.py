@@ -49,7 +49,7 @@ def github_latest(fetch: Callable[[str], bytes] = _http_get) -> Release | None:
 
 def wheel_url_for(version: str) -> str:
     """Where a published Release's wheel lives, for reinstalling a version we hold no Release object for."""
-    return f"https://github.com/{REPO}/releases/download/{version}/claude_cost-{version}-py3-none-any.whl"
+    return f"https://github.com/{REPO}/releases/download/v{version}/claude_cost-{version}-py3-none-any.whl"
 
 
 def parse_version(text: str) -> tuple[int, ...] | None:
