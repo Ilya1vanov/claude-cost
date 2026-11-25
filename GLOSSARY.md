@@ -26,6 +26,10 @@ _Avoid_: stem, log, file
 One billed API call, counted once no matter how many transcripts contain a copy of it.
 _Avoid_: message, call
 
+**Advisor call**:
+A Request the advisor tool makes while answering another Request, priced at its own model and owned like that Request; it is not part of any Stream.
+_Avoid_: advisor message, iteration, sub-request
+
 **Turn**:
 One prompt the user typed into a session, with the requests made to answer it.
 _Avoid_: request, exchange, message
