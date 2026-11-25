@@ -27,6 +27,7 @@ from .findings import DRAIN, all_thresholds, format_avoidable, NOT_ADDITIVE_NOTE
 from .query import PeriodComparison, QueryService
 from .spotlights import SpotlightError
 
+UPDATE_NOTICE = "Update available: run `claude-cost update`"
 HOST = "127.0.0.1"  # never bind anywhere else: prompts and titles stay on the machine
 
 
@@ -384,7 +385,7 @@ def _update_checker(config: Config, now_fn: Callable[[], datetime],
                     releases: releases_mod.Releases | None) -> Callable[[], releases_mod.Release | None]:
     return releases_mod.update_checker(
         releases or releases_mod.github_latest, current=_version(),
-        cache_path=config.store_path.parent / "update-check.json", now=now_fn,
+        cache_path=config.store_path.parent / releases_mod.CACHE_FILE, now=now_fn,
         enabled=config.update_check)
 
 
@@ -542,7 +543,7 @@ def cmd_uninstall(config: Config, out, err, *, purge: bool, installer: Installer
     store_file = config.store_path
     data = [store_file, *store_file.parent.glob(f"{store_file.name}-*"),
             *store_file.parent.glob(f"{store_file.name}.*.bak"),
-            store_file.parent / "update-check.json", config.config_path]
+            store_file.parent / releases_mod.CACHE_FILE, config.config_path]
     delete = purge or ask("Also delete your data (Spotlights, settings)? [y/N] ").strip().lower() in ("y", "yes")
     running = probe_server(f"http://{HOST}:{config.port}/") == HEALTH
     stopped = False
@@ -698,9 +699,6 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         if update_available():
             print(UPDATE_NOTICE, file=err)
     return code
-
-
-UPDATE_NOTICE = "Update available: run `claude-cost update`"
 
 
 def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,

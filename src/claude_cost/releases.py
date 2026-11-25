@@ -18,6 +18,7 @@ REPO = "Ilya1vanov/claude-cost"
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 CHECK_INTERVAL = timedelta(days=1)
 TIMEOUT_SECONDS = 3
+CACHE_FILE = "update-check.json"  # the update check cache, beside the store
 
 
 @dataclass(frozen=True)
