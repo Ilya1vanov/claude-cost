@@ -10,7 +10,7 @@ def detect(ctx: FindingContext) -> Detection:
         if not r.model.startswith("claude-fable"):
             continue
         alt = ctx.price(ctx.compare_model, r)
-        covered.append(Covered(r.message_id, r.cost - alt.total if alt else 0.0))
+        covered.append(Covered(r.message_id, r.cost - r.web_search_cost - alt.total if alt else 0.0))
     return Detection(covered)
 
 

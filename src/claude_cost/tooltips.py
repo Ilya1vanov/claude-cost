@@ -33,6 +33,7 @@ TOOLTIPS = {
     "cache write (5m)": _5M,
     "cache write (1h)": _1H,
     "cache read": "Context read back from the prompt cache, the cheapest kind of input.",
+    "web search": "The fee for the web searches a request's WebSearch calls ran, per search.",
     "hit ratio": "Share of the prompt that was read from the cache instead of written or sent uncached.",
     "cold writes": ("A cache write that rebuilds context the cache already held before it expired. "
                     "Shown as its cost and the number of requests that made one."),

@@ -5,7 +5,8 @@ from __future__ import annotations
 # Cost components: (display name, `requests` column). The one list everything derives from.
 COMPONENTS = (("input", "cost_input"), ("output", "cost_output"),
               ("cache write (5m)", "cost_cache_write_5m"),
-              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"))
+              ("cache write (1h)", "cost_cache_write_1h"), ("cache read", "cost_cache_read"),
+              ("web search", "cost_web_search"))
 
 COST_SQL = " + ".join(col for _, col in COMPONENTS)
 

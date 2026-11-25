@@ -1,0 +1,153 @@
+"""The web search fee: $0.01 per recorded search, charged to the Request that issued the call."""
+from __future__ import annotations
+
+import sqlite3
+from datetime import date
+
+import pytest
+
+from claude_cost import ingest, pricing, store
+from claude_cost.query import QueryService
+from helpers import req, web_search_result_line, web_search_use_line
+
+DAY = date(2026, 10, 30)
+TS = "2026-10-30T01:00:00Z"
+TS2 = "2026-10-30T01:00:05Z"
+
+
+def total(svc) -> float:
+    return svc.daily_spend(DAY, DAY)[0].cost
+
+
+def _one(root, service_for, *lines, **req_kw):
+    root.write_transcript("p", "s1", [req("m1", TS, **req_kw)], extra_lines=list(lines))
+    return service_for(root)
+
+
+def test_a_search_count_of_two_costs_two_cents(root, service_for):
+    svc = _one(root, service_for, web_search_use_line(TS, "tu1", "m1"),
+               web_search_result_line(TS2, "tu1", 2))
+    assert total(svc) == pytest.approx(0.02)
+
+
+def test_the_fee_is_added_to_the_token_cost(root, service_for):
+    svc = _one(root, service_for, web_search_use_line(TS, "tu1", "m1"),
+               web_search_result_line(TS2, "tu1", 1), output=1_000_000)
+    assert total(svc) == pytest.approx(20.01)
+    assert [s.cost for s in svc.session_summaries()] == [pytest.approx(20.01)]
+
+
+def test_a_result_without_a_search_count_or_an_error_adds_no_fee_yet(root, service_for):
+    svc = _one(root, service_for,
+               web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", None),
+               web_search_use_line(TS, "tu2", "m1"), web_search_result_line(TS2, "tu2", error=True))
+    assert total(svc) == 0
+
+
+def test_only_websearch_results_are_counted(root, service_for):
+    other = web_search_result_line(TS2, "tu9", 3)  # a result whose call was not WebSearch
+    assert total(_one(root, service_for, other, output=1_000_000)) == pytest.approx(20.0)
+
+
+def test_several_calls_of_one_request_add_up_across_streamed_lines(root, service_for):
+    svc = _one(root, service_for,
+               web_search_use_line(TS, "tu1", "m1"), web_search_use_line(TS, "tu2", "m1"),
+               web_search_result_line(TS2, "tu1", 1), web_search_result_line(TS2, "tu2", 2),
+               lines=2)
+    assert total(svc) == pytest.approx(0.03)
+
+
+def test_a_result_replayed_in_resumed_transcripts_counts_once(root, service_for):
+    uses = [web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2)]
+    root.write_transcript("p", "s1", [req("m1", TS)], extra_lines=uses + uses)
+    root.write_transcript("p", "s2", [req("m1", TS, session_id="s1")], extra_lines=uses)
+    svc = service_for(root)
+    assert (total(svc), len(svc.session_summaries())) == (pytest.approx(0.02), 1)
+
+
+def test_a_result_arriving_in_a_later_ingest_is_charged_then(root, service_for):
+    root.write_transcript("p", "s1", [req("m1", TS)],
+                          extra_lines=[web_search_use_line(TS, "tu1", "m1")])
+    assert total(service_for(root)) == 0
+    root.append_to_transcript("p", "s1", [], raw=web_search_result_line(TS2, "tu1", 2) + "\n")
+    assert total(service_for(root)) == pytest.approx(0.02)
+
+
+def test_a_search_in_a_subagent_counts_toward_it_and_its_session(root, service_for):
+    root.write_transcript("p", "s1", [req("m0", TS)])
+    root.write_subagent_transcript("p", "s1", "a1", [req("m1", TS)], extra_lines=[
+        web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2)])
+    svc = service_for(root)
+    assert [s.cost for s in svc.subagent_summaries()] == [pytest.approx(0.02)]
+    assert [s.cost for s in svc.session_summaries()] == [pytest.approx(0.02)]
+
+
+def test_a_forks_copied_request_keeps_its_fee_with_the_parent(root, service_for):
+    uses = [web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2)]
+    root.write_transcript("p", "fork", [req("m1", TS, forked_from="orig")], extra_lines=uses)
+    root.write_transcript("p", "orig", [req("m1", TS)], extra_lines=uses)
+    svc = service_for(root)
+    assert total(svc) == pytest.approx(0.02)
+    assert {s.session_id: s.cost for s in svc.session_summaries()} == {"orig": pytest.approx(0.02)}
+
+
+def test_the_fable_usage_finding_never_reports_the_search_fee_as_avoidable(root, service_for):
+    root.write_transcript("p", "s1", [req("f", TS, model="claude-fable-5", input=1_000_000)],
+                          extra_lines=[web_search_use_line(TS, "tu1", "f"),
+                                       web_search_result_line(TS2, "tu1", 3)])
+    f = {x.id: x for x in service_for(root).findings()}["fable-usage"]
+    assert f.attributed == pytest.approx(10.03)
+    assert f.avoidable == pytest.approx(10 - 4)  # tokens only: Fable $10 vs Opus 5.5 $4
+
+
+def _fee_lines(mid: str = "m1"):
+    return [web_search_use_line(TS, "tu1", mid), web_search_result_line(TS2, "tu1", 2)]
+
+
+def test_the_per_search_rate_is_dated(root, service_for, monkeypatch):
+    monkeypatch.setattr(pricing, "WEB_SEARCH_FEE", [(date(2020, 1, 1), 0.01), (date(2026, 10, 30), 0.05)])
+    root.write_transcript("p", "s1", [req("m1", "2026-10-29T23:00:00Z"), req("m2", TS)], extra_lines=[
+        web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2),
+        web_search_use_line(TS, "tu2", "m2"), web_search_result_line(TS2, "tu2", 2)])
+    svc = service_for(root)
+    assert svc.daily_spend(date(2026, 10, 29), date(2026, 10, 29))[0].cost == pytest.approx(0.02)
+    assert total(svc) == pytest.approx(0.10)
+
+
+def test_changing_the_rate_reprices_stored_requests_without_reading_transcripts(
+        root, tmp_path, monkeypatch):
+    root.write_transcript("p", "s1", [req("m1", TS)], extra_lines=_fee_lines())
+    conn = store.connect(tmp_path / "s.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
+    (root.path / "projects" / "p" / "s1.jsonl").unlink()  # the count is kept in the store
+    monkeypatch.setattr(pricing, "WEB_SEARCH_FEE", [(date(2020, 1, 1), 0.02)])
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.04)
+
+
+def test_a_store_from_before_the_fee_gains_it_after_the_update(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", TS, output=1_000_000)], extra_lines=_fee_lines())
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)  # the store as the previous version left it: schema version 1
+    old.row_factory = sqlite3.Row
+    old.isolation_level = None
+    old.execute("BEGIN")
+    store.MIGRATIONS[0](old)
+    old.execute("PRAGMA user_version = 1")
+    old.execute("COMMIT")
+    old.close()
+    # the previous version ingested the transcripts: simulate its rows and markers
+    conn = store.connect(path)
+    ingest.ingest(conn, [root.path])
+    with conn:
+        conn.execute("DELETE FROM web_search_calls")
+        conn.execute("UPDATE request_copies SET web_searches = 0")
+        conn.execute("UPDATE requests SET web_searches = 0, cost_web_search = 0")
+        conn.execute("DELETE FROM meta WHERE key = 'web_searches'")
+        conn.execute("PRAGMA user_version = 1")
+    conn.close()
+    conn = store.connect(path)  # the update's migration step ...
+    assert total(QueryService(conn, "UTC")) == pytest.approx(20.0)
+    ingest.ingest(conn, [root.path])  # ... and the next ingest re-reads the transcripts
+    assert total(QueryService(conn, "UTC")) == pytest.approx(20.02)

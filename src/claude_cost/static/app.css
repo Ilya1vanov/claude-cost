@@ -35,6 +35,7 @@
   --c-cache-write-5m: #2a9d8f;
   --c-cache-write-1h: #a865a0;
   --c-cache-read: #4c9a52;
+  --c-web-search: #c9a227;
 
   /* Series in multi-line charts */
   --s1: #4f46e5; --s2: #e8833a; --s3: #2a9d8f; --s4: #b8962e; --s5: #a865a0; --s6: #8a6d3b;
@@ -91,6 +92,7 @@
     --c-cache-write-5m: #4fc1b2;
     --c-cache-write-1h: #c487bc;
     --c-cache-read: #6cbf72;
+    --c-web-search: #e0bb4a;
 
     --model-opus: #2e2756; --model-opus-fg: #c9bdfb;
     --model-sonnet: #0f3a35; --model-sonnet-fg: #7fdccb;
@@ -269,6 +271,7 @@ tr.baseline td { background: var(--surface-2); }
 .sw-cache-write-5m { background: var(--c-cache-write-5m); }
 .sw-cache-write-1h { background: var(--c-cache-write-1h); }
 .sw-cache-read { background: var(--c-cache-read); }
+.sw-web-search { background: var(--c-web-search); }
 
 .alert {
   border: 1px solid var(--warn); background: var(--warn-soft); color: var(--warn);

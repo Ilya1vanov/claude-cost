@@ -30,7 +30,8 @@ def _parse_ts(value: str) -> datetime:
 
 # `meta` rows a store gets once it holds what a newer version records; a store lacking one re-reads
 # every transcript once (Explore attributes, Turns, Subagent compactions keyed by stem and agent)
-REBUILD_MARKERS = ("explore_dims", "turns", "subagent_compactions_v2", "advisor_calls")
+REBUILD_MARKERS = ("explore_dims", "turns", "subagent_compactions_v2", "advisor_calls",
+                   "web_searches")
 
 RETENTION_DAYS = 60
 
@@ -109,6 +110,8 @@ class Parsed:
     listings: list[tuple] = field(default_factory=list)  # (kind, name, ts, tokens)
     removals: list[tuple] = field(default_factory=list)  # (kind, name, ts)
     uses: list[tuple] = field(default_factory=list)  # (tool_use_id, kind, name, ts)
+    search_calls: dict[str, str] = field(default_factory=dict)  # WebSearch tool_use_id -> message id
+    search_results: dict[str, int] = field(default_factory=dict)  # tool_use_id -> searches it ran
     # Spotlight inputs (ticket #13): last custom title; first cwd, git branch and prompt
     title: str | None = None
     cwd: str | None = None
@@ -250,6 +253,29 @@ def _advisor_iterations(usage: dict) -> list[dict]:
     return out
 
 
+def _search_calls(msg: dict, parsed: Parsed) -> None:
+    """WebSearch tool_use ids of a streamed line, mapped to the message (Request) that issued them."""
+    for blk in msg["content"] if isinstance(msg.get("content"), list) else []:
+        if (isinstance(blk, dict) and blk.get("type") == "tool_use" and blk.get("name") == "WebSearch"
+                and isinstance(blk.get("id"), str)):
+            parsed.search_calls[blk["id"]] = msg["id"]
+
+
+def _search_count(rec: dict, block: dict) -> int:
+    """Searches a tool_result ran: `toolUseResult.searchCount` (the result may carry none)."""
+    result = rec.get("toolUseResult")
+    count = result.get("searchCount") if isinstance(result, dict) else None
+    return count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 0
+
+
+def _search_results(rec: dict, parsed: Parsed) -> None:
+    """Every tool_result of a user line, by tool_use_id; storage keeps only those of WebSearch calls."""
+    content = (rec.get("message") or {}).get("content")
+    for blk in content if isinstance(content, list) else []:
+        if isinstance(blk, dict) and blk.get("type") == "tool_result" and isinstance(blk.get("tool_use_id"), str):
+            parsed.search_results[blk["tool_use_id"]] = _search_count(rec, blk)
+
+
 def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
     """Group assistant lines by message id: first line wins, output = max over lines."""
     parsed = Parsed()
@@ -296,6 +322,8 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
                 except (KeyError, TypeError, ValueError):
                     pass
             continue
+        if kind == "user":
+            _search_results(rec, parsed)
         if kind != "assistant":
             continue
         try:
@@ -306,6 +334,8 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
         usage = msg.get("usage")
         model = msg.get("model")
         mid = msg.get("id")
+        if isinstance(mid, str) and mid:
+            _search_calls(msg, parsed)  # usage-less lines too: the Request may come from another line
         if not usage or not mid or not model or model == "<synthetic>":
             continue
         out = usage.get("output_tokens") or 0
@@ -361,7 +391,9 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
     for mid, r in reqs.items():
         # Existing copy (earlier part of the same file): keep its first line, raise output.
         conn.execute(
-            "INSERT INTO request_copies VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO request_copies (path, message_id, session_id, ts_epoch, model, "
+            "input_tokens, output_tokens, cache_read_tokens, cache_write_5m_tokens, "
+            "cache_write_1h_tokens, is_copy) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(path, message_id) DO UPDATE SET "
             "output_tokens = MAX(output_tokens, excluded.output_tokens)",
             (str(path), mid, r["session_id"], r["ts"].timestamp(), r["model"], r["input"],
@@ -389,19 +421,46 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
                            a["write_5m"], a["write_1h"]) for n, a in enumerate(r["advisors"], 1)])
 
 
+def _store_searches(conn: sqlite3.Connection, path: Path, parsed: Parsed) -> set[str]:
+    """Keep this transcript's WebSearch calls and their counts (a result may arrive in a later
+    batch than its call, and resumed Transcripts replay both: one row per tool_use_id and file),
+    and refresh the search count of the Request copies concerned. Returns their message ids."""
+    conn.executemany("INSERT OR IGNORE INTO web_search_calls VALUES (?,?,?,0)",
+                     [(str(path), tid, mid) for tid, mid in parsed.search_calls.items()])
+    conn.executemany("UPDATE web_search_calls SET search_count = ? WHERE path = ? AND tool_use_id = ?",
+                     [(n, str(path), tid) for tid, n in parsed.search_results.items()])
+    mids = set(parsed.search_calls.values()) | set(parsed.reqs)
+    for tid in parsed.search_results:
+        row = conn.execute("SELECT message_id FROM web_search_calls WHERE path = ? AND tool_use_id = ?",
+                           (str(path), tid)).fetchone()
+        if row:
+            mids.add(row[0])
+    conn.executemany(
+        "UPDATE request_copies SET web_searches = (SELECT COALESCE(SUM(search_count), 0) "
+        "FROM web_search_calls w WHERE w.path = request_copies.path "
+        "AND w.message_id = request_copies.message_id) WHERE path = ? AND message_id = ?",
+        [(str(path), mid) for mid in mids])
+    return mids
+
+
 def _epoch_dt(epoch: float) -> datetime:
     return datetime.fromtimestamp(epoch, timezone.utc)
 
 
 def _upsert_request(conn: sqlite3.Connection, mid: str, owner: dict, r: dict, cost,
                     is_advisor: bool = False) -> None:
+    """Advisor calls are not WebSearch issuers: they carry no web searches."""
     c = cost or pricing.CostComponents()
+    cols = ("message_id, data_root, project, session_id, ts_epoch, model, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_write_5m_tokens, cache_write_1h_tokens, priced, "
+            + ", ".join(col for _, col in COMPONENTS) + ", is_advisor, web_searches")
     conn.execute(
-        "INSERT OR REPLACE INTO requests VALUES (" + ",".join("?" * (13 + len(COMPONENTS))) + ")",
+        f"INSERT OR REPLACE INTO requests ({cols}) VALUES ("
+        + ",".join("?" * (14 + len(COMPONENTS))) + ")",
         (mid, owner["root"], owner["project"], owner["file_stem"],
          r["ts"].timestamp(), r["model"], r["input"], r["output"], r["cache_read"],
          r["write_5m"], r["write_1h"], 1 if cost else 0,
-         *_cost_values(c), 1 if is_advisor else 0),
+         *_cost_values(c), 1 if is_advisor else 0, 0 if is_advisor else r["web_searches"]),
     )
 
 
@@ -464,7 +523,8 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
                     "model": row["model"], "input": row["input_tokens"],
                     "output": row["output_tokens"], "cache_read": row["cache_read_tokens"],
                     "write_5m": row["cache_write_5m_tokens"],
-                    "write_1h": row["cache_write_1h_tokens"]},
+                    "write_1h": row["cache_write_1h_tokens"],
+                    "web_searches": row["web_searches"]},
         } for row in rows]
         owner = ownership.pick_owner(cands)
         r = owner["req"]
@@ -474,7 +534,8 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
             r["model"], price_day(r["ts"].timestamp()), input=r["input"], output=r["output"],
             cache_read=r["cache_read"], write_5m=r["write_5m"], write_1h=r["write_1h"],
             speed=attrs["speed"] if attrs else None,
-            inference_geo=attrs["inference_geo"] if attrs else None, table=table,
+            inference_geo=attrs["inference_geo"] if attrs else None,
+            web_searches=r["web_searches"], table=table,
         )
         conn.execute("INSERT OR REPLACE INTO request_surface VALUES (?,?,?)",
                      (mid, owner["surface"], owner["agent_id"]))
@@ -524,7 +585,8 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
             r["model"], price_day(r["ts_epoch"]),
             input=r["input_tokens"], output=r["output_tokens"], cache_read=r["cache_read_tokens"],
             write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
-            speed=r["speed"], inference_geo=r["inference_geo"], table=table)
+            speed=r["speed"], inference_geo=r["inference_geo"],
+            web_searches=r["web_searches"], table=table)
         c = cost or pricing.CostComponents()
         updates.append((1 if cost else 0, *_cost_values(c), r["message_id"]))
     with conn:
@@ -711,7 +773,8 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             existing = {str(t[0]) for root in roots for t in _transcripts(root)}
             for (path,) in conn.execute("SELECT path FROM ingest_files").fetchall():
                 if path in existing:
-                    for table in ("request_copies", "copy_advisors", "transcript_links", "ingest_files"):
+                    for table in ("request_copies", "copy_advisors", "web_search_calls", "transcript_links",
+                                  "ingest_files"):
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
             touched.update(r[0] for r in conn.execute(
                 "SELECT message_id FROM requests").fetchall())
@@ -728,7 +791,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                    (str(path),)).fetchone()
                 offset = row["offset"] if row else 0
                 if path.stat().st_size < offset:  # truncated or replaced: read it afresh
-                    for table in ("request_copies", "copy_advisors", "transcript_links"):
+                    for table in ("request_copies", "copy_advisors", "web_search_calls", "transcript_links"):
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (str(path),))
                     offset = 0
                 lines, new_offset = _read_new(path, offset)
@@ -749,6 +812,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                 conn.executemany("INSERT OR IGNORE INTO transcript_links VALUES (?,?)",
                                  [(str(path), other) for other in parsed.links])
                 _store_copies(conn, path, parsed.reqs)
+                touched.update(_store_searches(conn, path, parsed))
                 if sub is None:  # Spotlight metadata of main transcripts only
                     conn.execute(
                         "INSERT INTO session_meta VALUES (?,?,?,?,?) ON CONFLICT(stem) DO UPDATE SET "
@@ -805,6 +869,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('turns', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('subagent_compactions_v2', '1')")
         conn.execute("INSERT OR REPLACE INTO meta VALUES ('advisor_calls', '1')")
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('web_searches', '1')")
     reprice(conn, price_table)
     _store_compact(conn, price_table, compact_settings, changed or desktop_changed)
     spotlight_migration.run(conn)  # once, after the Sessions are grouped

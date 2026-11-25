@@ -318,9 +318,24 @@ def _to_v2(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _to_v3(conn: sqlite3.Connection) -> None:
+    """Web search fee: the search count of each Request copy and the fee as a Cost component.
+    The count is read from transcripts, so the next ingest re-reads every transcript while its
+    `web_searches` marker is absent."""
+    for table, column, ddl in (("requests", "cost_web_search", "REAL"),
+                               ("requests", "web_searches", "INTEGER"),
+                               ("request_copies", "web_searches", "INTEGER")):
+        if not any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})")):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl} NOT NULL DEFAULT 0")
+    conn.execute("CREATE TABLE IF NOT EXISTS web_search_calls (path TEXT NOT NULL, tool_use_id TEXT NOT NULL, "
+                 "message_id TEXT NOT NULL, search_count INTEGER NOT NULL DEFAULT 0, "
+                 "PRIMARY KEY (path, tool_use_id))")
+    conn.execute("DELETE FROM meta WHERE key = 'web_searches'")
+
+
 # Ordered migration steps: step N takes a store at version N-1 to version N. To change the schema
 # append a step; never edit SCHEMA or an earlier step (SCHEMA is the version-1 shape).
-MIGRATIONS = [_to_v1, _to_v2]
+MIGRATIONS = [_to_v1, _to_v2, _to_v3]
 LATEST_VERSION = len(MIGRATIONS)
 
 

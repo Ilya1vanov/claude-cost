@@ -206,6 +206,31 @@ def tool_use_line(ts: str, tool_use_id: str, name: str, input: dict | None = Non
                                                 "name": name, "input": input or {}}]}})
 
 
+def web_search_use_line(ts: str, tool_use_id: str, message_id: str) -> str:
+    """A usage-less assistant record carrying a WebSearch `tool_use` of the Request `message_id`
+    (a streamed content-block line of that Request)."""
+    return json.dumps({"type": "assistant", "uuid": f"u-{tool_use_id}", "timestamp": ts,
+                       "message": {"id": message_id, "role": "assistant",
+                                   "content": [{"type": "tool_use", "id": tool_use_id,
+                                                "name": "WebSearch", "input": {"query": "q"}}]}})
+
+
+def web_search_result_line(ts: str, tool_use_id: str, search_count: int | None = None,
+                           error: bool = False) -> str:
+    """The user record answering a WebSearch call: `toolUseResult.searchCount` set, the whole
+    `toolUseResult` absent (`search_count=None`), or an error (string `toolUseResult`)."""
+    block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": "ok"}
+    rec = {"type": "user", "uuid": f"r-{tool_use_id}", "timestamp": ts,
+           "message": {"role": "user", "content": [block]}}
+    if error:
+        block["is_error"] = True
+        rec["toolUseResult"] = "Error: search failed"
+    elif search_count is not None:
+        rec["toolUseResult"] = {"query": "q", "results": [], "durationSeconds": 1.0,
+                                "searchCount": search_count}
+    return json.dumps(rec)
+
+
 class DataRoot:
     """A synthetic ~/.claude. Always a path under pytest's tmp_path, never the real one."""
 

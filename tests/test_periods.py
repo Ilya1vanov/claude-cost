@@ -6,7 +6,7 @@ import pytest
 from claude_cost import store
 from claude_cost.query import QueryService
 
-from helpers import req
+from helpers import req, web_search_result_line, web_search_use_line
 
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)  # a Friday
 
@@ -141,12 +141,16 @@ def test_today_comes_from_the_local_clock_not_utc(root, tmp_path, service_for):
 def test_cost_components_split_current_and_baseline(root, service_for):
     root.write_transcript("p", "s1", [req("a", "2026-10-29T10:00:00Z", input=1_000_000,
                                            output=1_000_000, cache_read=1_000_000,
-                                           write_5m=1_000_000, write_1h=1_000_000)])
+                                           write_5m=1_000_000, write_1h=1_000_000)],
+                          extra_lines=[web_search_use_line("2026-10-29T10:00:00Z", "tu1", "a"),
+                                       web_search_result_line("2026-10-29T10:00:05Z", "tu1", 1)])
     c = service_for(root).period_comparison("last7", NOW)
     parts = {x.name: x for x in c.components}
-    assert list(parts) == ["input", "output", "cache write (5m)", "cache write (1h)", "cache read"]
+    assert list(parts) == ["input", "output", "cache write (5m)", "cache write (1h)", "cache read",
+                           "web search"]
     assert sum(x.current for x in c.components) == pytest.approx(c.current_cost)
     assert all(x.current > 0 and x.baseline == 0 for x in c.components)
+    assert parts["web search"].current == pytest.approx(0.01)
 
 
 def test_top_n_sessions_and_projects_ranked_by_period_cost(root, service_for):

@@ -48,6 +48,16 @@ CostComponents = make_dataclass(
 _EPOCH = date(2020, 1, 1)
 
 
+# $ per web search, dated like a price: the latest entry with `effective_from <= day` applies.
+# Not per model and not scaled by fast mode, region or prompt tier. Tuned in code only.
+WEB_SEARCH_FEE: list[tuple[date, float]] = [(_EPOCH, 0.01)]
+
+
+def web_search_fee(on: date) -> float:
+    """$ per web search on a date."""
+    return max((e for e in WEB_SEARCH_FEE if e[0] <= on), key=lambda e: e[0])[1]
+
+
 def _p(i: float, o: float, read_mult: float = DEFAULT_READ_MULT, **kw) -> list[PriceEntry]:
     """Input $/M, output $/M, cache-read multiplier of input (0.025 Fable 5.1/5.2 and Mythos 5.2, 0.05 Opus/Sonnet 5.5)."""
     return [PriceEntry(_EPOCH, i, o, round(i * read_mult, 6), **kw)]
@@ -144,7 +154,7 @@ def modifier(speed: str | None, inference_geo: str | None, mult: float = 1.0) ->
 
 def price_request(model: str, on: date, *, input: int, output: int,
                   cache_read: int, write_5m: int, write_1h: int, speed: str | None = None,
-                  inference_geo: str | None = None,
+                  inference_geo: str | None = None, web_searches: int = 0,
                   table: Mapping[str, list[PriceEntry]] | None = None) -> CostComponents | None:
     """Cost components of one request, or None when the model is not in the table."""
     p = find_price(model, on, table)
@@ -158,6 +168,7 @@ def price_request(model: str, on: date, *, input: int, output: int,
         cache_write_5m=write_5m * p.input * WRITE_5M_MULT / m,
         cache_write_1h=write_1h * p.input * WRITE_1H_MULT / m,
         cache_read=cache_read * p.cache_read / m,
+        web_search=web_searches * web_search_fee(on),
     )
 
 
@@ -177,6 +188,7 @@ def read_rate(r, table: Mapping[str, list[PriceEntry]] | None = None) -> float:
 
 
 def fingerprint(table: Mapping[str, list[PriceEntry]]) -> str:
-    """Identifies the price table in effect: changes when any price, effective date or modifier does."""
+    """Identifies the price table in effect: changes when any price, effective date, modifier or the web search fee does."""
     modifiers = (WRITE_5M_MULT, WRITE_1H_MULT, FAST_MULT, US_MULT)
-    return hashlib.sha256(repr((sorted(table.items()), modifiers)).encode()).hexdigest()
+    return hashlib.sha256(
+        repr((sorted(table.items()), modifiers, WEB_SEARCH_FEE)).encode()).hexdigest()
