@@ -14,6 +14,8 @@ It installs `uv` (the tool that installs claude-cost) if you do not have it, the
 
 Works on macOS, and on Linux (best effort). Windows is not supported yet.
 
+**Network and privacy.** Everything claude-cost does stays on your machine, except one thing: at most once a day it asks GitHub for the latest release, so it can tell you when a newer one exists. That request sends no usage data, no prompts and no identifiers about you. To turn it off, run `claude-cost config set update_check false` (or set `CLAUDE_COST_UPDATE_CHECK=0`); then claude-cost makes no network calls at all, and `claude-cost update` is the only time it contacts GitHub.
+
 Technical users can skip the script and install the wheel of the latest [Release](https://github.com/Ilya1vanov/claude-cost/releases/latest) directly:
 
 ```
@@ -24,11 +26,13 @@ uv tool install --force <wheel URL from the latest Release>
 
 Run `claude-cost update`. It shows what changed, asks you to confirm (`--yes` skips the question), backs up your data, installs the new version and upgrades your data. If anything fails, your data is left as it was and the previous version is reinstalled. claude-cost also tells you, at most once a day, when a newer release exists. Already on the latest release? `update` says so and does nothing. Re-running the install line also works.
 
+The once-a-day check described under Install is the only network call besides `update` itself; the opt-out is the same.
+
 ## Uninstall
 
 Run `claude-cost uninstall`. It removes claude-cost and asks whether to also delete your data (Spotlights, settings); the default keeps it. `--purge` deletes the data without asking. It never removes `uv`.
 
-By hand: `uv tool uninstall claude-cost`. Your data is the claude-cost data folder (`store.sqlite` and its backups; `CLAUDE_COST_DATA_DIR` moves it) and the settings file `config.toml` (`claude-cost config path` prints where); delete them to remove everything.
+By hand: `uv tool uninstall claude-cost`. Your data is the claude-cost data folder, `<home>/.local/share/claude-cost/` by default (`store.sqlite`, its backups and the update-check cache; `CLAUDE_COST_DATA_DIR` moves it), and the settings file `<home>/.config/claude-cost/config.toml` by default (`CLAUDE_COST_CONFIG_DIR` moves it; `claude-cost config path` prints where). Delete them to remove everything.
 
 ## Usage
 
@@ -69,7 +73,9 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 
 ## Developer conventions
 
-**Stack:** Python >= 3.11 managed with `uv`, SQLite (stdlib), Flask with server-rendered Jinja pages, Chart.js 4.4.7 vendored at `src/claude_cost/static/vendor/` (no CDN, no Node build); the only network call is a daily update check: one request to the GitHub Releases API for the latest release, which sends no usage data or identifiers; turn it off with `update_check = false` in `config.toml` or `CLAUDE_COST_UPDATE_CHECK=0` for no network calls at all, pytest.
+**Stack:** Python >= 3.11 managed with `uv`, SQLite (stdlib), Flask with server-rendered Jinja pages, Chart.js 4.4.7 vendored at `src/claude_cost/static/vendor/` (no CDN, no Node build), pytest.
+
+**Network:** the only network call is the daily update check: one request to the GitHub Releases API for the latest release, which sends no usage data or identifiers. Turn it off with `update_check = false` in `config.toml` or `CLAUDE_COST_UPDATE_CHECK=0`.
 
 **Run tests:** `uv run pytest -q` (includes a `uv tool install` check that uses temp `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR`).
 
@@ -87,9 +93,12 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 | `spotlights.py` | Spotlight logic (pure): keys, membership, Included spotlights, picker ranking |
 | `query.py` | `QueryService`, the only source of numbers for web and CLI |
 | `web.py` / `templates/` / `static/` | Flask adapter (`create_app`) |
-| `cli.py` | argparse adapter (`main`), including the `spotlight` group |
+| `cli.py` | argparse adapter (`main`), including the `spotlight` group and `update`, `uninstall`, `migrate` |
+| `releases.py` | the latest GitHub Release, version comparison, the daily update check and its cache |
+| `installer.py` | `Installer` and `Dashboard`: the `uv tool` install/uninstall/migrate and dashboard stop/start |
+| `release_check.py` | release workflow check: tag vs `pyproject.toml` version vs `CHANGELOG.md` entry |
 
-**Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`, `focus_tab`, `probe_server`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
+**Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`, `focus_tab`, `probe_server`, `releases`, `installer`, `dashboard`, `ask`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
 
 **Add a dimension (group-by/filter):** add the column through a store migration (below) and the insert in `ingest.py`, expose a query method on `QueryService` that groups by it, test it through the service.
 
