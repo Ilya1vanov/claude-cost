@@ -50,7 +50,7 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 | `ingest.py` | parses transcripts, writes Requests to the store |
 | `ownership.py` | ADR-0001 owner rule |
 | `pricing.py` | dated price table, `price_request` |
-| `store.py` | SQLite schema + `connect` |
+| `store.py` | SQLite schema, ordered migration steps (`MIGRATIONS`) + `connect` |
 | `findings/` | Drains and Opportunities, with their thresholds |
 | `spotlights.py` | Spotlight logic (pure): keys, membership, Included spotlights, picker ranking |
 | `query.py` | `QueryService`, the only source of numbers for web and CLI |
@@ -59,7 +59,9 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 
 **Rules:** the web and CLI never query SQLite directly; they call `QueryService`. Config, clock, server and browser are injected (`env`, `now`, `run_server`, `open_browser`, `focus_tab`, `probe_server`) so tests never touch real state. Tests never use real `~/.claude` or user config: an autouse fixture in `tests/conftest.py` points `HOME`, `CLAUDE_COST_CONFIG_DIR` and `CLAUDE_COST_DATA_DIR` at temp dirs. `CLAUDE_COST_CONFIG_DIR` / `CLAUDE_COST_DATA_DIR` also work for real use.
 
-**Add a dimension (group-by/filter):** add the column in `store.py` `SCHEMA` (and the insert in `ingest.py`), expose a query method on `QueryService` that groups by it, test it through the service.
+**Add a dimension (group-by/filter):** add the column through a store migration (below) and the insert in `ingest.py`, expose a query method on `QueryService` that groups by it, test it through the service.
+
+**Change the store schema:** append one function to `MIGRATIONS` in `store.py` that takes the store from version N-1 to N (it runs inside the migration transaction: no `commit`, no `executescript`). Never edit `SCHEMA` (the version-1 shape) or an earlier step. The store's `PRAGMA user_version` is the number of steps applied; opening a store runs every pending step in one transaction (a failure rolls all back and leaves the file unchanged), and a store with a newer version than the code knows is refused. `claude-cost migrate` opens the configured store and migrates it; every other command migrates through the same path. Test with a real SQLite file in the previous shape (see `tests/test_store_migrations.py`).
 
 **Add a page:** add a method to `QueryService` for the data, a route in `web.py`, a template in `templates/`, and a line in `tests/test_adapters.py` that loads the page.
 

@@ -334,6 +334,7 @@ def test_findings_on_a_store_from_before_the_change_work_after_the_cli_ingests(r
         conn.execute("DROP TABLE request_stream")
         conn.execute("DROP INDEX tool_uses_ts")
         conn.execute("DELETE FROM meta WHERE key = 'median_first_context'")
+        conn.execute("PRAGMA user_version = 0")  # unversioned: opening it migrates
     conn.close()
     out = io.StringIO()
     assert cli.main(["drains"], env=env, now=NOW, out=out, err=io.StringIO()) == 0

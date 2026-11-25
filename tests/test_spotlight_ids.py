@@ -113,6 +113,7 @@ def _name_keyed_store(root, tmp_path):
         conn.executescript("""
             DROP TABLE spotlights;
             CREATE TABLE spotlights (name TEXT PRIMARY KEY, rule TEXT NOT NULL DEFAULT '');
+            PRAGMA user_version = 0;  -- unversioned: reopening migrates
             DELETE FROM spotlight_pins; DELETE FROM spotlight_includes;
             INSERT INTO spotlights (name) VALUES ('Sprint'), ('Wrapper'), ('PROJ-2');
             INSERT INTO spotlight_pins VALUES ('Sprint', 'k'), ('PROJ-1', 'k'), ('PROJ-2', 'a1');

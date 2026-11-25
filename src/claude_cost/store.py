@@ -249,18 +249,101 @@ CREATE INDEX IF NOT EXISTS tool_uses_ts ON tool_uses (ts_epoch);
 """
 
 
+class StoreError(Exception):
+    """The store cannot be opened by this version; the message says why."""
+
+
+class MigrationError(StoreError):
+    """A migration step failed; the store was left exactly as it was."""
+
+
+class StoreTooNewError(StoreError):
+    """The store was written by a newer claude-cost than the running one."""
+
+
+def _statements(script: str):
+    """Split a SQL script into statements, so they run inside the caller's transaction
+    (`executescript` would commit it)."""
+    buf = ""
+    for line in script.splitlines():
+        if line.lstrip().startswith("--"):
+            continue
+        buf += line + "\n"
+        if sqlite3.complete_statement(buf):
+            yield buf
+            buf = ""
+
+
+def _to_v1(conn: sqlite3.Connection) -> None:
+    """An unversioned store (or an empty one) to version 1: the ad hoc migrations, in order.
+    The dropped Subagent compactions table is refilled by the next ingest, which re-reads every
+    transcript while its `subagent_compactions_v2` marker is absent."""
+    if any(r[1] == "uuid" and r[5] for r in conn.execute("PRAGMA table_info(subagent_compactions)")):
+        conn.execute("DROP TABLE subagent_compactions")  # keyed by uuid alone
+        conn.execute("DELETE FROM meta WHERE key = 'subagent_compactions_v2'")
+    for statement in _statements(SCHEMA):
+        conn.execute(statement)
+    _migrate_spotlight_ids(conn)
+    if not any(r[1] == "locked" for r in conn.execute("PRAGMA table_info(auto_spotlights)")):
+        conn.execute("ALTER TABLE auto_spotlights ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+
+
+# Ordered migration steps: step N takes a store at version N-1 to version N. To change the schema
+# append a step; never edit SCHEMA or an earlier step (SCHEMA is the version-1 shape).
+MIGRATIONS = [_to_v1]
+LATEST_VERSION = len(MIGRATIONS)
+
+
+def _user_version(conn: sqlite3.Connection) -> int:
+    return conn.execute("PRAGMA user_version").fetchone()[0]
+
+
+def _too_new(found: int) -> StoreTooNewError:
+    return StoreTooNewError(f"the store is at schema version {found}, newer than this claude-cost "
+                            f"understands ({LATEST_VERSION}); update claude-cost, the store was not read")
+
+
+def migrate(conn: sqlite3.Connection) -> bool:
+    """Bring the store to LATEST_VERSION: every pending step in one transaction, so a failure
+    leaves the store as it was. Returns whether anything ran."""
+    found = _user_version(conn)
+    if found > LATEST_VERSION:
+        raise _too_new(found)
+    if found == LATEST_VERSION:
+        return False
+    mode = conn.isolation_level
+    conn.isolation_level = None  # explicit transaction control
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            found = _user_version(conn)  # another process may have migrated meanwhile
+            if found > LATEST_VERSION:
+                raise _too_new(found)
+            for step in MIGRATIONS[found:]:
+                step(conn)
+            conn.execute(f"PRAGMA user_version = {LATEST_VERSION}")
+            conn.execute("COMMIT")
+        except Exception as e:
+            conn.execute("ROLLBACK")
+            if isinstance(e, StoreError):
+                raise
+            raise MigrationError(f"{e}") from e
+    finally:
+        conn.isolation_level = mode
+    return True
+
+
 def connect(path: Path, schema: bool = True) -> sqlite3.Connection:
-    """`schema=False` skips the CREATE script: for per-request opens of an initialised store."""
+    """`schema=False` skips migration: for per-request opens of an initialised store."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     if schema:
-        if any(r[1] == "uuid" and r[5] for r in conn.execute("PRAGMA table_info(subagent_compactions)")):
-            conn.execute("DROP TABLE subagent_compactions")  # keyed by uuid alone: ingest refills it
-        conn.executescript(SCHEMA)
-        _migrate_spotlight_ids(conn)
-        if not any(r[1] == "locked" for r in conn.execute("PRAGMA table_info(auto_spotlights)")):
-            conn.execute("ALTER TABLE auto_spotlights ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+        try:
+            migrate(conn)
+        except StoreError:
+            conn.close()
+            raise
     return conn
 
 
@@ -289,15 +372,15 @@ def _migrate_spotlight_ids(conn: sqlite3.Connection) -> None:
 
     def to_id(name: str) -> str:
         return ids.get(name) or f"auto:{name}"
-    with conn:
-        conn.execute("DROP TABLE spotlights")
-        conn.execute("CREATE TABLE spotlights (name TEXT NOT NULL, rule TEXT NOT NULL DEFAULT '', "
-                     "id TEXT PRIMARY KEY DEFAULT ('sp-' || lower(hex(randomblob(4)))))")
-        conn.executemany("INSERT INTO spotlights (name, rule, id) VALUES (?, ?, ?)",
-                         [(n, rule, ids[n]) for n, rule in old])
-        conn.execute("DELETE FROM spotlight_pins")
-        conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
-                         [(to_id(n), sid) for n, sid in pins])
-        conn.execute("DELETE FROM spotlight_includes")
-        conn.executemany("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)",
-                         [(to_id(a), to_id(b)) for a, b in edges])
+    # runs inside migrate()'s transaction
+    conn.execute("DROP TABLE spotlights")
+    conn.execute("CREATE TABLE spotlights (name TEXT NOT NULL, rule TEXT NOT NULL DEFAULT '', "
+                 "id TEXT PRIMARY KEY DEFAULT ('sp-' || lower(hex(randomblob(4)))))")
+    conn.executemany("INSERT INTO spotlights (name, rule, id) VALUES (?, ?, ?)",
+                     [(n, rule, ids[n]) for n, rule in old])
+    conn.execute("DELETE FROM spotlight_pins")
+    conn.executemany("INSERT OR IGNORE INTO spotlight_pins VALUES (?, ?)",
+                     [(to_id(n), sid) for n, sid in pins])
+    conn.execute("DELETE FROM spotlight_includes")
+    conn.executemany("INSERT OR IGNORE INTO spotlight_includes VALUES (?, ?)",
+                     [(to_id(a), to_id(b)) for a, b in edges])

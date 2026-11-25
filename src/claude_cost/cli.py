@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import shlex
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -404,6 +405,31 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_serv
     return 0
 
 
+RELEASES_URL = "https://github.com/Ilya1vanov/claude-cost/releases"
+
+
+def _store_failure(e: store.StoreError, config: Config, err) -> int:
+    """A store that cannot be opened: say why, that it is untouched, and how to go back (ADR-0008)."""
+    print(f"claude-cost: {e}", file=err)
+    if isinstance(e, store.MigrationError):
+        print("The store was left unchanged. To go back to the previous version, reinstall it: "
+              f"uv tool install --force <wheel URL of the previous Release, from {RELEASES_URL}>", file=err)
+    return 1
+
+
+def cmd_migrate(config: Config, out) -> int:
+    conn = sqlite3.connect(config.store_path) if config.store_path.exists() else None
+    before = conn.execute("PRAGMA user_version").fetchone()[0] if conn else 0
+    if conn:
+        conn.close()
+    store.connect(config.store_path).close()
+    if before == store.LATEST_VERSION:
+        print(f"Store is up to date (schema version {store.LATEST_VERSION})", file=out)
+    else:
+        print(f"Store migrated to schema version {store.LATEST_VERSION}", file=out)
+    return 0
+
+
 def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[list[str]], object]) -> int:
     """`config` shows every setting; get/set/path/edit work on the file. Works even if the file is broken."""
     config_mod.ensure_config_file(path, env)
@@ -446,6 +472,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
     p_ingest = sub.add_parser("ingest", help="read new transcript data into the store")
     p_ingest.add_argument("--rebuild", action="store_true",
                           help="re-read every transcript that still exists and recompute all requests")
+    sub.add_parser("migrate", help="bring the store up to date with this version")
     p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
     p_serve.add_argument("--browser", choices=["default", "none"],
                          help="none: don't open a browser (also BROWSER=none)")
@@ -507,6 +534,17 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         print(f"claude-cost: {e}", file=err)
         return 2
     now_fn = (lambda: now) if now else (lambda: _now(config))
+    try:
+        return _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
+                         probe_server)
+    except store.StoreError as e:
+        return _store_failure(e, config, err)
+
+
+def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
+              probe_server) -> int:
+    if args.command == "migrate":
+        return cmd_migrate(config, out)
     if args.command == "today":
         return cmd_today(config, now_fn(), out, err)
     if args.command == "week":
