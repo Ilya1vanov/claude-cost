@@ -196,6 +196,36 @@ _Avoid_: compact window, compact threshold
 A compaction, manual or automatic, that came after a request whose context was above the compact threshold.
 _Avoid_: late auto-compact
 
+## Releases
+
+**Release**:
+A published `vX.Y.Z` version of claude-cost: a tag on `main` with a wheel, plain-language notes taken from the changelog, and a GitHub Release page.
+_Avoid_: build, package, version (alone)
+
+**Releases**:
+The injected collaborator that returns the latest Release, or none when it has no wheel; tests use a fake and never reach the network.
+_Avoid_: release client, updater
+
+**Update check**:
+The once-a-day lookup of the latest Release, the only network call claude-cost makes; it sends no usage data or identifiers, caches its answer beside the store, and can be turned off.
+_Avoid_: telemetry, phone-home, auto-update
+
+**Installer**:
+The injected collaborator that changes the machine: installs or removes the claude-cost tool and runs the new version's migration; tests use a fake and never run `uv`.
+_Avoid_: package manager, updater
+
+**Dashboard**:
+The web app started by `claude-cost serve`; `update` and `uninstall` stop it, through an injected collaborator, before changing files and restart it if it was running.
+_Avoid_: server, web UI
+
+**Schema version**:
+The number of migration steps applied to the store, kept in its `PRAGMA user_version`; a store newer than the code is refused.
+_Avoid_: db version, store version
+
+**Migration**:
+One ordered step taking the store from schema version N-1 to N; all pending steps run in one transaction, so a failure leaves the store unchanged.
+_Avoid_: upgrade script, schema change
+
 ## Time
 
 **Period**:
