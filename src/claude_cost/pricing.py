@@ -9,9 +9,11 @@ Config overrides (`build_table`) replace a model's entries; unknown models are n
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, make_dataclass
 from datetime import date
 from typing import Mapping
+
+from .sql import COMPONENTS
 
 WRITE_5M_MULT = 1.25
 WRITE_1H_MULT = 2.0
@@ -31,18 +33,16 @@ class PriceEntry:
     source: str = "default"  # "config" for overrides
 
 
-@dataclass(frozen=True)
-class CostComponents:
-    input: float = 0.0
-    output: float = 0.0
-    cache_write_5m: float = 0.0
-    cache_write_1h: float = 0.0
-    cache_read: float = 0.0
+def _total(self) -> float:
+    return sum(getattr(self, f.name) for f in fields(self))
 
-    @property
-    def total(self) -> float:
-        return (self.input + self.output + self.cache_write_5m
-                + self.cache_write_1h + self.cache_read)
+
+# One float field per entry of the shared component list (named like its column minus `cost_`).
+CostComponents = make_dataclass(
+    "CostComponents",
+    [(col.removeprefix("cost_"), float, field(default=0.0)) for _, col in COMPONENTS],
+    frozen=True, namespace={"total": property(_total), "__module__": __name__},
+)
 
 
 _EPOCH = date(2020, 1, 1)

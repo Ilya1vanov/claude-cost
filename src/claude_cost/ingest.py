@@ -21,6 +21,7 @@ from pathlib import Path
 from . import cache, compact, ownership, pricing, sources, spotlight_migration
 from .localtime import price_day
 from .spotlights import PROMPT_LIMIT
+from .sql import COMPONENTS
 
 
 def _parse_ts(value: str) -> datetime:
@@ -396,12 +397,11 @@ def _upsert_request(conn: sqlite3.Connection, mid: str, owner: dict, r: dict, co
                     is_advisor: bool = False) -> None:
     c = cost or pricing.CostComponents()
     conn.execute(
-        "INSERT OR REPLACE INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO requests VALUES (" + ",".join("?" * (13 + len(COMPONENTS))) + ")",
         (mid, owner["root"], owner["project"], owner["file_stem"],
          r["ts"].timestamp(), r["model"], r["input"], r["output"], r["cache_read"],
          r["write_5m"], r["write_1h"], 1 if cost else 0,
-         c.input, c.output, c.cache_write_5m, c.cache_write_1h, c.cache_read,
-         1 if is_advisor else 0),
+         *_cost_values(c), 1 if is_advisor else 0),
     )
 
 
@@ -482,6 +482,11 @@ def _recompute(conn: sqlite3.Connection, mids: list[str], table: dict) -> None:
         _recompute_advisors(conn, mid, owner, attrs, table)
 
 
+def _cost_values(c: pricing.CostComponents) -> tuple[float, ...]:
+    """A Request's component costs in the shared list's (column) order."""
+    return tuple(getattr(c, col.removeprefix("cost_")) for _, col in COMPONENTS)
+
+
 def _group_sessions(first_ts: dict[str, datetime], links: set[tuple[str, str]]) -> dict[str, str]:
     """Union transcripts linked as one conversation; label each group by its earliest transcript."""
     parent: dict[str, str] = {}
@@ -521,12 +526,11 @@ def reprice(conn: sqlite3.Connection, table: dict) -> None:
             write_5m=r["cache_write_5m_tokens"], write_1h=r["cache_write_1h_tokens"],
             speed=r["speed"], inference_geo=r["inference_geo"], table=table)
         c = cost or pricing.CostComponents()
-        updates.append((1 if cost else 0, c.input, c.output, c.cache_write_5m,
-                        c.cache_write_1h, c.cache_read, r["message_id"]))
+        updates.append((1 if cost else 0, *_cost_values(c), r["message_id"]))
     with conn:
         conn.executemany(
-            "UPDATE requests SET priced=?, cost_input=?, cost_output=?, cost_cache_write_5m=?, "
-            "cost_cache_write_1h=?, cost_cache_read=? WHERE message_id=?", updates)
+            "UPDATE requests SET priced=?, " + ", ".join(f"{col}=?" for _, col in COMPONENTS)
+            + " WHERE message_id=?", updates)
         conn.execute("INSERT OR REPLACE INTO pricing_state VALUES (1, ?)", (fp,))
 
 
