@@ -212,6 +212,22 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
     return collapsible(wrap, row);
   }
 
+  // An Advisor call: the model and cost it was billed, nothing else (it is not part of the Stream),
+  // so the context column stays empty.
+  function renderAdvisorCall(row) {
+    var wrap = el("div", "tl-row tl-request tl-advisor");
+    var main = el("div");
+    main.appendChild(el("div", "tl-time", row.time));
+    var badges = el("div", "tl-badges");
+    badges.appendChild(el("span", "badge", "Advisor call"));
+    badges.appendChild(el("span", "badge model-" + (row.modelFamily || "unknown"), row.modelLabel));
+    main.appendChild(badges);
+    wrap.appendChild(main);
+    wrap.appendChild(el("div", "num ctx"));
+    wrap.appendChild(el("div", "num", "$" + row.cost.toFixed(4)));
+    return wrap;
+  }
+
   // Events are dividers across the full width: a time, a label and a detail
   function divider(row, cls, label, detail) {
     var wrap = el("div", "tl-row tl-event " + cls);
@@ -305,7 +321,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
     return wrap;
   }
 
-  var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest, subagent: renderSubagent,
+  var ROW_RENDERERS = { prompt: renderPrompt, request: renderRequest, advisor_call: renderAdvisorCall, subagent: renderSubagent,
     setting_change: renderSettingChange, compaction: renderCompaction, idle_gap: renderIdleGap,
     child_session: renderChildSession, forked_from: renderForkedFrom };
 
@@ -398,6 +414,8 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
       parts.push(row.text);
       requestBadgeList(row).forEach(function (b) { parts.push(b.label); });
       if (row.content_available) { row.tools.forEach(function (t) { parts.push(t.name, t.summary); }); }
+    } else if (row.kind === "advisor_call") {
+      parts.push("Advisor call", row.modelLabel);
     } else if (row.kind === "subagent") {
       parts.push(row.agent_type, row.agent_id, row.description, row.modelLabel);
     } else {

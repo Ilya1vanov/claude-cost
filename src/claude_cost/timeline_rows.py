@@ -1,7 +1,7 @@
 """Timeline rows: the session's prompts and requests with the text and tool calls read from its
 transcripts when the Session view is opened (ADR 0005). Nothing here is stored at ingest.
 
-Rows are a tagged union on `kind` ("prompt", "request", "subagent", and the event kinds "setting_change",
+Rows are a tagged union on `kind` ("prompt", "request", "advisor_call", "subagent", and the event kinds "setting_change",
 "compaction", "idle_gap", "child_session", "forked_from"); a new kind is a new dataclass with its
 own `kind`, so consumers dispatch on it and never see the old rows change shape.
 """
@@ -59,6 +59,17 @@ class RequestRow:
     threshold: int | None  # that Compact threshold, None when its model has none
     content_available: bool  # False: "transcript no longer on disk"
     kind: str = "request"
+
+
+@dataclass(frozen=True)
+class AdvisorCallRow:
+    """An Advisor call, right after the request that made it: stored numbers only, no context
+    size or cache event because it is not part of the Stream (ADR 0009)."""
+    ts: float  # of its parent request
+    parent_message_id: str
+    model: str
+    cost: float
+    kind: str = "advisor_call"
 
 
 @dataclass(frozen=True)
@@ -128,12 +139,12 @@ class SubagentRow:
     kind: str = "subagent"
 
 
-Row = (PromptRow | RequestRow | SettingChangeRow | CompactionRow | IdleGapRow | ChildSessionRow
+Row = (PromptRow | RequestRow | AdvisorCallRow | SettingChangeRow | CompactionRow | IdleGapRow | ChildSessionRow
        | ForkedFromRow | SubagentRow)
 
 # Order of rows with the same time: a Fork's opening row, then the prompt that starts a turn, then
-# events (any other kind), then the request, then the idle gap that follows it
-ROW_RANK = {"forked_from": 0, "prompt": 1, "request": 3, "idle_gap": 4}
+# events (any other kind), then the request, its Advisor calls, then the idle gap that follows
+ROW_RANK = {"forked_from": 0, "prompt": 1, "request": 3, "advisor_call": 4, "idle_gap": 5}
 DEFAULT_RANK = 2
 
 

@@ -293,6 +293,16 @@ class SideSessionMark:
 
 
 @dataclass(frozen=True)
+class AdvisorCall:
+    """An Advisor call on a timeline: model and cost only, it is not a point of the Stream."""
+    message_id: str
+    parent_message_id: str
+    ts: float  # of its parent request
+    model: str
+    cost: float
+
+
+@dataclass(frozen=True)
 class SessionTimeline:
     """How a Session's (or one Subagent's) cost built up, request by request."""
     session_id: str
@@ -309,6 +319,7 @@ class SessionTimeline:
     total_requests: int | None = None
     subagent_cost: float = 0.0
     setting_changes: tuple[SettingChange, ...] = ()
+    advisor_calls: tuple[AdvisorCall, ...] = ()  # in `cost`, not in `points`
     # The Timeline: rows (tagged by `kind`) in time order. Read from the transcripts, so only
     # filled when asked for (`session_timeline(with_rows=True)`).
     rows: tuple[timeline_rows_mod.Row, ...] = ()
@@ -701,6 +712,7 @@ class QueryService:
                 gap is not None and gap > idle_gap, r["event"],
                 cold_resume_mod.is_cold_resume(r["event"], gap, r["ctx"], cold_idle, cold_ctx),
                 effort=r["effort"]))
+        advisors = self._advisor_calls(session_id, agent_id)
         analysis = self.compact_thresholds()
 
         def threshold(model: str) -> int | None:
@@ -727,12 +739,13 @@ class QueryService:
                       for s, first in self._child_sessions(session_id)) if agent_id is None else ()
         parent = next((s for s in self.session_summaries() if s.session_id == session_id), None)
         timeline = SessionTimeline(
-            session_id, agent_id, sum(p.cost for p in points), tuple(points), compactions, launches,
+            session_id, agent_id, sum(p.cost for p in points) + sum(a.cost for a in advisors),
+            tuple(points), compactions, launches,
             sides, parent.parent_session_id if parent and agent_id is None else None,
             parent.link_kind if parent and agent_id is None else None,
             *((parent.cost, parent.requests, parent.subagent_cost)
               if parent and agent_id is None else ()),
-            setting_changes=self._setting_changes(points))
+            setting_changes=self._setting_changes(points), advisor_calls=advisors)
         if not with_rows:
             return timeline
         main_paths = [] if agent_id else self._main_paths(stems)
@@ -740,6 +753,19 @@ class QueryService:
             self._copies(self._tree_message_ids(timeline)), main_paths)
         return dataclasses.replace(
             timeline, rows=self._timeline_rows(timeline, stems, main_paths, content, prompts))
+
+    def _advisor_calls(self, session_id: str, agent_id: str | None) -> tuple[AdvisorCall, ...]:
+        """The Advisor calls owned by the Session (or Subagent), each after its parent request."""
+        calls = [AdvisorCall(r["message_id"], r["message_id"].rsplit("#advisor-", 1)[0],
+                             r["ts_epoch"], r["model"], r["cost"])
+                 for r in self._conn.execute(
+                     f"SELECT r.message_id, r.ts_epoch, r.model, {COST_SQL} AS cost "
+                     f"FROM requests r {SESSION_JOIN} "
+                     "LEFT JOIN request_surface a ON a.message_id = r.message_id "
+                     "WHERE r.is_advisor = 1 AND " f"{SESSION_ID_SQL} = ? AND a.agent_id IS ?",
+                     (session_id, agent_id))]
+        return tuple(sorted(calls, key=lambda c: (
+            c.ts, c.parent_message_id, int(c.message_id.rsplit("-", 1)[1]))))
 
     def _main_paths(self, stems: list[str]) -> list[str]:
         """The Session's own transcripts (not its Subagents')."""
@@ -789,6 +815,8 @@ class QueryService:
                 p.threshold is not None and p.context_tokens > p.threshold, p.threshold,
                 p.message_id in content)
             for p in t.points]
+        requests += [timeline_rows_mod.AdvisorCallRow(a.ts, a.parent_message_id, a.model, a.cost)
+                     for a in t.advisor_calls]
         events = self._event_rows(t, stems, main_paths)
         subagents = self._subagent_rows(t, stems, content)
         return tuple(sorted([*prompts, *requests, *events, *subagents],

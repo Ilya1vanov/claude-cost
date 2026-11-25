@@ -559,7 +559,7 @@ def create_app(service_factory: Callable[[], QueryService],
             flat = dataclasses.replace(row, rows=()) if row.kind == "subagent" else row
             out = dataclasses.asdict(flat)
             out["time"] = service.local_time(row.ts).strftime("%Y-%m-%d %H:%M:%S")
-            if row.kind in ("request", "subagent"):
+            if row.kind in ("request", "advisor_call", "subagent"):
                 out["modelLabel"] = short_model(row.model)
                 out["modelFamily"] = model_family(row.model)
             elif row.kind == "setting_change":

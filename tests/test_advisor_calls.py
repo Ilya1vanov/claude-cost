@@ -187,3 +187,57 @@ def test_a_store_from_before_advisor_calls_gets_them_at_the_next_ingest(root, tm
     ingest.ingest(conn, [root.path])
     day = QueryService(conn, "UTC").daily_spend(D30, D30)[0]
     assert (day.requests, day.cost) == (2, pytest.approx(EXECUTOR + ADVISOR))
+
+
+def _timeline(svc, agent_id=None):
+    return svc.session_timeline("s1", agent_id, with_rows=True)
+
+
+def test_timeline_lists_the_advisor_call_right_after_its_parent_with_model_and_cost(root, service_for):
+    root.write_transcript("p", "s1", [advised("m1", "2026-10-30T10:00:00Z"),
+                                      req("m2", "2026-10-30T10:01:00Z", model=SONNET, output=1)])
+    t = _timeline(service_for(root))
+    assert [r.kind for r in t.rows] == ["request", "advisor_call", "request"]
+    parent, call, _ = t.rows
+    assert (call.model, call.cost, call.ts) == (OPUS, pytest.approx(ADVISOR), parent.ts)
+    assert call.parent_message_id == "m1"
+    assert parent.cost == pytest.approx(EXECUTOR)
+
+
+def test_timeline_total_includes_the_advisor_call_and_matches_the_session_cost(root, service_for):
+    root.write_transcript("p", "s1", [advised()])
+    svc = service_for(root)
+    t = svc.session_timeline("s1")
+    (s,) = svc.session_summaries()
+    assert t.cost == pytest.approx(EXECUTOR + ADVISOR) == pytest.approx(s.cost)
+    assert [p.cost for p in t.points] == [pytest.approx(EXECUTOR)]
+
+
+def test_the_advisor_call_entry_is_not_a_stream_point_or_event(root, service_for):
+    root.write_transcript("p", "s1", [advised("m1", "2026-10-30T10:00:00Z"),
+                                      advised("m2", "2026-10-30T12:00:00Z")])
+    t = _timeline(service_for(root))
+    assert len(t.points) == 2 and t.setting_changes == ()
+    assert [r.kind for r in t.rows] == ["request", "advisor_call", "idle_gap", "request", "advisor_call"]
+    assert not {"context_tokens", "cache_event", "gap_seconds", "idle"} & set(vars(t.rows[1]))
+
+
+def test_a_subagents_advisor_call_is_in_its_own_timeline_only(root, service_for):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", model=SONNET, output=1)])
+    root.write_subagent_transcript("p", "s1", "ag", [advised("sub", "2026-10-30T11:00:00Z")])
+    svc = service_for(root)
+    assert "advisor_call" not in [r.kind for r in _timeline(svc).rows]
+    sub = _timeline(svc, "ag")
+    assert [r.kind for r in sub.rows] == ["request", "advisor_call"]
+    assert sub.cost == pytest.approx(EXECUTOR + ADVISOR)
+
+
+def test_json_advisor_call_row_carries_time_and_model_label(root, tmp_path):
+    from claude_cost.web import create_app
+    root.write_transcript("p", "s1", [advised()])
+    path = tmp_path / "web.sqlite"
+    ingest.ingest(store.connect(path), [root.path])
+    client = create_app(lambda: QueryService(store.connect(path), "UTC"), lambda: NOW).test_client()
+    row = client.get("/api/session/s1/timeline").get_json()["rows"][1]
+    assert (row["kind"], row["time"]) == ("advisor_call", "2026-10-30 10:00:00")
+    assert row["modelLabel"] and row["modelFamily"] == "opus"
