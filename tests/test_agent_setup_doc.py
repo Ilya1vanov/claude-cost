@@ -4,6 +4,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -69,9 +70,17 @@ def fallback_command() -> str:
     return lines[0]
 
 
+def fallback_body() -> str:
+    """The script between the single quotes of the fallback command."""
+    prefix = "uv run --no-project python -c '"
+    command = fallback_command()
+    assert command.startswith(prefix) and command.endswith("'"), command
+    return command[len(prefix):-1]
+
+
 def run_fallback(home: Path) -> Path:
-    result = subprocess.run(fallback_command(), shell=True, capture_output=True, text=True,
-                            env={**os.environ, "HOME": str(home)})
+    result = subprocess.run([sys.executable, "-c", fallback_body()], capture_output=True,
+                            text=True, env={**os.environ, "HOME": str(home)})
     assert result.returncode == 0, result.stderr
     return settings_path(home)
 
