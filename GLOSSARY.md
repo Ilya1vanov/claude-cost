@@ -89,7 +89,7 @@ The API list-price equivalent of a request, from a dated price table.
 _Avoid_: spend estimate, bill
 
 **Cost component**:
-One of the priced parts of a request: input, output, cache write (5m), cache write (1h), cache read.
+One of the priced parts of a request: input, output, cache write (5m), cache write (1h), cache read, web search.
 _Avoid_: token type
 
 **Cold write**:
@@ -103,6 +103,10 @@ _Avoid_: incremental write
 **Cache loss**:
 The Cost paid for cold writes beyond what reading the same tokens from the cache would have cost; it counts every cold write, avoidable or not.
 _Avoid_: rebuild overhead, cache tax, miss cost
+
+**Web search**:
+The cost component for the searches a request's WebSearch calls ran, charged per search on top of tokens; a call whose search count is not recorded counts as one search.
+_Avoid_: search tokens, tool fee
 
 **Prompt tier**:
 A higher rate a model charges for every token of a request whose prompt is above a set size.
