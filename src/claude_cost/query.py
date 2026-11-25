@@ -393,6 +393,12 @@ class Usage:
     # (a Subagent's request counts for its Session). None when the period has no requests.
     avg_concurrency: float | None = None
     peak_concurrency: int | None = None
+    sessions_with_subagents: int = 0  # distinct Sessions with at least one Subagent request
+
+    @property
+    def share_sessions_with_subagents(self) -> float | None:
+        """Sessions with Subagents ÷ Sessions; None without Sessions."""
+        return self.sessions_with_subagents / self.sessions if self.sessions else None
 
     @property
     def subagents_per_session(self) -> float | None:
@@ -947,14 +953,15 @@ class QueryService:
         lo, hi = self._bounds(p)
         row = self._conn.execute(
             f"SELECT COUNT(DISTINCT {SESSION_ID_SQL}) AS s, COUNT(*) AS n, "
-            "COUNT(DISTINCT CASE WHEN a.agent_id IS NOT NULL THEN r.session_id || '/' || a.agent_id END) AS sub "
+            "COUNT(DISTINCT CASE WHEN a.agent_id IS NOT NULL THEN r.session_id || '/' || a.agent_id END) AS sub, "
+            f"COUNT(DISTINCT CASE WHEN a.agent_id IS NOT NULL THEN {SESSION_ID_SQL} END) AS sws "
             f"FROM requests r LEFT JOIN request_surface a ON a.message_id = r.message_id {SESSION_JOIN} WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
             (lo, hi)).fetchone()
         cov = self._conn.execute("SELECT value FROM meta WHERE key = 'turns_from'").fetchone()
         turns = None if cov and lo < float(cov["value"]) else self._conn.execute(
             "SELECT COUNT(*) FROM turns WHERE ts_epoch >= ? AND ts_epoch < ?", (lo, hi)).fetchone()[0]
         avg, peak = self._concurrency(lo, hi)
-        return Usage(row["s"], turns, row["n"], row["sub"], avg, peak)
+        return Usage(row["s"], turns, row["n"], row["sub"], avg, peak, row["sws"])
 
     def _concurrency(self, lo: float, hi: float) -> tuple[float | None, int | None]:
         """(average, peak) Sessions active per clock-aligned local 5-minute slot. A Session is

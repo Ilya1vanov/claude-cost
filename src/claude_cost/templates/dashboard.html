@@ -95,6 +95,7 @@
       {{ concurrency_kpi("Avg concurrency", "avg concurrency", concurrency(uc.avg_concurrency, "%.1f"), concurrency(ub.avg_concurrency, "%.1f")) }}
       {{ concurrency_kpi("Peak concurrency", "peak concurrency", concurrency(uc.peak_concurrency, "%d"), concurrency(ub.peak_concurrency, "%d")) }}
       {{ concurrency_kpi("Subagents / session", "subagents / session", concurrency(uc.subagents_per_session, "%.1f"), concurrency(ub.subagents_per_session, "%.1f")) }}
+      {{ concurrency_kpi("Sessions using Subagents", "sessions using subagents", concurrency(uc.share_sessions_with_subagents * 100 if uc.share_sessions_with_subagents is not none else none, "%.0f%%"), concurrency(ub.share_sessions_with_subagents * 100 if ub.share_sessions_with_subagents is not none else none, "%.0f%%")) }}
     </div>
   </section>
 

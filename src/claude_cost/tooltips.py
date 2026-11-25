@@ -28,6 +28,8 @@ TOOLTIPS = {
                          "A Session counts in a slot if it or one of its Subagents made a request in it."),
     "subagents / session": ("Subagent runs per Session in the period, nested ones included; "
                             "Sessions that launched none still count."),
+    "sessions using subagents": ("The share of Sessions in the period with at least one Subagent run in it, "
+                                 "telling a few heavy users apart from every Session using some."),
     "per turn": ("The component's cost divided by the Turns in the period. A flat cost per Turn "
                  "with a falling total means less usage, not savings."),
     "input": "The uncached input tokens of requests, at the list price.",
