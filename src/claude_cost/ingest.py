@@ -253,6 +253,10 @@ def _advisor_iterations(usage: dict) -> list[dict]:
     return out
 
 
+# Tables holding what was read from one transcript, keyed by its path.
+_PATH_TABLES = ("request_copies", "copy_advisors", "web_search_calls", "transcript_links")
+
+
 def _search_calls(msg: dict, parsed: Parsed) -> None:
     """WebSearch tool_use ids of a streamed line, mapped to the message (Request) that issued them."""
     for blk in msg["content"] if isinstance(msg.get("content"), list) else []:
@@ -262,12 +266,13 @@ def _search_calls(msg: dict, parsed: Parsed) -> None:
 
 
 def _search_count(rec: dict, block: dict) -> int:
-    """Searches a tool_result ran: 0 for an error, else `toolUseResult.searchCount`, or 1 when it has none."""
+    """Searches a tool_result ran: 0 for an error, else an integer `toolUseResult.searchCount` as is
+    (0 included), or 1 when it has none."""
     if block.get("is_error"):
         return 0
     result = rec.get("toolUseResult")
     count = result.get("searchCount") if isinstance(result, dict) else None
-    return count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 1
+    return count if isinstance(count, int) and not isinstance(count, bool) else 1
 
 
 def _search_results(rec: dict, parsed: Parsed) -> None:
@@ -424,24 +429,30 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
 
 
 def _store_searches(conn: sqlite3.Connection, path: Path, parsed: Parsed) -> set[str]:
-    """Keep this transcript's WebSearch calls and their counts (a result may arrive in a later
-    batch than its call, and resumed Transcripts replay both: one row per tool_use_id and file),
-    and refresh the search count of the Request copies concerned. Returns their message ids."""
-    conn.executemany("INSERT OR IGNORE INTO web_search_calls VALUES (?,?,?,0)",
-                     [(str(path), tid, mid) for tid, mid in parsed.search_calls.items()])
-    conn.executemany("UPDATE web_search_calls SET search_count = ? WHERE path = ? AND tool_use_id = ?",
-                     [(n, str(path), tid) for tid, n in parsed.search_results.items()])
+    """Keep this transcript's WebSearch calls and tool results (a result may arrive in a later
+    batch than its call, or in another Transcript: resumed ones replay either), one row per
+    tool_use_id and file; a result seen without its call has the empty message id until the call
+    shows up. A search is counted once per tool_use_id, whichever Transcript holds its result,
+    on every copy of the Request that issued it. Returns the message ids concerned."""
+    p = str(path)
+    conn.executemany(
+        "INSERT INTO web_search_calls VALUES (?,?,?,0) ON CONFLICT(path, tool_use_id) DO UPDATE "
+        "SET message_id = excluded.message_id WHERE web_search_calls.message_id = ''",
+        [(p, tid, mid) for tid, mid in parsed.search_calls.items()])
+    conn.executemany(
+        "INSERT INTO web_search_calls VALUES (?,?,'',?) ON CONFLICT(path, tool_use_id) DO UPDATE "
+        "SET search_count = excluded.search_count",
+        [(p, tid, n) for tid, n in parsed.search_results.items() if n or tid in parsed.search_calls])
     mids = set(parsed.search_calls.values()) | set(parsed.reqs)
     for tid in parsed.search_results:
-        row = conn.execute("SELECT message_id FROM web_search_calls WHERE path = ? AND tool_use_id = ?",
-                           (str(path), tid)).fetchone()
-        if row:
-            mids.add(row[0])
+        mids.update(r[0] for r in conn.execute(
+            "SELECT message_id FROM web_search_calls WHERE tool_use_id = ? AND message_id != ''", (tid,)))
     conn.executemany(
-        "UPDATE request_copies SET web_searches = (SELECT COALESCE(SUM(search_count), 0) "
-        "FROM web_search_calls w WHERE w.path = request_copies.path "
-        "AND w.message_id = request_copies.message_id) WHERE path = ? AND message_id = ?",
-        [(str(path), mid) for mid in mids])
+        "UPDATE request_copies SET web_searches = (SELECT COALESCE(SUM(c), 0) FROM ("
+        "SELECT MAX(search_count) AS c FROM web_search_calls WHERE tool_use_id IN ("
+        "SELECT tool_use_id FROM web_search_calls WHERE message_id = ?) GROUP BY tool_use_id)) "
+        "WHERE message_id = ?",
+        [(mid, mid) for mid in mids])
     return mids
 
 
@@ -775,8 +786,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
             existing = {str(t[0]) for root in roots for t in _transcripts(root)}
             for (path,) in conn.execute("SELECT path FROM ingest_files").fetchall():
                 if path in existing:
-                    for table in ("request_copies", "copy_advisors", "web_search_calls", "transcript_links",
-                                  "ingest_files"):
+                    for table in (*_PATH_TABLES, "ingest_files"):
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
             touched.update(r[0] for r in conn.execute(
                 "SELECT message_id FROM requests").fetchall())
@@ -793,7 +803,7 @@ def ingest(conn: sqlite3.Connection, roots: list[Path], *, rebuild: bool = False
                                    (str(path),)).fetchone()
                 offset = row["offset"] if row else 0
                 if path.stat().st_size < offset:  # truncated or replaced: read it afresh
-                    for table in ("request_copies", "copy_advisors", "web_search_calls", "transcript_links"):
+                    for table in _PATH_TABLES:
                         conn.execute(f"DELETE FROM {table} WHERE path = ?", (str(path),))
                     offset = 0
                 lines, new_offset = _read_new(path, offset)

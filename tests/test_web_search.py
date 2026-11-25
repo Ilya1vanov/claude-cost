@@ -171,3 +171,40 @@ def test_a_store_from_before_the_fee_gains_it_after_the_update(root, tmp_path):
     assert total(QueryService(conn, "UTC")) == pytest.approx(20.0)
     ingest.ingest(conn, [root.path])  # ... and the next ingest re-reads the transcripts
     assert total(QueryService(conn, "UTC")) == pytest.approx(20.02)
+
+
+def test_an_explicit_search_count_of_zero_costs_nothing(root, service_for):
+    svc = _one(root, service_for,
+               web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 0))
+    assert total(svc) == 0
+
+
+@pytest.mark.parametrize("owner, other", [("s1", "s2"), ("s2", "s1")])
+def test_a_result_held_only_by_another_transcript_is_charged_once(root, service_for, owner, other):
+    root.write_transcript("p", owner, [req("m1", TS)],
+                          extra_lines=[web_search_use_line(TS, "tu1", "m1")])
+    root.write_transcript("p", other, [req("m1", TS, session_id=owner)],
+                          extra_lines=[web_search_result_line(TS2, "tu1", 2)])
+    svc = service_for(root)
+    assert (total(svc), len(svc.session_summaries())) == (pytest.approx(0.02), 1)
+
+
+@pytest.mark.parametrize("owner, other", [("s1", "s2"), ("s2", "s1")])
+def test_a_call_held_only_by_a_non_owner_transcript_is_still_charged(root, service_for, owner, other):
+    root.write_transcript("p", owner, [req("m1", TS)])
+    root.write_transcript("p", other, [req("m1", TS, session_id=owner)], extra_lines=[
+        web_search_use_line(TS, "tu1", "m1"), web_search_result_line(TS2, "tu1", 2)])
+    assert total(service_for(root)) == pytest.approx(0.02)
+
+
+def test_the_fee_survives_deleting_the_transcript_that_held_the_result(root, tmp_path):
+    root.write_transcript("p", "s1", [req("m1", TS)],
+                          extra_lines=[web_search_use_line(TS, "tu1", "m1")])
+    gone = root.write_transcript("p", "s2", [req("m1", TS, session_id="s1")],
+                                 extra_lines=[web_search_result_line(TS2, "tu1", 2)])
+    conn = store.connect(tmp_path / "store.sqlite")
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
+    gone.unlink()
+    ingest.ingest(conn, [root.path])
+    assert total(QueryService(conn, "UTC")) == pytest.approx(0.02)
