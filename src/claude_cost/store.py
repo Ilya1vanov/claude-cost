@@ -272,6 +272,8 @@ def _statements(script: str):
         if sqlite3.complete_statement(buf):
             yield buf
             buf = ""
+    if buf.strip():
+        raise ValueError(f"the script ends with an unterminated statement: {buf.strip()[:60]!r}")
 
 
 def _to_v1(conn: sqlite3.Connection) -> None:

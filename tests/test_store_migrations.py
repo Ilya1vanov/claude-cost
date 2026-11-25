@@ -140,3 +140,8 @@ def test_schema_version_reads_a_store_without_opening_it_for_migration(tmp_path)
     assert store.schema_version(path) == 0
     store.connect(path).close()
     assert store.schema_version(path) == store.LATEST_VERSION
+
+
+def test_a_script_ending_without_a_semicolon_is_refused():
+    with pytest.raises(ValueError, match="unterminated"):
+        list(store._statements("CREATE TABLE a (x);\nCREATE TABLE b (y)"))
