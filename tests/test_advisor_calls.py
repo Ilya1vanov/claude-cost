@@ -241,3 +241,41 @@ def test_json_advisor_call_row_carries_time_and_model_label(root, tmp_path):
     row = client.get("/api/session/s1/timeline").get_json()["rows"][1]
     assert (row["kind"], row["time"]) == ("advisor_call", "2026-10-30 10:00:00")
     assert row["modelLabel"] and row["modelFamily"] == "opus"
+
+
+def test_a_partial_first_streamed_line_does_not_undercount_the_advisor_call(root, service_for):
+    root.write_transcript("p", "s1", [advised(lines=3, advisor_partial=True)])
+    assert rows(service_for(root), "model")[OPUS].cost == pytest.approx(ADVISOR)
+
+
+def test_an_advisor_call_without_a_model_is_kept_as_an_unpriced_model(root, service_for):
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", model=SONNET, output=10,
+                                          advisor=Advisor(model="", input=5))])
+    svc = service_for(root)
+    assert svc.daily_spend(D30, D30)[0].requests == 2
+    assert svc.unpriced_models() == [ingest.UNKNOWN_ADVISOR_MODEL]
+
+
+def test_cache_event_breakdown_keeps_the_advisors_cache_write_cost(root, service_for):
+    adv = Advisor(model=OPUS, input=1000, write_5m=10_000)
+    root.write_transcript("p", "s1", [req("m1", "2026-10-30T10:00:00Z", model=SONNET, input=1000,
+                                          advisor=adv)])
+    svc = service_for(root)
+    total = sum(r.cost for r in rows(svc, "model").values())
+    assert sum(r.cost for r in rows(svc, "cache_event").values()) == pytest.approx(total)
+
+
+def test_cache_loss_share_is_of_the_periods_whole_cost_including_advisor_calls(root, service_for):
+    adv = Advisor(model=SONNET, output=1_000_000)  # $10
+    root.write_transcript("p", "s1", [
+        req("a", "2026-10-29T10:00:00Z", model=SONNET, write_1h=100_000),
+        req("b", "2026-10-29T14:00:00Z", model=SONNET, write_1h=100_000, advisor=adv)])  # cold
+    card = service_for(root).cache_card("last7", NOW)
+    total = sum(r.cost for r in rows(service_for(root), "model").values())
+    assert card.current.cache_loss_share == pytest.approx(card.current.cache_loss / total)
+
+
+def test_session_header_request_count_matches_its_cost(root, service_for):
+    root.write_transcript("p", "s1", [advised()])
+    t = service_for(root).session_timeline("s1")
+    assert (t.requests, t.cost) == (2, pytest.approx(EXECUTOR + ADVISOR))

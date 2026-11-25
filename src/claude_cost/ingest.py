@@ -216,16 +216,33 @@ def _write_split(usage: dict) -> tuple[int, int]:
     return w5m, w1h
 
 
+UNKNOWN_ADVISOR_MODEL = "unknown"
+_ADVISOR_TOKENS = ("input", "output", "cache_read", "write_5m", "write_1h")
+
+
+def _merge_advisors(old: list[dict], new: list[dict]) -> None:
+    """Fold a later streamed line's advisor entries into `old`: per entry the max of each token
+    count (a partial first line grows), and entries a first line lacked are appended."""
+    for i, a in enumerate(new):
+        if i >= len(old):
+            old.append(dict(a))
+            continue
+        for k in _ADVISOR_TOKENS:
+            old[i][k] = max(old[i][k], a[k])
+        if old[i]["model"] == UNKNOWN_ADVISOR_MODEL:
+            old[i]["model"] = a["model"]
+
+
 def _advisor_iterations(usage: dict) -> list[dict]:
     """The `advisor_message` entries of `usage.iterations`, in order (ADR-0009). The top-level
     usage already sums the executor's `message` entries; other entry types are ignored."""
     its = usage.get("iterations")
     out = []
     for it in its if isinstance(its, list) else []:
-        if isinstance(it, dict) and it.get("type") == "advisor_message" \
-                and isinstance(it.get("model"), str) and it["model"]:
+        if isinstance(it, dict) and it.get("type") == "advisor_message":
             w5m, w1h = _write_split(it)
-            out.append({"model": it["model"], "input": it.get("input_tokens") or 0,
+            model = it.get("model")  # no usable model: keep the call, shown as an unpriced model
+            out.append({"model": model if isinstance(model, str) and model else UNKNOWN_ADVISOR_MODEL, "input": it.get("input_tokens") or 0,
                         "output": it.get("output_tokens") or 0,
                         "cache_read": it.get("cache_read_input_tokens") or 0,
                         "write_5m": w5m, "write_1h": w1h})
@@ -296,6 +313,7 @@ def _parse_lines(lines: list[bytes], stem: str) -> Parsed:
             reqs[mid]["output"] = max(reqs[mid]["output"], out)
             reqs[mid]["tools"] |= tools  # one streamed line per content block: union them
             reqs[mid]["skills"] |= skills
+            _merge_advisors(reqs[mid]["advisors"], _advisor_iterations(usage))
             continue
         fork = rec.get("forkedFrom")
         fork_sid = fork.get("sessionId") if isinstance(fork, dict) else None
@@ -358,7 +376,13 @@ def _store_copies(conn: sqlite3.Connection, path: Path, reqs: dict[str, dict]) -
                          [(mid, t) for t in sorted(r["tools"])])
         conn.executemany("INSERT OR IGNORE INTO request_skills VALUES (?,?)",
                          [(mid, s) for s in sorted(r["skills"])])
-        conn.executemany("INSERT OR IGNORE INTO copy_advisors VALUES (?,?,?,?,?,?,?,?,?)",
+        conn.executemany(
+            "INSERT INTO copy_advisors VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(path, message_id, n) "
+            "DO UPDATE SET input_tokens = MAX(input_tokens, excluded.input_tokens), "
+            "output_tokens = MAX(output_tokens, excluded.output_tokens), "
+            "cache_read_tokens = MAX(cache_read_tokens, excluded.cache_read_tokens), "
+            "cache_write_5m_tokens = MAX(cache_write_5m_tokens, excluded.cache_write_5m_tokens), "
+            "cache_write_1h_tokens = MAX(cache_write_1h_tokens, excluded.cache_write_1h_tokens)",
                          [(str(path), mid, n, a["model"], a["input"], a["output"], a["cache_read"],
                            a["write_5m"], a["write_1h"]) for n, a in enumerate(r["advisors"], 1)])
 

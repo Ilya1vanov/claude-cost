@@ -325,6 +325,11 @@ class SessionTimeline:
     rows: tuple[timeline_rows_mod.Row, ...] = ()
 
     @property
+    def requests(self) -> int:
+        """Requests behind `cost`: the points plus the Advisor calls."""
+        return len(self.points) + len(self.advisor_calls)
+
+    @property
     def combinations(self) -> tuple[ModelEffort, ...]:
         """The model + Effort combinations of this timeline's own requests, in order of first use."""
         requests: dict[tuple[str, str], int] = {}
@@ -1036,7 +1041,7 @@ class QueryService:
         total = row["rd"] + row["wr"] + row["inp"]
         loss = self._cache_loss(lo, hi)
         spend = self._conn.execute(f"SELECT COALESCE(SUM({COST_SQL}), 0) FROM requests r "
-                                   f"WHERE {NOT_ADVISOR_SQL} AND r.ts_epoch >= ? AND r.ts_epoch < ?",
+                                   "WHERE r.ts_epoch >= ? AND r.ts_epoch < ?",
                                    (lo, hi)).fetchone()[0]
         return CacheStats(row["rd"] / total if total else None, row["cold"], row["warm"],
                           row["w5"], row["w1"], row["rebuilds"], sum(loss.values()),
