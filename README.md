@@ -2,12 +2,44 @@
 
 Local, AI-free analysis of what Claude Code usage costs. Terms are defined in `GLOSSARY.md`; request ownership in `docs/adr/0001-request-ownership.md`.
 
+## Install
+
+Open Terminal, paste this line and press Enter:
+
 ```
-uv tool install git+https://github.com/Ilya1vanov/claude-cost
+curl -fsSL https://raw.githubusercontent.com/Ilya1vanov/claude-cost/main/install.sh | sh
+```
+
+It installs `uv` (the tool that installs claude-cost) if you do not have it, then installs the latest release and tells you the installed version. Open the dashboard with `claude-cost serve`. You do not need `git`. Running the line again is safe and leaves you on the latest release.
+
+Works on macOS, and on Linux (best effort). Windows is not supported yet.
+
+Technical users can skip the script and install the wheel of the latest [Release](https://github.com/Ilya1vanov/claude-cost/releases/latest) directly:
+
+```
+uv tool install --force <wheel URL from the latest Release>
+```
+
+## Update
+
+Run `claude-cost update`. It shows what changed, asks you to confirm (`--yes` skips the question), backs up your data, installs the new version and upgrades your data. If anything fails, your data is left as it was and the previous version is reinstalled. claude-cost also tells you, at most once a day, when a newer release exists. Already on the latest release? `update` says so and does nothing. Re-running the install line also works.
+
+## Uninstall
+
+Run `claude-cost uninstall`. It removes claude-cost and asks whether to also delete your data (Spotlights, settings); the default keeps it. `--purge` deletes the data without asking. It never removes `uv`.
+
+By hand: `uv tool uninstall claude-cost`. Your data is the claude-cost data folder (`store.sqlite` and its backups; `CLAUDE_COST_DATA_DIR` moves it) and the settings file `config.toml` (`claude-cost config path` prints where); delete them to remove everything.
+
+## Usage
+
+```
 claude-cost today      # today's spend
 claude-cost serve      # dashboard on http://127.0.0.1:8765/; reuses an open Chrome tab (macOS), else opens one
 claude-cost serve --browser=none  # same, without opening a browser (or BROWSER=none)
 claude-cost --version  # installed version
+claude-cost update [--yes]        # install the latest release, backing up and upgrading your data
+claude-cost uninstall [--purge]   # remove claude-cost; asks before deleting your data
+claude-cost migrate    # upgrade the data store to this version's format (also done automatically on use)
 
 # Spotlights from Bash (any Claude session can drive these; no LLM or Jira inside claude-cost)
 claude-cost spotlight list [--json]
@@ -37,7 +69,7 @@ claude-cost counts only what local Claude Code transcripts record, so it can com
 
 ## Developer conventions
 
-**Stack:** Python >= 3.11 managed with `uv`, SQLite (stdlib), Flask with server-rendered Jinja pages, Chart.js 4.4.7 vendored at `src/claude_cost/static/vendor/` (no CDN, no network calls, no Node build), pytest.
+**Stack:** Python >= 3.11 managed with `uv`, SQLite (stdlib), Flask with server-rendered Jinja pages, Chart.js 4.4.7 vendored at `src/claude_cost/static/vendor/` (no CDN, no Node build); the only network call is a daily update check: one request to the GitHub Releases API for the latest release, which sends no usage data or identifiers; turn it off with `update_check = false` in `config.toml` or `CLAUDE_COST_UPDATE_CHECK=0` for no network calls at all, pytest.
 
 **Run tests:** `uv run pytest -q` (includes a `uv tool install` check that uses temp `UV_TOOL_DIR`/`UV_TOOL_BIN_DIR`).
 
