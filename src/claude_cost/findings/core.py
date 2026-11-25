@@ -247,7 +247,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
     sql = (f"SELECT r.message_id, {SESSION_ID_SQL} AS sid, "
            "r.project, r.ts_epoch, r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, "
            "r.cache_write_5m_tokens AS w5, r.cache_write_1h_tokens AS w1, "
-           f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, r.cost_web_search AS scost, "
+           f"{COST_SQL} AS cost, r.cost_cache_write_5m + r.cost_cache_write_1h AS wcost, r.cost_web_search AS search_cost, "
            "COALESCE(c.event, 'none') AS ev, a.speed, a.inference_geo, "
            "st.gap, COALESCE(st.first_context, 0) AS first_context, "
            "sv.agent_id AS agent_id "
@@ -270,7 +270,7 @@ def load_rows(conn: sqlite3.Connection, tz: tzinfo | None, lo: float | None,
         x["w5"], x["w1"], x["cost"], x["wcost"], x["ev"], x["speed"] or None,
         x["inference_geo"] or None, x["gap"], x["first_context"],
         x["agent_id"], kinds[x["agent_id"]]["agent_type"] if x["agent_id"] in kinds else None,
-        bool(x["agent_id"] in kinds and kinds[x["agent_id"]]["is_fork"]), x["scost"])
+        bool(x["agent_id"] in kinds and kinds[x["agent_id"]]["is_fork"]), web_search_cost=x["search_cost"])
         for x in found]
 
 
