@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Tagged commit is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Version and changelog match the tag
+        run: >
+          uv run python -m claude_cost.release_check
+          "$GITHUB_REF_NAME" pyproject.toml CHANGELOG.md "$RUNNER_TEMP/entry.md"
+
+      - name: Check
+        run: uv run pytest -q
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*.whl
+          --title "claude-cost $GITHUB_REF_NAME"
+          --notes-file "$RUNNER_TEMP/entry.md"
