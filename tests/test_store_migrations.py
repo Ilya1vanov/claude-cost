@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from claude_cost import cli, store
+from claude_cost import cli, releases, store
 
 
 def make_unversioned_store(path):
@@ -120,3 +120,23 @@ def test_other_commands_refuse_a_store_newer_than_the_code(env, tmp_path):
     raw.close()
     code, out, err = run(["today"], env)
     assert code == 1 and "newer" in err and out == ""
+
+
+def test_migrate_failure_hint_names_the_wheel_of_the_version_updated_from(env, tmp_path, monkeypatch):
+    path = make_unversioned_store(tmp_path / "data" / "store.sqlite")
+    path.with_name("store.sqlite.0.1.0.bak").write_text("b")
+
+    def broken(conn):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(store, "MIGRATIONS", [*store.MIGRATIONS, broken])
+    monkeypatch.setattr(store, "LATEST_VERSION", len(store.MIGRATIONS))
+    code, _, err = run(["migrate"], env)
+    assert code == 1 and releases.wheel_url_for("0.1.0") in err
+
+
+def test_schema_version_reads_a_store_without_opening_it_for_migration(tmp_path):
+    assert store.schema_version(tmp_path / "missing.sqlite") == 0
+    path = make_unversioned_store(tmp_path / "s.sqlite")
+    assert store.schema_version(path) == 0
+    store.connect(path).close()
+    assert store.schema_version(path) == store.LATEST_VERSION

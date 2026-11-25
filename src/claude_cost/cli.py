@@ -417,23 +417,32 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_serv
     return 0
 
 
-RELEASES_URL = "https://github.com/Ilya1vanov/claude-cost/releases"
+RELEASES_URL = f"https://github.com/{releases_mod.REPO}/releases"
 
 
-def _store_failure(e: store.StoreError, config: Config, err) -> int:
+def _previous_version(store_path) -> str | None:
+    """The version the last `update` backed the store up from: the `<store>.<version>.bak` beside it."""
+    for backup in sorted(store_path.parent.glob(f"{store_path.name}.*.bak")):
+        version = backup.name.removeprefix(f"{store_path.name}.").removesuffix(".bak")
+        if releases_mod.parse_version(version):
+            return version
+    return None
+
+
+def _store_failure(e: store.StoreError, store_path, err) -> int:
     """A store that cannot be opened: say why, that it is untouched, and how to go back (ADR-0008)."""
     print(f"claude-cost: {e}", file=err)
     if isinstance(e, store.MigrationError):
-        print("The store was left unchanged. To go back to the previous version, reinstall it: "
-              f"uv tool install --force <wheel URL of the previous Release, from {RELEASES_URL}>", file=err)
+        previous = _previous_version(store_path)
+        command = (f"uv tool install --force {releases_mod.wheel_url_for(previous)}" if previous else
+                  f"uv tool install --force <wheel URL of the previous Release, from {RELEASES_URL}>")
+        print(f"The store was left unchanged. To go back to the previous version, reinstall it: {command}",
+              file=err)
     return 1
 
 
 def cmd_migrate(config: Config, out) -> int:
-    conn = sqlite3.connect(config.store_path) if config.store_path.exists() else None
-    before = conn.execute("PRAGMA user_version").fetchone()[0] if conn else 0
-    if conn:
-        conn.close()
+    before = store.schema_version(config.store_path)
     store.connect(config.store_path).close()
     if before == store.LATEST_VERSION:
         print(f"Store is up to date (schema version {store.LATEST_VERSION})", file=out)
@@ -684,7 +693,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         code = _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
                          probe_server, update_available, releases, installer, dashboard, ask)
     except store.StoreError as e:
-        return _store_failure(e, config, err)
+        return _store_failure(e, config.store_path, err)
     if args.command not in ("serve", "config", "update", "uninstall") and not getattr(args, "json", False) and code == 0:
         if update_available():
             print(UPDATE_NOTICE, file=err)

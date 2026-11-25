@@ -298,6 +298,17 @@ def _user_version(conn: sqlite3.Connection) -> int:
     return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
+def schema_version(path: Path) -> int:
+    """The schema version of the store file, 0 when it does not exist yet. Never migrates."""
+    if not path.exists():
+        return 0
+    conn = sqlite3.connect(path)
+    try:
+        return _user_version(conn)
+    finally:
+        conn.close()
+
+
 def _too_new(found: int) -> StoreTooNewError:
     return StoreTooNewError(f"the store is at schema version {found}, newer than this claude-cost "
                             f"understands ({LATEST_VERSION}); update claude-cost, the store was not read")
