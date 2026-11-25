@@ -512,6 +512,43 @@ def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
     return 0
 
 
+def cmd_uninstall(config: Config, out, err, *, purge: bool, installer: Installer, dashboard: Dashboard,
+                  probe_server: Callable[[str], str | None], ask: Callable[[str], str]) -> int:
+    from .web import HEALTH
+
+    if not installer.is_tool_install():
+        print("claude-cost: this is not a `uv tool` install (a development checkout?), so it cannot "
+              "uninstall itself. Delete the checkout by hand.", file=err)
+        return 1
+    store_file = config.store_path
+    data = [store_file, *store_file.parent.glob(f"{store_file.name}-*"),
+            *store_file.parent.glob(f"{store_file.name}.*.bak"),
+            store_file.parent / "update-check.json", config.config_path]
+    delete = purge or ask("Also delete your data (Spotlights, settings)? [y/N] ").strip().lower() in ("y", "yes")
+    try:
+        if probe_server(f"http://{HOST}:{config.port}/") == HEALTH:
+            print("Stopping the dashboard...", file=out)
+            dashboard.stop(config.port)
+        print("Removing claude-cost...", file=out)
+        installer.uninstall()
+    except InstallError as e:
+        print(f"claude-cost: {e}. Nothing was deleted.", file=err)
+        return 1
+    if delete:
+        for path in data:
+            path.unlink(missing_ok=True)
+        try:
+            store_file.parent.rmdir()
+        except OSError:
+            pass  # not empty: it holds something that is not ours
+        print("Removed claude-cost and your data.", file=out)
+    else:
+        print("Removed claude-cost. Your data was kept:", file=out)
+        print(f"  Store and update-check cache: {store_file.parent}", file=out)
+        print(f"  Settings: {config.config_path}", file=out)
+    return 0
+
+
 def cmd_config(args, path, env: Mapping[str, str], out, run_editor: Callable[[list[str]], object]) -> int:
     """`config` shows every setting; get/set/path/edit work on the file. Works even if the file is broken."""
     config_mod.ensure_config_file(path, env)
@@ -559,6 +596,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
                           help="re-read every transcript that still exists and recompute all requests")
     p_update = sub.add_parser("update", help="install the latest Release")
     p_update.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    p_uninstall = sub.add_parser("uninstall", help="remove claude-cost (never uv)")
+    p_uninstall.add_argument("--purge", action="store_true", help="also delete your data, without asking")
     sub.add_parser("migrate", help="bring the store up to date with this version")
     p_serve = sub.add_parser("serve", help="start the web dashboard on 127.0.0.1")
     p_serve.add_argument("--browser", choices=["default", "none"],
@@ -627,7 +666,7 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
                          probe_server, update_available, releases, installer, dashboard, ask)
     except store.StoreError as e:
         return _store_failure(e, config, err)
-    if args.command not in ("serve", "config", "update") and not getattr(args, "json", False) and code == 0:
+    if args.command not in ("serve", "config", "update", "uninstall") and not getattr(args, "json", False) and code == 0:
         if update_available():
             print(UPDATE_NOTICE, file=err)
     return code
@@ -642,6 +681,10 @@ def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, foc
         return cmd_update(config, env, out, err, yes=args.yes, releases=releases or releases_mod.github_latest,
                           installer=installer or UvToolInstaller(), dashboard=dashboard or Dashboard(),
                           probe_server=probe_server or _probe_server, ask=ask)
+    if args.command == "uninstall":
+        return cmd_uninstall(config, out, err, purge=args.purge, installer=installer or UvToolInstaller(),
+                             dashboard=dashboard or Dashboard(), probe_server=probe_server or _probe_server,
+                             ask=ask)
     if args.command == "migrate":
         return cmd_migrate(config, out)
     if args.command == "today":
