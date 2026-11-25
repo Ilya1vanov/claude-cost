@@ -8,6 +8,15 @@ about what you will notice as a user. Skip internal details. The release step ad
 the version it tags; the release check fails when the tag has no entry.
 -->
 
+## v0.2.1 - 2026-11-25
+
+Advisor calls and web searches now count towards your spend, and setting up with a coding agent is supported.
+
+- Advisor calls show up as their own entries in a session's timeline and are included in the cost.
+- Web searches Claude made are charged to the request that made them, and show as their own cost component.
+- Set up claude-cost by pasting one line into your coding agent: it installs claude-cost, keeps a year of Claude Code transcripts, sets your ticket-key pattern, checks the install and offers to start the dashboard. See "Install with your agent" in the README.
+- The install script reports the version it just installed and reminds new users to open a new Terminal before running `claude-cost serve`.
+
 ## v0.2.0 - 2026-11-25
 
 claude-cost now installs, updates and uninstalls with one command each.
