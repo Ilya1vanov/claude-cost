@@ -35,8 +35,24 @@ fi
 
 # Step 2: the latest Release's wheel
 say "Looking for the latest claude-cost release..."
-curl -fsSL -H "Accept: application/vnd.github+json" "$API" -o "$tmp/release.json" \
+status=$(curl -sSL -H "Accept: application/vnd.github+json" "$API" \
+  -D "$tmp/headers" -o "$tmp/release.json" -w '%{http_code}') \
   || fail "could not reach GitHub to find the latest release. Check your connection and try again."
+case "$status" in
+  200) ;;
+  403 | 429)
+    # Unauthenticated callers get 60 GitHub API requests per hour per IP address.
+    reset=$(grep -i '^x-ratelimit-reset:' "$tmp/headers" | tail -n 1 | tr -dc '0-9') || true
+    wait="a few minutes"
+    if [ -n "$reset" ]; then
+      minutes=$(( (reset - $(date +%s) + 59) / 60 ))
+      if [ "$minutes" -gt 1 ]; then wait="$minutes minutes"
+      elif [ "$minutes" -eq 1 ]; then wait="1 minute"
+      fi
+    fi
+    fail "GitHub's hourly limit for looking up releases is used up on this network. Try again in $wait." ;;
+  *) fail "GitHub answered HTTP $status when asked for the latest release. Try again later." ;;
+esac
 wheel=$(grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*\.whl"' "$tmp/release.json" \
   | head -n 1 | sed 's/.*:[[:space:]]*"\(.*\)"/\1/') || true
 [ -n "$wheel" ] || fail "the latest release has no installable file."
