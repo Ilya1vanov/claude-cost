@@ -51,7 +51,7 @@ All terms in this spec are defined in `GLOSSARY.md`.
 22. As a user, I want Haiku 5.5 requests over 100K tokens priced at the higher tier, so that long Haiku calls aren't undercounted.
 23. As a user, I want fast-mode requests priced at their premium, with cache multipliers on top, so that fast mode shows its real cost.
 24. As a user, I want US-only inference priced at 1.1×, so that regional pricing is reflected when it appears.
-25. As a user, I want each Cost component (input, output, cache write 5m, cache write 1h, cache read) priced separately, so that I can see what drives each request's cost.
+25. As a user, I want each Cost component (input, output, cache write 5m, cache write 1h, cache read, web search) priced separately, so that I can see what drives each request's cost.
 26. As a user, I want requests with an unknown model flagged rather than silently priced, so that I know when the price table is out of date.
 27. As a user, I want `claude-cost prices` to list the table in effect and any unpriced models found, so that I can check pricing quickly.
 28. As a user, I want to override prices in config, so that I can correct the table without waiting for a release.
