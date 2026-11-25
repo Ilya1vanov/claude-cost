@@ -61,6 +61,8 @@ def run(argv, env, *, release=NEW, tool=True, running=False, answer="y", **insta
 
     def ask(prompt):
         asked.append(prompt)
+        if isinstance(answer, BaseException):
+            raise answer
         return answer
     out, err = io.StringIO(), io.StringIO()
     code = cli.main(argv, env=env, now=NOW, out=out, err=err, releases=lambda: release,
@@ -177,3 +179,10 @@ def test_release_without_a_wheel_is_not_reported_as_up_to_date(env):
     code, out, err, log, _ = run(["update", "--yes"], env, release=None)
     assert code == 1 and log == []
     assert "up to date" not in out and "wheel" in err and "Nothing was changed" in err
+
+
+@pytest.mark.parametrize("ended", [EOFError(), KeyboardInterrupt()])
+def test_update_treats_ended_input_as_no(env, ended):
+    code, out, err, log, _ = run(["update"], env, answer=ended)
+    assert code == 0 and log == []
+    assert "Nothing was changed." in out and "Traceback" not in err

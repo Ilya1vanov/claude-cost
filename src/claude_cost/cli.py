@@ -452,6 +452,14 @@ def cmd_migrate(config: Config, out) -> int:
     return 0
 
 
+def _answer(ask: Callable[[str], str], prompt: str) -> str | None:
+    """The reply to `prompt`, or None when input ended or was interrupted (Ctrl-D, Ctrl-C)."""
+    try:
+        return ask(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
 def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
                releases: releases_mod.Releases, installer: Installer, dashboard: Dashboard,
                probe_server: Callable[[str], str | None], ask: Callable[[str], str]) -> int:
@@ -477,7 +485,7 @@ def cmd_update(config: Config, env: Mapping[str, str], out, err, *, yes: bool,
     print(f"claude-cost {release.version} is available (you have {current}).", file=out)
     if release.notes.strip():
         print(f"\n{release.notes.strip()}\n", file=out)
-    if not yes and ask("Update now? [y/N] ").strip().lower() not in ("y", "yes"):
+    if not yes and (_answer(ask, "Update now? [y/N] ") or "").strip().lower() not in ("y", "yes"):
         print("Update cancelled. Nothing was changed.", file=out)
         return 0
 
@@ -544,7 +552,14 @@ def cmd_uninstall(config: Config, out, err, *, purge: bool, installer: Installer
     data = [store_file, *store_file.parent.glob(f"{store_file.name}-*"),
             *store_file.parent.glob(f"{store_file.name}.*.bak"),
             store_file.parent / releases_mod.CACHE_FILE, config.config_path]
-    delete = purge or ask("Also delete your data (Spotlights, settings)? [y/N] ").strip().lower() in ("y", "yes")
+    if purge:
+        delete = True
+    else:
+        reply = _answer(ask, "Also delete your data (Spotlights, settings)? [y/N] ")
+        if reply is None:
+            print("Uninstall cancelled. Nothing was changed.", file=out)
+            return 0
+        delete = reply.strip().lower() in ("y", "yes")
     running = probe_server(f"http://{HOST}:{config.port}/") == HEALTH
     stopped = False
     try:

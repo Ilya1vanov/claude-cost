@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+
+import pytest
 from datetime import datetime, timezone
 
 from claude_cost import cli
@@ -18,6 +20,8 @@ def run(argv, env, *, tool=True, running=False, answer="n", **installer_kw):
 
     def ask(prompt):
         asked.append(prompt)
+        if isinstance(answer, BaseException):
+            raise answer
         return answer
     out, err = io.StringIO(), io.StringIO()
     code = cli.main(argv, env=env, now=NOW, out=out, err=err, installer=installer,
@@ -109,3 +113,10 @@ def test_failed_uninstall_restarts_the_dashboard_that_was_running(env, monkeypat
                     ask=lambda p: "n", probe_server=lambda url: HEALTH)
     assert code == 1 and "uv missing" in err.getvalue()
     assert installer_log == [("stop", 8765), ("uninstall",), ("start",)]
+
+
+@pytest.mark.parametrize("ended", [EOFError(), KeyboardInterrupt()])
+def test_uninstall_treats_ended_input_as_cancelled(env, ended):
+    code, out, err, log, _ = run(["uninstall"], env, running=True, answer=ended)
+    assert code == 0 and log == []
+    assert "Nothing was changed." in out and "Traceback" not in err
