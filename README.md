@@ -22,6 +22,16 @@ Technical users can skip the script and install the wheel of the latest [Release
 uv tool install --force <wheel URL from the latest Release>
 ```
 
+## Install with your agent
+
+Paste this line into your coding agent (Claude Code, Codex, Cursor or similar). It installs claude-cost, asks for your ticket keys, checks the install and offers to open the dashboard:
+
+```
+Read https://raw.githubusercontent.com/Ilya1vanov/claude-cost/main/docs/agent-setup.md and follow it.
+```
+
+The steps live in [`docs/agent-setup.md`](docs/agent-setup.md). It uses the same install script as above, so re-running it is safe.
+
 ## Update
 
 Run `claude-cost update`. It shows what changed, asks you to confirm (`--yes` skips the question), backs up your data, installs the new version and upgrades your data. If anything fails, your data is left as it was and the previous version is reinstalled. claude-cost also tells you, at most once a day, when a newer release exists. Already on the latest release? `update` says so and does nothing. Re-running the install line also works.
