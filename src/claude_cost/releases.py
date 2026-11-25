@@ -70,9 +70,10 @@ def _read_cache(path: Path, now: datetime) -> tuple[bool, Release | None]:
         cached = json.loads(path.read_text())
         checked = datetime.fromisoformat(cached["checked_at"])
         release = Release(**cached["release"]) if cached.get("release") else None
+        fresh = now - checked < CHECK_INTERVAL
     except (OSError, ValueError, KeyError, TypeError):
         return False, None
-    return now - checked < CHECK_INTERVAL, release
+    return fresh, release
 
 
 def _write_cache(path: Path, now: datetime, release: Release | None) -> None:

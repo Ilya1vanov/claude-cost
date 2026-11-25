@@ -92,3 +92,10 @@ def test_disabled_makes_no_lookup(tmp_path):
 def test_wheel_url_for_uses_the_v_prefixed_tag():
     from claude_cost.releases import wheel_url_for
     assert wheel_url_for("0.1.0").endswith("/releases/download/v0.1.0/claude_cost-0.1.0-py3-none-any.whl")
+
+
+def test_a_cache_with_a_naive_timestamp_counts_as_no_cache(tmp_path):
+    (tmp_path / "update.json").write_text(json.dumps({"checked_at": "2026-11-01T11:00:00", "release": None}))
+    releases = FakeReleases()
+    assert checker(releases, tmp_path)().version == "0.2.0"
+    assert releases.calls == 1
