@@ -17,6 +17,7 @@ from .explore import ExploreSpec
 from .localtime import parse_since
 from .findings import DRAIN, NOT_ADDITIVE_NOTE, OPPORTUNITY, format_avoidable
 from .query import COMPARISON_MODES, CUSTOM_MODE, PERIOD_MODES, Period, QueryService, resolve_periods
+from .releases import Release
 from .spotlights import SpotlightError
 from .tooltips import TOOLTIPS
 
@@ -78,7 +79,8 @@ HEALTH = "claude-cost"  # what GET /healthz answers, so `serve` recognises a run
 
 def create_app(service_factory: Callable[[], QueryService],
                now: Callable[[], datetime],
-               refresh: Callable[[], object] | None = None, top_n: int = 10) -> Flask:
+               refresh: Callable[[], object] | None = None, top_n: int = 10,
+               update_available: Callable[[], Release | None] | None = None) -> Flask:
     """`service_factory` is called per request. `refresh` runs ingest: on page load when the
     last ingest is older than the refresh_stale_seconds setting (60 s), and on POST /refresh (the Refresh button)."""
     app = Flask(__name__)
@@ -99,6 +101,7 @@ def create_app(service_factory: Callable[[], QueryService],
                 or request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none")):
             abort(403, "cross-site request refused")
 
+    app.jinja_env.globals["update_available"] = update_available or (lambda: None)
     app.jinja_env.globals["avoidable"] = format_avoidable
     app.jinja_env.globals["tooltip"] = TOOLTIPS.__getitem__  # a missing key raises KeyError
     make_service = service_factory

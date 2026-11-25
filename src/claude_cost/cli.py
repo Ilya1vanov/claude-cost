@@ -20,6 +20,7 @@ from . import localtime
 from . import pricing
 from . import store
 from . import config as config_mod
+from . import releases as releases_mod
 from .config import Config, ConfigError, load_config
 from .findings import DRAIN, all_thresholds, format_avoidable, NOT_ADDITIVE_NOTE, OPPORTUNITY
 from .query import PeriodComparison, QueryService
@@ -378,8 +379,17 @@ def _run_server(app, host: str, port: int, on_ready: Callable[[], object]) -> No
     server.serve_forever()
 
 
+def _update_checker(config: Config, now_fn: Callable[[], datetime],
+                    releases: releases_mod.Releases | None) -> Callable[[], releases_mod.Release | None]:
+    return releases_mod.update_checker(
+        releases or releases_mod.github_latest, current=_version(),
+        cache_path=config.store_path.parent / "update-check.json", now=now_fn,
+        enabled=config.update_check)
+
+
 def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_server: Callable,
-              show_tab: Callable[[str], object], probe_server: Callable[[str], str | None]) -> int:
+              show_tab: Callable[[str], object], probe_server: Callable[[str], str | None],
+              update_available: Callable[[], releases_mod.Release | None]) -> int:
     from .web import HEALTH, create_app
 
     url = f"http://{HOST}:{config.port}/"
@@ -399,7 +409,8 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_serv
             _ingest(config, now_fn())
 
     _ingest(config, now_fn(), err)  # ingest on start
-    app = create_app(lambda: _open(config), now_fn, refresh, top_n=config.top_n)
+    app = create_app(lambda: _open(config), now_fn, refresh, top_n=config.top_n,
+                     update_available=update_available)
     print(f"Serving {url}", file=out)
     run_server(app, HOST, config.port, lambda: show_tab(url))
     return 0
@@ -455,7 +466,8 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
          open_browser: Callable[[str], object] = webbrowser.open,
          focus_tab: Callable[[str], bool] | None = None,
          probe_server: Callable[[str], str | None] | None = None,
-         run_editor: Callable[[list[str]], object] = subprocess.run) -> int:
+         run_editor: Callable[[list[str]], object] = subprocess.run,
+         releases: releases_mod.Releases | None = None) -> int:
     """Entry point with injectable env/clock/server so tests never touch real state."""
     env = os.environ if env is None else env
     out = out or sys.stdout
@@ -534,15 +546,23 @@ def main(argv: Sequence[str] | None = None, *, env: Mapping[str, str] | None = N
         print(f"claude-cost: {e}", file=err)
         return 2
     now_fn = (lambda: now) if now else (lambda: _now(config))
+    update_available = _update_checker(config, now_fn, releases)
     try:
-        return _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
-                         probe_server)
+        code = _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
+                         probe_server, update_available)
     except store.StoreError as e:
         return _store_failure(e, config, err)
+    if args.command not in ("serve", "config") and not getattr(args, "json", False) and code == 0:
+        if update_available():
+            print(UPDATE_NOTICE, file=err)
+    return code
+
+
+UPDATE_NOTICE = "Update available: run `claude-cost update`"
 
 
 def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, focus_tab,
-              probe_server) -> int:
+              probe_server, update_available) -> int:
     if args.command == "migrate":
         return cmd_migrate(config, out)
     if args.command == "today":
@@ -577,7 +597,7 @@ def _dispatch(args, config, now_fn, env, out, err, run_server, open_browser, foc
     else:
         show_tab = lambda url: focus(url) or open_browser(url)
     return cmd_serve(config, now_fn, out, err, run_server or _run_server, show_tab,
-                     probe_server or _probe_server)
+                     probe_server or _probe_server, update_available)
 
 
 def main_entry() -> None:

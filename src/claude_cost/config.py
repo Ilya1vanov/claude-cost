@@ -20,6 +20,7 @@ from .findings import DEFAULT_COMPARE_MODEL, all_thresholds
 
 DEFAULT_PORT = 8765
 DEFAULT_TOP_N = 10
+UPDATE_CHECK_OFF = {"0", "false", "off", "no"}  # CLAUDE_COST_UPDATE_CHECK values that turn the check off
 
 
 class ConfigError(ValueError):
@@ -40,6 +41,7 @@ class Config:
     sources: dict[str, str] = field(default_factory=dict)  # setting -> "default" | "config"
     thresholds: dict[str, int | None] = field(default_factory=dict)  # finding thresholds in effect
     fable_compare_model: str = DEFAULT_COMPARE_MODEL
+    update_check: bool = True  # ask GitHub for a newer Release, at most once a day
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,22 @@ def _coerce_model(v: Any) -> str:
     if not isinstance(v, str) or not v.strip():
         raise ConfigError(f"fable_compare_model must be a model name, got {v!r}")
     return v.strip()
+
+
+def _coerce_bool(name: str) -> Callable[[Any], bool]:
+    def coerce(v: Any) -> bool:
+        if not isinstance(v, bool):
+            raise ConfigError(f"{name} must be true or false, got {v!r}")
+        return v
+    return coerce
+
+
+def _parse_bool(name: str) -> Callable[[str], bool]:
+    def parse(text: str) -> bool:
+        if text.strip().lower() not in ("true", "false"):
+            raise ConfigError(f"{name} must be true or false, got {text!r}")
+        return text.strip().lower() == "true"
+    return parse
 
 
 def _root_ok(x: Any) -> bool:
@@ -176,6 +194,9 @@ SETTINGS: dict[str, Setting] = {s.name: s for s in [
             "Model whose prices the Fable usage Opportunity compares Fable requests against.",
             DEFAULT_COMPARE_MODEL, DEFAULT_COMPARE_MODEL, f'"{DEFAULT_COMPARE_MODEL}"',
             _coerce_model, str),
+    Setting("update_check", "Ask GitHub once a day whether a newer Release exists: the only network call "
+            "claude-cost makes. false = no network calls at all (also CLAUDE_COST_UPDATE_CHECK=0).",
+            True, "true", "false", _coerce_bool("update_check"), _parse_bool("update_check")),
     Setting("timezone", "IANA time zone for days and weeks; unset = system local time.",
             None, "(system local time)", '"Europe/Berlin"', _coerce_tz, str),
     Setting("prices", "Price overrides in $ per million tokens, by model-name prefix "
@@ -270,6 +291,8 @@ def load_config(env: Mapping[str, str]) -> Config:
         sources=sources,
         thresholds={n: values[n] for n in all_thresholds()},
         fable_compare_model=values["fable_compare_model"],
+        update_check=values["update_check"]
+        and env.get("CLAUDE_COST_UPDATE_CHECK", "").strip().lower() not in UPDATE_CHECK_OFF,
     )
 
 

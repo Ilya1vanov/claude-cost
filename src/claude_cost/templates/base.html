@@ -21,6 +21,9 @@
       <form method="post" action="{{ url_for('force_refresh') }}"><button type="submit" class="ghost small">Refresh</button></form>
     </div>
   </header>
+  {% if update_available() %}
+  <div class="update-banner"><div class="wrap">Update available: run <code>claude-cost update</code></div></div>
+  {% endif %}
   <main class="wrap">
     {% block content %}{% endblock %}
   </main>

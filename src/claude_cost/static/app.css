@@ -153,6 +153,8 @@ h1 small { font-size: 14px; font-weight: 500; }
   #site-nav a { white-space: nowrap; }
 }
 
+.update-banner { background: var(--info-soft); color: var(--info); border-bottom: 1px solid var(--border); padding: 8px 0; font-weight: 500; }
+
 main.wrap { padding-top: 24px; padding-bottom: 64px; }
 
 /* Page header */

@@ -32,6 +32,13 @@ def no_real_browser_or_port(monkeypatch):
     monkeypatch.setattr(cli, "_focus_chrome_tab", lambda url: False)
 
 
+@pytest.fixture(autouse=True)
+def no_real_release_lookup(monkeypatch):
+    """No test asks GitHub for the latest Release; tests inject a fake `releases`."""
+    from claude_cost import releases
+    monkeypatch.setattr(releases, "github_latest", lambda: None)
+
+
 @pytest.fixture
 def root(tmp_path) -> DataRoot:
     return DataRoot(tmp_path / "claude")
