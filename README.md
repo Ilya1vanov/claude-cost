@@ -24,6 +24,15 @@ claude-cost spotlight delete "Sprint 5"
 
 Every Spotlight command takes a Spotlight by id, key or name (a name only while exactly one Spotlight has it; otherwise it fails listing the ids). Spotlight commands ingest first, call the same `QueryService` operations as the web, and on a bad name, session id or nesting print one `claude-cost: ...` line to stderr and exit 1. `--json` shapes: `list` is an array of `{id, name, key, kind, total, requests, sessions, includes, first_activity, last_activity}`; `show` is that object plus `picked` (ids), `included` (`{id, name, kind, cost, sessions}`) and `members` (`{id, label, cost, requests, joined_as, picked, key_matched, via}`); `search` is an array of `{id, label, cost, kind}`.
 
+## Limitations
+
+claude-cost counts only what local Claude Code transcripts record, so it can come in below your bill:
+
+- **This machine only.** Sessions on other machines, in the cloud or in CI are not counted.
+- **Claude Code only.** Cowork and Chat usage is not counted.
+- **Deleted transcripts.** A request counts only if it was ingested before its transcript was removed (for example by Claude Code's `cleanupPeriodDays` or a deleted worktree). `ingest --rebuild` re-reads only the transcripts that still exist, so it drops those requests.
+- **Runs that leave no transcript in a Data root.** `claude plugin eval` runs its sessions in a sandbox, so their cost is not counted, whether you start them by hand or from a Claude session.
+
 ## Developer conventions
 
 **Stack:** Python >= 3.11 managed with `uv`, SQLite (stdlib), Flask with server-rendered Jinja pages, Chart.js 4.4.7 vendored at `src/claude_cost/static/vendor/` (no CDN, no network calls, no Node build), pytest.
