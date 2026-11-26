@@ -30,13 +30,15 @@ If the file is not valid JSON, or not a JSON object, leave it untouched, tell th
 
 Merge, never overwrite: change only `cleanupPeriodDays`, keep every other key, and create the file with only that key when it is missing.
 
-If you cannot write the file, show the user this command, which applies the same rule and leaves `0` alone. When the shell cannot find `uv` (a fresh install whose PATH is not updated), use the `uv` path from step 1's output, `~/.local/bin/uv` by default. When the command prints a Python traceback, the file is not a JSON object: tell the user and go on to step 3, leaving the file as it is. Claude Code users run it as `! <command>`; for any other agent, tell the user to paste it into Terminal.
+If you cannot write the file, the user runs this command instead. It applies the same rule and leaves `0` alone, so when the value is `0` and the user said yes to turning saving on, ask the user to set `cleanupPeriodDays` to 365 in the file by hand instead. When the shell cannot find `uv` (a fresh install whose PATH is not updated), use the `uv` path from step 1's output, `~/.local/bin/uv` by default.
 
 ```
 uv run --no-project python -c 'import json,pathlib;p=pathlib.Path.home()/".claude"/"settings.json";d=json.loads(p.read_text()) if p.exists() else {};v=d.get("cleanupPeriodDays");d["cleanupPeriodDays"]=v if type(v)in(int,float)and(v==0 or v>=365)else 365;p.parent.mkdir(exist_ok=True);p.write_text(json.dumps(d,indent=2)+"\n")'
 ```
 
-Done when the user declined, or the file was left untouched as above, or you read the file back and `cleanupPeriodDays` is the value the rule gives, or the user has the command.
+Show the command, with the `uv` path you chose, twice, each in its own code block: as is, labelled for Terminal; and prefixed with `! `, labelled for the Claude Code prompt. Ask the user to run one and tell you what it printed, then read the file back. When the command printed a Python traceback, the file is not valid JSON or not a JSON object: tell the user and go on to step 3, leaving the file as it is.
+
+Done when the user declined (the retention question or running the command), or the file was left untouched as above, or you read the file back and `cleanupPeriodDays` is the value the rule gives.
 
 ## 3. Key pattern
 
