@@ -35,8 +35,34 @@ fi
 
 # Step 2: the latest Release's wheel
 say "Looking for the latest claude-cost release..."
-curl -fsSL -H "Accept: application/vnd.github+json" "$API" -o "$tmp/release.json" \
+status=$(curl -sSL -H "Accept: application/vnd.github+json" "$API" \
+  -D "$tmp/headers" -o "$tmp/release.json" -w '%{http_code}') \
   || fail "could not reach GitHub to find the latest release. Check your connection and try again."
+if [ "$status" != 200 ]; then
+  # A response header's value when it is a whole number, else empty.
+  header() {
+    v=$(grep -i "^$1:" "$tmp/headers" | tail -n 1 | tr -d '\r' | sed 's/^[^:]*:[[:space:]]*//')
+    case "$v" in '' | *[!0-9]*) v= ;; esac
+    printf '%s' "$v"
+  }
+  # Unauthenticated callers get 60 GitHub API requests per hour per IP address. A 403 is
+  # that limit only when GitHub's headers say so; a proxy or firewall can answer 403 too.
+  retry=$(header retry-after)
+  if [ "$status" = 429 ] || [ -n "$retry" ] || [ "$(header x-ratelimit-remaining)" = 0 ]; then
+    reset=$(header x-ratelimit-reset)
+    seconds=$retry
+    [ -n "$seconds" ] || [ -z "$reset" ] || seconds=$((reset - $(date +%s)))
+    wait="a few minutes"
+    if [ -n "$seconds" ]; then
+      minutes=$(( (seconds + 59) / 60 ))
+      if [ "$minutes" -gt 1 ]; then wait="$minutes minutes"
+      elif [ "$minutes" -eq 1 ]; then wait="1 minute"
+      fi
+    fi
+    fail "GitHub's limit for looking up releases is used up on this network. Try again in $wait."
+  fi
+  fail "GitHub answered HTTP $status when asked for the latest release."
+fi
 wheel=$(grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*\.whl"' "$tmp/release.json" \
   | head -n 1 | sed 's/.*:[[:space:]]*"\(.*\)"/\1/') || true
 [ -n "$wheel" ] || fail "the latest release has no installable file."
