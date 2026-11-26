@@ -123,3 +123,21 @@ def test_the_search_exposes_its_matches_and_the_map_draws_them_in_their_own_stri
 def test_the_search_match_colour_has_a_token_in_both_themes():
     css = _static("app.css")
     assert css.count("--search-match:") == 2
+
+
+# --- #151: Subagent blocks and Subagent pages ------------------------------------------------------
+
+def test_a_subagent_page_rows_carry_the_kinds_the_map_reads_and_no_prompts(kinds_client):
+    rows = kinds_client.get("/api/session/s1/agent/a1/timeline").get_json()["rows"]
+    assert [r["kind"] for r in rows] == ["request", "advisor_call"]
+    assert not any(r["kind"] == "prompt" for r in rows)
+
+
+def test_the_map_rebuilds_and_re_evaluates_its_visibility_whenever_the_row_list_changes():
+    js = _static("timeline_map.js")
+    assert "api.onRowsChange(rebuild)" in js
+    rebuild = js.split("function rebuild()")[1].split("\n  function ")[0]
+    assert "api.getRows()" in rebuild and "updateFit()" in rebuild and "draw()" in rebuild
+    assert "ResizeObserver(updateFit)" in js  # rows re-measured after an expansion change the fit
+    window_js = _static("timeline_window.js")
+    assert window_js.split("api.updateRows")[1].count("notifyRows()") == 1  # expand and collapse notify
