@@ -8,6 +8,16 @@ about what you will notice as a user. Skip internal details. The release step ad
 the version it tags; the release check fails when the tag has no entry.
 -->
 
+## v0.3.0 - 2026-11-26
+
+Long sessions are easier to find your way around, and the Parallel sessions card shows how you use Subagents.
+
+- A Timeline map beside a session's Timeline marks where its prompts, compactions, Setting changes, idle gaps, cold writes and Advisor calls fall. Hover a mark to see what it is, click or drag to jump there, and see the Timeline search's matches in their own strip. It also appears on a Subagent's own page.
+- The Parallel sessions card shows Subagents per session and the share of Sessions that use Subagents.
+- `claude-cost serve` prints the address it serves on even when its output goes to a file or another program.
+- The install script tells a used-up GitHub rate limit apart from a network problem.
+- Setting up with a coding agent no longer needs python3 or jq to read your settings, and the command that keeps a year of transcripts is no longer skipped.
+
 ## v0.2.1 - 2026-11-25
 
 Advisor calls and web searches now count towards your spend, and setting up with a coding agent is supported.

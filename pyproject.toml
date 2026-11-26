@@ -1,6 +1,6 @@
 [project]
 name = "claude-cost"
-version = "0.2.1"
+version = "0.3.0"
 description = "Local, AI-free analysis of what Claude Code usage costs"
 requires-python = ">=3.11"
 dependencies = ["flask>=3.0,<4"]
