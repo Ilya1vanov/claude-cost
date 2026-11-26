@@ -43,3 +43,20 @@ def test_the_rows_json_carries_every_prompt_with_its_text_for_the_map(client):
     prompts = [r for r in rows if r["kind"] == "prompt"]
     assert [(p["text"].split("\n")[0], p["command"]) for p in prompts] == [
         ("first line", False), ("/review", True)]
+
+
+def _static(name):
+    from pathlib import Path
+    return (Path(cli.__file__).parent / "static" / name).read_text()
+
+
+def test_the_search_exposes_its_matches_and_the_map_draws_them_in_their_own_strip():
+    session, map_js = _static("session.js"), _static("timeline_map.js")
+    assert "getMatches" in session and "onSearchChange" in session
+    assert "api.getMatches" in map_js and "api.onSearchChange" in map_js and "function drawSearch" in map_js
+    assert "findMatches" not in map_js  # the map reads the search's matches, it does not search itself
+
+
+def test_the_search_match_colour_has_a_token_in_both_themes():
+    css = _static("app.css")
+    assert css.count("--search-match:") == 2

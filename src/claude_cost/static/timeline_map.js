@@ -7,6 +7,7 @@ if (api && api.getRows && canvas) {
   const box = document.getElementById("timeline-box");
   const tip = document.getElementById("timeline-map-tip");
   const MIN_MARK = 2;     // CSS px: every mark stays visible however long the session
+  const SEARCH_W = 4;     // CSS px: the search strip on the map's right edge, outside the marks and the box
   const HIT_SLOP = 3;     // CSS px around a mark that still counts as hovering it
 
   // Mark kinds: kind -> colour token. A later kind adds one entry here, and `segment` places its
@@ -24,6 +25,7 @@ if (api && api.getRows && canvas) {
   let width = 0;
   let height = 0;
   let observedSpace = null;
+  let searchMarks = [];   // row indexes of the search matches
 
   function token(name) { return window.theme ? window.theme.token(name) : getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function yOf(index) { return count ? index / count * height : 0; }
@@ -51,6 +53,28 @@ if (api && api.getRows && canvas) {
     ctx.strokeRect(0.5, y + 0.5, width - 1, Math.max(h - 1, 1));
   }
 
+  // A match inside a collapsed Subagent block sits at the block's index, since it has no row of its own.
+  function resolveSearch() {
+    const rows = api.getRows();
+    const at = new Map();
+    function note(list, index) { list.forEach(function (r) { at.set(r, index); if (r.rows) { note(r.rows, index); } }); }
+    rows.forEach(function (r, i) { at.set(r, i); if (r.kind === "subagent" && !r.expanded) { note(r.rows || [], i); } });
+    const seen = new Set();
+    api.getMatches().forEach(function (m) { if (at.has(m.row)) { seen.add(at.get(m.row)); } });
+    searchMarks = Array.from(seen);
+    draw();
+  }
+
+  // The search strip, right of the marks.
+  function drawSearch(ctx) {
+    ctx.clearRect(width, 0, SEARCH_W, height);
+    ctx.fillStyle = token("--search-match");
+    searchMarks.forEach(function (index) {
+      const y = yOf(index);
+      ctx.fillRect(width, y, SEARCH_W, Math.max(MIN_MARK, yOf(index + 1) - y));
+    });
+  }
+
   function draw() {
     if (canvas.hidden || !width || !height) { return; }
     const dpr = window.devicePixelRatio || 1;
@@ -58,15 +82,15 @@ if (api && api.getRows && canvas) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
     drawMarks(ctx);
-    // The search strip (#152) is drawn here, between the marks and the box.
+    drawSearch(ctx);
     drawView(ctx);
   }
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
-    width = canvas.clientWidth;
+    width = canvas.clientWidth - SEARCH_W;
     height = canvas.clientHeight;
-    canvas.width = Math.round(width * dpr);
+    canvas.width = Math.round(canvas.clientWidth * dpr);
     canvas.height = Math.round(height * dpr);
     draw();
   }
@@ -143,6 +167,8 @@ if (api && api.getRows && canvas) {
   canvas.addEventListener("pointerleave", function () { tip.hidden = true; });
 
   api.onRowsChange(rebuild);
+  api.onRowsChange(resolveSearch);
+  api.onSearchChange(resolveSearch);
   api.onVisibleRangeChange(function () { updateFit(); draw(); });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { updateFit(); if (!canvas.hidden) { resize(); } }).observe(api.body);

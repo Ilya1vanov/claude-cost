@@ -399,7 +399,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
     }
     return near && { model: near.model, modelLabel: near.modelLabel, modelFamily: near.modelFamily, effort: near.effort };
   }
-  function setTree(rows) { tree = rows; openAgents.clear(); hitRow = null; matches = []; refresh(true); }
+  function setTree(rows) { tree = rows; openAgents.clear(); hitRow = null; matches = []; refresh(true); searchListeners.forEach(function (fn) { fn(); }); }
 
   // Search: over the whole row tree (not the DOM), so rows that are not drawn and rows inside
   // collapsed Subagent blocks count. Each match is {row, agentId} (agentId: the innermost block
@@ -407,6 +407,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
   var matches = [];
   var current = -1;
   var hitRow = null;
+  var searchListeners = [];  // told when a search runs or clears (the Timeline map draws the matches)
   function searchText(row) {
     var parts = [];
     if (row.kind === "prompt") { parts.push(row.text); }
@@ -463,6 +464,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
     hitRow = null;
     markHit(-1);
     if (matches.length) { showMatch(0); } else { updateCount(); }
+    searchListeners.forEach(function (fn) { fn(); });
   }
   function step(delta) {
     if (matches.length) { showMatch((current + delta + matches.length) % matches.length); }
@@ -487,5 +489,7 @@ document.querySelectorAll(".copy-id").forEach(function (button) {
   window.sessionTimeline = { ROW_RENDERERS: ROW_RENDERERS, renderRow: renderRow, loadRows: loadRows, body: body, el: el,
     setRowExpanded: setRowExpanded, settingBadges: settingBadges,
     setTree: setTree, expandSubagent: expandSubagent, collapseSubagent: collapseSubagent,
-    rowAt: function (i) { return flat[i]; }, settingAt: settingAt };
+    rowAt: function (i) { return flat[i]; }, settingAt: settingAt,
+    getMatches: function () { return matches; },
+    onSearchChange: function (fn) { searchListeners.push(fn); } };
 })();
