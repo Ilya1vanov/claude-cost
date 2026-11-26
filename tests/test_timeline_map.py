@@ -189,3 +189,10 @@ def test_the_header_gutter_is_measured_from_the_map_and_the_rows_scrollbar():
 def test_the_canvas_is_resized_when_the_device_pixel_ratio_changes():
     js = _static("timeline_map.js")
     assert "resolution:" in js and "dppx" in js and "watchDpr()" in js
+
+
+def test_the_view_box_and_the_scrub_follow_fractional_rows():
+    win, js = _static("timeline_window.js"), _static("timeline_map.js")
+    assert "api.getVisibleSpan" in win and "api.scrollToSpan" in win
+    assert "api.getVisibleSpan()" in js and "api.scrollToSpan(" in js and "scrollToIndex" not in js
+    assert 'api.body.addEventListener("scroll"' in js and "requestAnimationFrame" in js

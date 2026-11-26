@@ -95,10 +95,10 @@ if (api && api.getRows && canvas) {
 
   // The box over the rows in view.
   function drawView(ctx) {
-    const r = api.getVisibleRange();
-    if (!count || r.start < 0) { return; }
+    const r = api.getVisibleSpan();
+    if (!count || !r) { return; }
     const y = yOf(r.start);
-    const h = Math.max(MIN_MARK, yOf(r.end + 1) - y);
+    const h = Math.max(MIN_MARK, yOf(r.end) - y);
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = token("--text");
     ctx.fillRect(0, y, width, h);
@@ -207,11 +207,12 @@ if (api && api.getRows && canvas) {
     paint();
   }
 
-  function indexAt(event) {
+  // The fractional row index under the pointer, so a drag scrubs smoothly rather than a row at a time.
+  function spanAt(event) {
     const y = event.clientY - canvas.getBoundingClientRect().top;
-    return Math.max(0, Math.min(count - 1, Math.floor(y / height * count)));
+    return Math.max(0, Math.min(count, y / height * count));
   }
-  function jump(event) { if (count) { api.scrollToIndex(indexAt(event), { align: "start" }); } }
+  function jump(event) { if (count) { api.scrollToSpan(spanAt(event)); } }
 
   function markAt(event) {
     const y = event.clientY - canvas.getBoundingClientRect().top;
@@ -270,7 +271,12 @@ if (api && api.getRows && canvas) {
 
   api.onRowsChange(rebuild);
   api.onSearchChange(onSearch);
-  api.onVisibleRangeChange(function () { updateFit(); draw(); });
+  api.onVisibleRangeChange(updateFit);
+  // The box follows every scroll frame, not only a change of the rows in view.
+  let frame = 0;
+  api.body.addEventListener("scroll", function () {
+    if (!frame) { frame = requestAnimationFrame(function () { frame = 0; draw(); }); }
+  }, { passive: true });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { updateFit(); if (!canvas.hidden) { resize(); } }).observe(api.body);
   }

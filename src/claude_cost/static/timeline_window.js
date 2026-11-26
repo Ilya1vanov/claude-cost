@@ -119,6 +119,26 @@ if (api) {
   api.getVisibleRange = function () { return { start: firstVisible, end: lastVisible }; };
   // fn({start, end}) runs whenever the first or last row in view changes.
   api.onVisibleRangeChange = visibleRangeListeners.add;
+  // The span in view in fractional row indexes (3.5 = halfway through row 3), so a map can follow
+  // the scroll smoothly rather than a row at a time; null before the rows are mounted.
+  function spanAt(offset) {
+    const item = virtualizer.getVirtualItemForOffset(offset);
+    if (!item) { return null; }
+    return item.index + Math.max(0, Math.min(1, (offset - item.start) / (item.size || 1)));
+  }
+  api.getVisibleSpan = function () {
+    if (!virtualizer || !rows.length) { return null; }
+    const start = spanAt(body.scrollTop);
+    const end = spanAt(body.scrollTop + body.clientHeight);
+    return start === null || end === null ? null : { start: start, end: end };
+  };
+  // Scroll so the fractional row index `at` is at the top of the view.
+  api.scrollToSpan = function (at) {
+    if (!virtualizer || !rows.length) { return; }
+    const index = Math.max(0, Math.min(rows.length - 1, Math.floor(at)));
+    const item = virtualizer.getMeasurements()[index];
+    virtualizer.scrollToOffset(item.start + (at - index) * item.size);
+  };
   // fn(rows) runs after the row list is mounted or swapped (a Subagent block expanded or collapsed).
   api.onRowsChange = rowsListeners.add;
   // Open (or close, with on=false) the text of row `index` while Collapse text is on; the
