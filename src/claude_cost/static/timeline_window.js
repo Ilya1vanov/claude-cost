@@ -64,12 +64,13 @@ if (api) {
     });
     space.style.height = virtualizer.getTotalSize() + "px";
     const start = virtualizer.range ? virtualizer.range.startIndex : (rows.length ? 0 : -1);
-    if (start !== firstVisible) {
+    const end = virtualizer.range ? virtualizer.range.endIndex : start;
+    const startChanged = start !== firstVisible;
+    if (startChanged) {
       firstVisible = start;
       firstVisibleListeners.notify(start);
     }
-    const end = virtualizer.range ? virtualizer.range.endIndex : start;
-    if (end !== lastVisible) {
+    if (startChanged || end !== lastVisible) {  // a tall row leaving the top moves only the start
       lastVisible = end;
       visibleRangeListeners.notify({ start: start, end: end });
     }

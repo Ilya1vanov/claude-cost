@@ -54,6 +54,7 @@ if (api && api.getRows && canvas) {
   let width = 0;
   let height = 0;
   let observedSpace = null;
+  let spaceObserver = null;
   const layer = document.createElement("canvas");  // the marks and the search strip, drawn only when they change
   let searchMarks = [];   // row indexes of the search matches
 
@@ -108,7 +109,7 @@ if (api && api.getRows && canvas) {
   }
 
   // A match inside a collapsed Subagent block sits at the block's index, since it has no row of its own.
-  function resolveSearch() {
+  function resolveMatches() {
     const rows = api.getRows();
     const at = new Map();
     function note(list, index) { list.forEach(function (r) { at.set(r, index); if (r.rows) { note(r.rows, index); } }); }
@@ -116,7 +117,6 @@ if (api && api.getRows && canvas) {
     const seen = new Set();
     api.getMatches().forEach(function (m) { if (at.has(m.row)) { seen.add(at.get(m.row)); } });
     searchMarks = Array.from(seen);
-    paint();
   }
 
   // The search strip, right of the marks.
@@ -157,6 +157,8 @@ if (api && api.getRows && canvas) {
     draw();
   }
 
+  function onSearch() { resolveMatches(); paint(); }
+
   function resize() {
     const dpr = window.devicePixelRatio || 1;
     width = canvas.clientWidth - SEARCH_W;
@@ -167,13 +169,20 @@ if (api && api.getRows && canvas) {
     paint();
   }
 
+  // The header ends where the rows end: the map's width plus the rows' own scrollbar, when it takes space.
+  function setGutter() {
+    const scrollbar = api.body.offsetWidth - api.body.clientWidth;
+    box.style.setProperty("--tl-gutter", (canvas.offsetWidth + scrollbar) + "px");
+  }
+
   // The map is hidden while the whole Timeline fits in its box without scrolling.
   function updateFit() {
     const wholeFits = api.body.scrollHeight <= api.body.clientHeight;
+    if (!canvas.hidden && !wholeFits) { setGutter(); }  // a scrollbar may have appeared or gone
     if (canvas.hidden === wholeFits) { return; }
     canvas.hidden = wholeFits;
     box.classList.toggle("has-map", !wholeFits);
-    if (!wholeFits) { resize(); }
+    if (!wholeFits) { setGutter(); resize(); }
   }
 
   // The single entry point: re-derive the marks from the current row list and redraw.
@@ -186,10 +195,13 @@ if (api && api.getRows && canvas) {
       if (kind) { marks.push({ index: index, kind: kind, row: row }); }
     });
     regroup();
+    resolveMatches();
     const space = api.body.firstElementChild;
     if (space && space !== observedSpace && window.ResizeObserver) {  // rows re-measured: the fit can change
       observedSpace = space;
-      new ResizeObserver(updateFit).observe(space);
+      if (spaceObserver) { spaceObserver.disconnect(); }
+      spaceObserver = new ResizeObserver(updateFit);
+      spaceObserver.observe(space);
     }
     updateFit();
     paint();
@@ -234,6 +246,9 @@ if (api && api.getRows && canvas) {
   }
 
   canvas.addEventListener("pointerdown", function (event) {
+    // Only a plain primary press scrubs: a right-click or a macOS ctrl-click opens the context menu,
+    // which swallows the pointerup.
+    if (event.button !== 0 || (event.ctrlKey && /Mac/.test(navigator.platform))) { return; }
     dragging = true;
     canvas.setPointerCapture(event.pointerId);
     tip.hidden = true;
@@ -248,11 +263,13 @@ if (api && api.getRows && canvas) {
   }
   canvas.addEventListener("pointerup", release);
   canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("lostpointercapture", function () { dragging = false; });
+  canvas.addEventListener("contextmenu", function () { dragging = false; });
+  window.addEventListener("blur", function () { dragging = false; });
   canvas.addEventListener("pointerleave", function () { tip.hidden = true; });
 
   api.onRowsChange(rebuild);
-  api.onRowsChange(resolveSearch);
-  api.onSearchChange(resolveSearch);
+  api.onSearchChange(onSearch);
   api.onVisibleRangeChange(function () { updateFit(); draw(); });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { updateFit(); if (!canvas.hidden) { resize(); } }).observe(api.body);
@@ -260,5 +277,13 @@ if (api && api.getRows && canvas) {
   if (window.matchMedia) {  // the tokens change with the theme; there is no other theme signal
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
   }
+  // The backing size follows the device pixel ratio too (another display, browser zoom): watch the
+  // current ratio and re-arm for the new one each time it changes.
+  function watchDpr() {
+    if (!window.matchMedia) { return; }
+    const query = window.matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
+    query.addEventListener("change", function () { if (!canvas.hidden) { resize(); } watchDpr(); }, { once: true });
+  }
+  watchDpr();
   if (api.getRows().length) { rebuild(); }
 }

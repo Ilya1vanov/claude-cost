@@ -300,7 +300,7 @@ tr.baseline td { background: var(--surface-2); }
 .tl-map { flex: none; width: 20px; height: 100%; border-left: 1px solid var(--border); background: var(--surface-2);
   cursor: pointer; touch-action: none; }
 .tl-map[hidden], .tl-map-tip[hidden] { display: none; }
-.timeline.has-map .tl-head { padding-right: 32px; }
+.timeline.has-map .tl-head { padding-right: calc(12px + var(--tl-gutter, 21px)); }
 .tl-map-tip { position: absolute; right: 26px; z-index: 2; max-width: 320px; padding: 4px 8px; pointer-events: none;
   background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
   font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transform: translateY(-50%); }

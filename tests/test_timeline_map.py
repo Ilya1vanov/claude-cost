@@ -156,3 +156,36 @@ def test_each_kind_carries_its_own_label_and_the_search_listener_unsubscribes():
     entries = re.findall(r"^\s+(\w+): \{ token: .*", js, re.M)
     assert len(entries) == 8 and "function markLabel" in js and "switch (m.kind)" not in js
     assert "return function ()" in _static("session.js").split("onSearchChange")[1]
+
+
+# --- review fixes 2 (#148) -------------------------------------------------------------------------
+
+def test_the_visible_range_notifies_when_either_end_moves():
+    render = _static("timeline_window.js").split("function render()")[1].split("\n  function ")[0]
+    assert "startChanged || end !== lastVisible" in render
+
+
+def test_only_a_plain_primary_press_scrubs_and_a_lost_press_resets_the_drag():
+    js = _static("timeline_map.js")
+    down = js.split('"pointerdown"')[1].split("});")[0]
+    assert "event.button !== 0" in down and "ctrlKey" in down and down.index("return") < down.index("dragging = true")
+    for event in ("contextmenu", "lostpointercapture"):
+        assert f'canvas.addEventListener("{event}"' in js
+    assert 'window.addEventListener("blur"' in js
+
+
+def test_one_space_observer_and_one_repaint_per_rows_change():
+    js = _static("timeline_map.js")
+    assert js.count("new ResizeObserver(updateFit)") == 1 and "spaceObserver.disconnect()" in js
+    assert "api.onRowsChange(resolveSearch)" not in js and js.count("api.onRowsChange(") == 1
+
+
+def test_the_header_gutter_is_measured_from_the_map_and_the_rows_scrollbar():
+    js, css = _static("timeline_map.js"), _static("app.css")
+    assert "offsetWidth - api.body.clientWidth" in js and '"--tl-gutter"' in js
+    assert "var(--tl-gutter" in css and "padding-right: 32px" not in css
+
+
+def test_the_canvas_is_resized_when_the_device_pixel_ratio_changes():
+    js = _static("timeline_map.js")
+    assert "resolution:" in js and "dppx" in js and "watchDpr()" in js
