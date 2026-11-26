@@ -78,6 +78,10 @@ _Avoid_: switch, model swap
 A session's turns, requests and events in time order, read like the conversation they came from, each request with its context size and cost.
 _Avoid_: transcript history, chat, history
 
+**Timeline map**:
+A strip beside the Timeline marking where its prompts, events, cold writes and Advisor calls fall, for jumping through a long session.
+_Avoid_: minimap, scrollbar markers, overview
+
 **Breakdown**:
 Spend split by one dimension, such as date, project, model or tool, one row per value.
 _Avoid_: group by, explore, pivot

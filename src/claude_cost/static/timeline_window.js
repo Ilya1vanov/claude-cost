@@ -8,11 +8,25 @@ if (api) {
   const body = api.body;
   const ESTIMATED_ROW_HEIGHT = 72;  // until a row has been measured
   const OVERSCAN = 8;
-  const firstVisibleListeners = [];
+  // A list of listeners: add(fn) returns a function that unsubscribes; notify(...args) calls them.
+  function listeners() {
+    const fns = [];
+    return {
+      add: function (fn) {
+        fns.push(fn);
+        return function () { const i = fns.indexOf(fn); if (i >= 0) { fns.splice(i, 1); } };
+      },
+      notify: function () { const args = arguments; fns.slice().forEach(function (fn) { fn.apply(null, args); }); },
+    };
+  }
+  const firstVisibleListeners = listeners();
+  const visibleRangeListeners = listeners();
+  const rowsListeners = listeners();
   let rows = [];
   let space = null;
   let virtualizer = null;
   let firstVisible = -1;
+  let lastVisible = -1;
   const nodes = new Map();  // row index -> its wrapper element, for the rows currently drawn
 
   // The sticky badge in the Timeline header: the setting in effect for the first visible row
@@ -50,12 +64,20 @@ if (api) {
     });
     space.style.height = virtualizer.getTotalSize() + "px";
     const start = virtualizer.range ? virtualizer.range.startIndex : (rows.length ? 0 : -1);
-    if (start !== firstVisible) {
+    const end = virtualizer.range ? virtualizer.range.endIndex : start;
+    const startChanged = start !== firstVisible;
+    if (startChanged) {
       firstVisible = start;
-      firstVisibleListeners.slice().forEach(function (fn) { fn(start); });
+      firstVisibleListeners.notify(start);
+    }
+    if (startChanged || end !== lastVisible) {  // a tall row leaving the top moves only the start
+      lastVisible = end;
+      visibleRangeListeners.notify({ start: start, end: end });
     }
     updateSettingBadge();
   }
+
+  function notifyRows() { rowsListeners.notify(rows); }
 
   function mount(newRows) {
     rows = newRows;
@@ -64,6 +86,7 @@ if (api) {
     body.appendChild(space);
     nodes.clear();
     firstVisible = -1;
+    lastVisible = -1;
     if (virtualizer) { virtualizer._didMount()(); }  // clean up a previous mount's observers
     virtualizer = new Virtualizer({
       count: rows.length,
@@ -78,6 +101,7 @@ if (api) {
     virtualizer._didMount();
     virtualizer._willUpdate();
     render();
+    notifyRows();
   }
 
   // For rows that change height without the browser telling us (the ResizeObserver already covers
@@ -89,10 +113,34 @@ if (api) {
   api.scrollToIndex = function (index, options) { if (virtualizer) { virtualizer.scrollToIndex(index, options); } };
   api.getFirstVisibleIndex = function () { return firstVisible; };
   // fn(index) runs whenever the first row in view changes; returns a function that unsubscribes.
-  api.onFirstVisibleChange = function (fn) {
-    firstVisibleListeners.push(fn);
-    return function () { const i = firstVisibleListeners.indexOf(fn); if (i >= 0) { firstVisibleListeners.splice(i, 1); } };
+  api.onFirstVisibleChange = firstVisibleListeners.add;
+  // The rows currently listed (Subagent blocks expanded or not), and the last row in view.
+  api.getRows = function () { return rows; };
+  api.getVisibleRange = function () { return { start: firstVisible, end: lastVisible }; };
+  // fn({start, end}) runs whenever the first or last row in view changes.
+  api.onVisibleRangeChange = visibleRangeListeners.add;
+  // The span in view in fractional row indexes (3.5 = halfway through row 3), so a map can follow
+  // the scroll smoothly rather than a row at a time; null before the rows are mounted.
+  function spanAt(offset) {
+    const item = virtualizer.getVirtualItemForOffset(offset);
+    if (!item) { return null; }
+    return item.index + Math.max(0, Math.min(1, (offset - item.start) / (item.size || 1)));
+  }
+  api.getVisibleSpan = function () {
+    if (!virtualizer || !rows.length) { return null; }
+    const start = spanAt(body.scrollTop);
+    const end = spanAt(body.scrollTop + body.clientHeight);
+    return start === null || end === null ? null : { start: start, end: end };
   };
+  // Scroll so the fractional row index `at` is at the top of the view.
+  api.scrollToSpan = function (at) {
+    if (!virtualizer || !rows.length) { return; }
+    const index = Math.max(0, Math.min(rows.length - 1, Math.floor(at)));
+    const item = virtualizer.getMeasurements()[index];
+    virtualizer.scrollToOffset(item.start + (at - index) * item.size);
+  };
+  // fn(rows) runs after the row list is mounted or swapped (a Subagent block expanded or collapsed).
+  api.onRowsChange = rowsListeners.add;
   // Open (or close, with on=false) the text of row `index` while Collapse text is on; the
   // ResizeObserver re-measures the drawn row. For the search (#92) to reveal a match.
   api.expandText = function (index, on) {
@@ -112,6 +160,7 @@ if (api) {
     virtualizer.setOptions(Object.assign({}, virtualizer.options, { count: rows.length }));
     virtualizer.measure();  // item sizes were cached per index, which has shifted
     render();
+    notifyRows();
   };
 
   api.loadRows(document.getElementById("timeline-box").dataset.src).then(api.setTree || mount).catch(function (err) {
