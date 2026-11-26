@@ -42,7 +42,11 @@ def test_parallel_sessions_card_shows_avg_and_peak_against_baseline(root, config
 def test_parallel_sessions_values_have_tooltips(root, configure):
     _busy_week(root)
     card = _card(root, configure)
-    assert card.count('class="info" data-tip="') == 2
+    assert card.count('class="info" data-tip="') == 4
+    assert ("Subagent runs per Session in the period, nested ones included; "
+            "Sessions that launched none still count.") in card
+    assert ("The share of Sessions in the period with at least one Subagent run in it, telling a few "
+            "heavy users apart from every Session using some.") in card
     assert ("How many Sessions were working at once, on average. Time is cut into 5-minute slots; "
             "a Session counts in a slot if it or one of its Subagents made a request in it. Only slots "
             "where at least one Session was working are averaged, so idle time doesn&#39;t pull it down."
@@ -53,5 +57,29 @@ def test_parallel_sessions_values_have_tooltips(root, configure):
 def test_parallel_sessions_card_says_n_a_without_requests(root, configure):
     root.write_transcript("p", "s1", [req("a", "2026-09-01T10:00:00Z")])
     card = _card(root, configure)
-    assert card.count('<div class="value">n/a</div>') == 2
-    assert card.count("vs n/a in baseline") == 2
+    assert card.count('<div class="value">n/a</div>') == 4
+    assert card.count("vs n/a in baseline") == 4
+    for label in ("Subagents / session", "Sessions using Subagents"):
+        assert re.search(label + r".*?<div class=\"value\">n/a</div>\s*<div class=\"meta\">vs n/a in baseline",
+                         card, re.S)
+
+
+def test_parallel_sessions_card_shows_subagents_per_session_against_baseline(root, configure):
+    _busy_week(root)  # 3 Sessions this week, 3 in the baseline
+    root.write_subagent_transcript("p", "s1", "x1", [req("h", D + "10:05:00Z")])
+    root.write_subagent_transcript("p", "s1", "x2", [req("i", D + "10:06:00Z")])
+    root.write_subagent_transcript("p", "s4", "x3", [req("j", B + "10:05:00Z")])
+    card = _card(root, configure)
+    assert re.search(r"Subagents / session.*?<div class=\"value\">0\.7</div>\s*<div class=\"meta\">vs 0.3 in baseline",
+                     card, re.S)
+
+
+def test_parallel_sessions_card_shows_share_of_sessions_using_subagents_against_baseline(root, configure):
+    _busy_week(root)  # 3 Sessions this week, 3 in the baseline
+    root.write_subagent_transcript("p", "s1", "x1", [req("h", D + "10:05:00Z")])
+    root.write_subagent_transcript("p", "s1", "x2", [req("i", D + "10:06:00Z")])
+    root.write_subagent_transcript("p", "s2", "x3", [req("j", D + "10:07:00Z")])
+    root.write_subagent_transcript("p", "s4", "x4", [req("k", B + "10:05:00Z")])
+    card = _card(root, configure)
+    assert re.search(r"Sessions using Subagents.*?<div class=\"value\">67%</div>\s*<div class=\"meta\">vs 33% in baseline",
+                     card, re.S)
