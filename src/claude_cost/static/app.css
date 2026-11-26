@@ -26,6 +26,7 @@
   --setting: #8e44ad;
   --command: #1b5e20;     /* a slash command in the Timeline */
   --command-soft: #e3f3e6;
+  --advisor: #6b8e23;     /* an Advisor call mark in the Timeline map */
   --up-soft: #fbe6e6;
   --bar-soft: rgba(93, 103, 118, 0.35);
 
@@ -84,6 +85,7 @@
     --setting: #c58be0;
     --command: #7fd49a;
     --command-soft: #14301c;
+    --advisor: #a8c957;
     --up-soft: #3a1818;
     --bar-soft: rgba(154, 163, 176, 0.35);
 

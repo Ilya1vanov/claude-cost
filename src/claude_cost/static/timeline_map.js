@@ -9,15 +9,50 @@ if (api && api.getRows && canvas) {
   const MIN_MARK = 2;     // CSS px: every mark stays visible however long the session
   const HIT_SLOP = 3;     // CSS px around a mark that still counts as hovering it
 
-  // Mark kinds: kind -> colour token. A later kind adds one entry here, and `segment` places its
-  // mark in the strip (all prompts share the one segment for now).
+  // Mark kinds: kind -> colour token (the one the chart or the row badges use, so there is no legend).
+  // `segment` is the order of a kind inside a merged mark; kinds that share a segment sit side by
+  // side. A new kind adds one entry here and a case in markKind and markLabel.
   const MARK_KINDS = {
     prompt: { token: "--accent", segment: 0 },
+    compaction: { token: "--compact", segment: 1 },
+    late_compact: { token: "--late-compact", segment: 1 },
+    setting_change: { token: "--setting", segment: 2 },
+    idle_gap: { token: "--warn", segment: 3 },
+    link: { token: "--muted", segment: 4 },   // side session or fork, either end of the link
+    cold: { token: "--up", segment: 5 },      // the chart's cold colour; the badge's --warn is the idle gap's
+    advisor: { token: "--advisor", segment: 6 },
   };
-  function markKind(row) { return MARK_KINDS[row.kind] ? row.kind : null; }
-  function markLabel(row) { return String(row.text || "").split("\n")[0]; }
+  // The kind a row is marked as, or null: plain requests stay unmarked.
+  function markKind(row) {
+    switch (row.kind) {
+      case "prompt": return "prompt";
+      case "compaction": return row.late ? "late_compact" : "compaction";
+      case "setting_change": return "setting_change";
+      case "idle_gap": return "idle_gap";
+      case "child_session": case "forked_from": return "link";
+      case "request": return row.cold_write ? "cold" : null;
+      case "advisor_call": return "advisor";
+      default: return null;
+    }
+  }
+  function markLabel(m) {
+    const row = m.row;
+    switch (m.kind) {
+      case "prompt": return String(row.text || "").split("\n")[0];
+      case "compaction": return "Compaction";
+      case "late_compact": return "Late compact";
+      case "setting_change": return "Setting change";
+      case "idle_gap": return "Idle gap";
+      case "link":
+        if (row.kind === "forked_from") { return "Forked from"; }
+        return (row.link_kind === "fork" ? "Fork" : "Side session") + " started";
+      case "cold": return row.cold_resume ? "Cold resume" : "Cold write";
+      default: return "Advisor call";
+    }
+  }
 
   let marks = [];         // {index, kind, row} for the rows that have a mark, in row order
+  let groups = [];        // marks on the same pixel: {top, bottom, marks (by segment), kinds (distinct, by segment)}
   let count = 0;          // rows in the list
   let fits = true;
   let dragging = false;
@@ -28,11 +63,37 @@ if (api && api.getRows && canvas) {
   function token(name) { return window.theme ? window.theme.token(name) : getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function yOf(index) { return count ? index / count * height : 0; }
 
-  function drawMarks(ctx) {
+  // Marks that land on the same pixel merge into one group, its kinds in segment order.
+  function regroup() {
+    groups = [];
+    let key = null;
     marks.forEach(function (m) {
-      ctx.fillStyle = token(MARK_KINDS[m.kind].token);
-      const y = yOf(m.index);
-      ctx.fillRect(0, y, width, Math.max(MIN_MARK, yOf(m.index + 1) - y));
+      const top = yOf(m.index);
+      const bottom = Math.max(top + MIN_MARK, yOf(m.index + 1));
+      const last = groups[groups.length - 1];
+      if (last && Math.floor(top) === key) {
+        last.marks.push(m);
+        last.bottom = Math.max(last.bottom, bottom);
+      } else {
+        key = Math.floor(top);
+        groups.push({ top: top, bottom: bottom, marks: [m] });
+      }
+    });
+    groups.forEach(function (g) {
+      g.marks.sort(function (a, b) { return MARK_KINDS[a.kind].segment - MARK_KINDS[b.kind].segment; });  // stable
+      g.kinds = [];
+      g.marks.forEach(function (m) { if (g.kinds.indexOf(m.kind) < 0) { g.kinds.push(m.kind); } });
+    });
+  }
+
+  // One colour segment per kind, side by side across the strip.
+  function drawMarks(ctx) {
+    groups.forEach(function (g) {
+      const w = width / g.kinds.length;
+      g.kinds.forEach(function (kind, i) {
+        ctx.fillStyle = token(MARK_KINDS[kind].token);
+        ctx.fillRect(i * w, g.top, w, g.bottom - g.top);
+      });
     });
   }
 
@@ -68,6 +129,7 @@ if (api && api.getRows && canvas) {
     height = canvas.clientHeight;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
+    regroup();
     draw();
   }
 
@@ -90,6 +152,7 @@ if (api && api.getRows && canvas) {
       const kind = markKind(row);
       if (kind) { marks.push({ index: index, kind: kind, row: row }); }
     });
+    regroup();
     const space = api.body.firstElementChild;
     if (space && space !== observedSpace && window.ResizeObserver) {  // rows re-measured: the fit can change
       observedSpace = space;
@@ -109,18 +172,21 @@ if (api && api.getRows && canvas) {
     const y = event.clientY - canvas.getBoundingClientRect().top;
     let best = null;
     let bestDist = HIT_SLOP + 1;
-    marks.forEach(function (m) {
-      const top = yOf(m.index);
-      const bottom = top + Math.max(MIN_MARK, yOf(m.index + 1) - top);
-      const dist = y < top ? top - y : (y > bottom ? y - bottom : 0);
-      if (dist < bestDist) { best = m; bestDist = dist; }
+    groups.forEach(function (g) {
+      const dist = y < g.top ? g.top - y : (y > g.bottom ? y - g.bottom : 0);
+      if (dist < bestDist) { best = g; bestDist = dist; }
     });
     return best;
   }
+  // The nearest marked row's label (the first of a merged mark: prompts, then the fixed order), and how many more share the spot.
+  function tipText(g) {
+    const more = g.marks.length - 1;
+    return markLabel(g.marks[0]) + (more ? " +" + more + " more" : "");
+  }
   function showTip(event) {
-    const m = dragging ? null : markAt(event);
-    if (!m) { tip.hidden = true; return; }
-    tip.textContent = markLabel(m.row);
+    const g = dragging ? null : markAt(event);
+    if (!g) { tip.hidden = true; return; }
+    tip.textContent = tipText(g);
     tip.style.top = (event.clientY - tip.parentNode.getBoundingClientRect().top) + "px";
     tip.hidden = false;
   }
