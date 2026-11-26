@@ -24,6 +24,7 @@
   --compact: #0b66c3;
   --compact-soft: #e3f0fc;
   --setting: #8e44ad;
+  --search-match: #d97706;
   --command: #1b5e20;     /* a slash command in the Timeline */
   --command-soft: #e3f3e6;
   --advisor: #6b8e23;     /* an Advisor call mark in the Timeline map */
@@ -83,6 +84,7 @@
     --compact: #6cb0f5;
     --compact-soft: #132a40;
     --setting: #c58be0;
+    --search-match: #fbbf24;
     --command: #7fd49a;
     --command-soft: #14301c;
     --advisor: #a8c957;
@@ -295,11 +297,11 @@ tr.baseline td { background: var(--surface-2); }
 .tl-main { flex: 1; min-height: 0; display: flex; position: relative; }
 .tl-body { flex: 1; min-width: 0; overflow-y: auto; position: relative; }
 /* Timeline map: a strip beside the rows; the header gets the strip's width so its columns stay aligned */
-.tl-map { flex: none; width: 16px; height: 100%; border-left: 1px solid var(--border); background: var(--surface-2);
+.tl-map { flex: none; width: 20px; height: 100%; border-left: 1px solid var(--border); background: var(--surface-2);
   cursor: pointer; touch-action: none; }
 .tl-map[hidden], .tl-map-tip[hidden] { display: none; }
-.timeline.has-map .tl-head { padding-right: 28px; }
-.tl-map-tip { position: absolute; right: 22px; z-index: 2; max-width: 320px; padding: 4px 8px; pointer-events: none;
+.timeline.has-map .tl-head { padding-right: 32px; }
+.tl-map-tip { position: absolute; right: 26px; z-index: 2; max-width: 320px; padding: 4px 8px; pointer-events: none;
   background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
   font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transform: translateY(-50%); }
 .tl-body .empty { padding: 12px; }

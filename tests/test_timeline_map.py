@@ -111,3 +111,15 @@ def test_the_advisor_token_is_defined_in_light_and_dark_and_the_tooltip_names_co
     assert len(re.findall(r"^\s+--advisor: #", _static("app.css"), re.M)) == 2
     js = _static("timeline_map.js")
     assert '"Cold resume"' in js and '"Cold write"' in js and "more" in js
+
+
+def test_the_search_exposes_its_matches_and_the_map_draws_them_in_their_own_strip():
+    session, map_js = _static("session.js"), _static("timeline_map.js")
+    assert "getMatches" in session and "onSearchChange" in session
+    assert "api.getMatches" in map_js and "api.onSearchChange" in map_js and "function drawSearch" in map_js
+    assert "findMatches" not in map_js  # the map reads the search's matches, it does not search itself
+
+
+def test_the_search_match_colour_has_a_token_in_both_themes():
+    css = _static("app.css")
+    assert css.count("--search-match:") == 2
