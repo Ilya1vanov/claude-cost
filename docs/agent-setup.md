@@ -20,17 +20,19 @@ Claude Code deletes transcripts after `cleanupPeriodDays` days, 30 by default, a
 
 Tell the user this, and that longer retention uses more disk space. Ask: "Set transcript retention to one year (365 days) in `~/.claude/settings.json`? Other settings stay as they are." On no, change nothing and go to step 3.
 
-On yes, read `~/.claude/settings.json` and apply the rule to its `cleanupPeriodDays`:
+On yes, read `~/.claude/settings.json` with your own file reading tool or `cat`, here and in step 4. Do not call `python3` or `jq`: on a fresh Mac `python3` prompts to install the Xcode command line tools, and older macOS has no `jq`. The file can hold tokens and other secrets: use only `cleanupPeriodDays`, and never quote or repeat another key's value to the user.
+
+Apply this rule to its `cleanupPeriodDays`:
 
 - Missing, not a number (`false`, a string, `null`), or 1 to 364: set 365.
 - 365 or more: keep it and tell the user.
 - `0`: transcript saving is off, so claude-cost has nothing to read. Say so and ask separately: "Turn transcript saving on with 365 days?" Set 365 only on that yes.
 
-If the file is not valid JSON, or not a JSON object, leave it untouched, tell the user why retention was not set, and go to step 3.
+If the file is not valid JSON, or not a JSON object, leave it untouched, tell the user why retention was not set, and go to step 3. Judge this by reading: the top level must be one object in `{ }`, with no comments (`//` or `/* */`) and no trailing commas. When unsure, treat the file as invalid.
 
 Merge, never overwrite: change only `cleanupPeriodDays`, keep every other key, and create the file with only that key when it is missing.
 
-If you cannot write the file, the user runs this command instead. It applies the same rule and leaves `0` alone, so when the value is `0` and the user said yes to turning saving on, ask the user to set `cleanupPeriodDays` to 365 in the file by hand instead. When the shell cannot find `uv` (a fresh install whose PATH is not updated), use the `uv` path from step 1's output, `~/.local/bin/uv` by default.
+If you cannot write the file, the user runs this command instead. The rule against calling `python3` above does not cover this command. It applies the same rule and leaves `0` alone, so when the value is `0` and the user said yes to turning saving on, ask the user to set `cleanupPeriodDays` to 365 in the file by hand instead. When the shell cannot find `uv` (a fresh install whose PATH is not updated), use the `uv` path from step 1's output, `~/.local/bin/uv` by default.
 
 ```
 uv run --no-project python -c 'import json,pathlib;p=pathlib.Path.home()/".claude"/"settings.json";d=json.loads(p.read_text()) if p.exists() else {};v=d.get("cleanupPeriodDays");d["cleanupPeriodDays"]=v if type(v)in(int,float)and(v==0 or v>=365)else 365;p.parent.mkdir(exist_ok=True);p.write_text(json.dumps(d,indent=2)+"\n")'
