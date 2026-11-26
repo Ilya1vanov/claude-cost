@@ -8,9 +8,20 @@ if (api) {
   const body = api.body;
   const ESTIMATED_ROW_HEIGHT = 72;  // until a row has been measured
   const OVERSCAN = 8;
-  const firstVisibleListeners = [];
-  const visibleRangeListeners = [];
-  const rowsListeners = [];
+  // A list of listeners: add(fn) returns a function that unsubscribes; notify(...args) calls them.
+  function listeners() {
+    const fns = [];
+    return {
+      add: function (fn) {
+        fns.push(fn);
+        return function () { const i = fns.indexOf(fn); if (i >= 0) { fns.splice(i, 1); } };
+      },
+      notify: function () { const args = arguments; fns.slice().forEach(function (fn) { fn.apply(null, args); }); },
+    };
+  }
+  const firstVisibleListeners = listeners();
+  const visibleRangeListeners = listeners();
+  const rowsListeners = listeners();
   let rows = [];
   let space = null;
   let virtualizer = null;
@@ -55,17 +66,17 @@ if (api) {
     const start = virtualizer.range ? virtualizer.range.startIndex : (rows.length ? 0 : -1);
     if (start !== firstVisible) {
       firstVisible = start;
-      firstVisibleListeners.slice().forEach(function (fn) { fn(start); });
+      firstVisibleListeners.notify(start);
     }
     const end = virtualizer.range ? virtualizer.range.endIndex : start;
     if (end !== lastVisible) {
       lastVisible = end;
-      visibleRangeListeners.slice().forEach(function (fn) { fn({ start: start, end: end }); });
+      visibleRangeListeners.notify({ start: start, end: end });
     }
     updateSettingBadge();
   }
 
-  function notifyRows() { rowsListeners.slice().forEach(function (fn) { fn(rows); }); }
+  function notifyRows() { rowsListeners.notify(rows); }
 
   function mount(newRows) {
     rows = newRows;
@@ -101,23 +112,14 @@ if (api) {
   api.scrollToIndex = function (index, options) { if (virtualizer) { virtualizer.scrollToIndex(index, options); } };
   api.getFirstVisibleIndex = function () { return firstVisible; };
   // fn(index) runs whenever the first row in view changes; returns a function that unsubscribes.
-  api.onFirstVisibleChange = function (fn) {
-    firstVisibleListeners.push(fn);
-    return function () { const i = firstVisibleListeners.indexOf(fn); if (i >= 0) { firstVisibleListeners.splice(i, 1); } };
-  };
+  api.onFirstVisibleChange = firstVisibleListeners.add;
   // The rows currently listed (Subagent blocks expanded or not), and the last row in view.
   api.getRows = function () { return rows; };
   api.getVisibleRange = function () { return { start: firstVisible, end: lastVisible }; };
   // fn({start, end}) runs whenever the first or last row in view changes.
-  api.onVisibleRangeChange = function (fn) {
-    visibleRangeListeners.push(fn);
-    return function () { const i = visibleRangeListeners.indexOf(fn); if (i >= 0) { visibleRangeListeners.splice(i, 1); } };
-  };
+  api.onVisibleRangeChange = visibleRangeListeners.add;
   // fn(rows) runs after the row list is mounted or swapped (a Subagent block expanded or collapsed).
-  api.onRowsChange = function (fn) {
-    rowsListeners.push(fn);
-    return function () { const i = rowsListeners.indexOf(fn); if (i >= 0) { rowsListeners.splice(i, 1); } };
-  };
+  api.onRowsChange = rowsListeners.add;
   // Open (or close, with on=false) the text of row `index` while Collapse text is on; the
   // ResizeObserver re-measures the drawn row. For the search (#92) to reveal a match.
   api.expandText = function (index, on) {

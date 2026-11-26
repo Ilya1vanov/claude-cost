@@ -137,7 +137,22 @@ def test_the_map_rebuilds_and_re_evaluates_its_visibility_whenever_the_row_list_
     js = _static("timeline_map.js")
     assert "api.onRowsChange(rebuild)" in js
     rebuild = js.split("function rebuild()")[1].split("\n  function ")[0]
-    assert "api.getRows()" in rebuild and "updateFit()" in rebuild and "draw()" in rebuild
+    assert "api.getRows()" in rebuild and "updateFit()" in rebuild and "paint()" in rebuild
     assert "ResizeObserver(updateFit)" in js  # rows re-measured after an expansion change the fit
     window_js = _static("timeline_window.js")
     assert window_js.split("api.updateRows")[1].count("notifyRows()") == 1  # expand and collapse notify
+
+
+# --- review fixes (#148) ---------------------------------------------------------------------------
+
+def test_the_map_label_describes_the_map_generally_and_nothing_is_exported_on_window(client):
+    html = client.get("/session/s1").get_data(as_text=True)
+    assert "a mark per prompt" not in html and 'aria-label="Timeline map: ' in html
+    assert "timelineMap" not in _static("timeline_map.js")
+
+
+def test_each_kind_carries_its_own_label_and_the_search_listener_unsubscribes():
+    js = _static("timeline_map.js")
+    entries = re.findall(r"^\s+(\w+): \{ token: .*", js, re.M)
+    assert len(entries) == 8 and "function markLabel" in js and "switch (m.kind)" not in js
+    assert "return function ()" in _static("session.js").split("onSearchChange")[1]

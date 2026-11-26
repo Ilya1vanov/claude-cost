@@ -10,18 +10,24 @@ if (api && api.getRows && canvas) {
   const SEARCH_W = 4;     // CSS px: the search strip on the map's right edge, outside the marks and the box
   const HIT_SLOP = 3;     // CSS px around a mark that still counts as hovering it
 
-  // Mark kinds: kind -> colour token (the one the chart or the row badges use, so there is no legend).
-  // `segment` is the order of a kind inside a merged mark; kinds that share a segment sit side by
-  // side. A new kind adds one entry here and a case in markKind and markLabel.
+  // Mark kinds: kind -> colour token (the one the chart or the row badges use, so there is no legend)
+  // and the tooltip label (a string, or a function of the row). `segment` is the order of a kind
+  // inside a merged mark; kinds that share a segment sit side by side. A new kind adds one entry
+  // here and a case in markKind.
   const MARK_KINDS = {
-    prompt: { token: "--accent", segment: 0 },
-    compaction: { token: "--compact", segment: 1 },
-    late_compact: { token: "--late-compact", segment: 1 },
-    setting_change: { token: "--setting", segment: 2 },
-    idle_gap: { token: "--warn", segment: 3 },
-    link: { token: "--muted", segment: 4 },   // side session or fork, either end of the link
-    cold: { token: "--up", segment: 5 },      // the chart's cold colour; the badge's --warn is the idle gap's
-    advisor: { token: "--advisor", segment: 6 },
+    prompt: { token: "--accent", segment: 0, label: function (row) { return String(row.text || "").split("\n")[0]; } },
+    compaction: { token: "--compact", segment: 1, label: "Compaction" },
+    late_compact: { token: "--late-compact", segment: 1, label: "Late compact" },
+    setting_change: { token: "--setting", segment: 2, label: "Setting change" },
+    idle_gap: { token: "--warn", segment: 3, label: "Idle gap" },
+    link: { token: "--muted", segment: 4,   // side session or fork, either end of the link
+      label: function (row) {
+        if (row.kind === "forked_from") { return "Forked from"; }
+        return (row.link_kind === "fork" ? "Fork" : "Side session") + " started";
+      } },
+    cold: { token: "--up", segment: 5,       // the chart's cold colour; the badge's --warn is the idle gap's
+      label: function (row) { return row.cold_resume ? "Cold resume" : "Cold write"; } },
+    advisor: { token: "--advisor", segment: 6, label: "Advisor call" },  // no chart or badge colour exists for it
   };
   // The kind a row is marked as, or null: plain requests stay unmarked.
   function markKind(row) {
@@ -37,48 +43,35 @@ if (api && api.getRows && canvas) {
     }
   }
   function markLabel(m) {
-    const row = m.row;
-    switch (m.kind) {
-      case "prompt": return String(row.text || "").split("\n")[0];
-      case "compaction": return "Compaction";
-      case "late_compact": return "Late compact";
-      case "setting_change": return "Setting change";
-      case "idle_gap": return "Idle gap";
-      case "link":
-        if (row.kind === "forked_from") { return "Forked from"; }
-        return (row.link_kind === "fork" ? "Fork" : "Side session") + " started";
-      case "cold": return row.cold_resume ? "Cold resume" : "Cold write";
-      default: return "Advisor call";
-    }
+    const label = MARK_KINDS[m.kind].label;
+    return typeof label === "function" ? label(m.row) : label;
   }
 
-  let marks = [];         // {index, kind, row} for the rows that have a mark, in row order
-  let groups = [];        // marks on the same pixel: {top, bottom, marks (by segment), kinds (distinct, by segment)}
+  let marks = [];         // {index, kind, row, top, bottom} for the rows that have a mark, in row order
+  let groups = [];        // marks whose extents overlap: {top, bottom, marks (by segment), kinds (distinct, by segment)}
   let count = 0;          // rows in the list
-  let fits = true;
   let dragging = false;
   let width = 0;
   let height = 0;
   let observedSpace = null;
+  const layer = document.createElement("canvas");  // the marks and the search strip, drawn only when they change
   let searchMarks = [];   // row indexes of the search matches
 
-  function token(name) { return window.theme ? window.theme.token(name) : getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  const token = window.theme.token;
   function yOf(index) { return count ? index / count * height : 0; }
 
-  // Marks that land on the same pixel merge into one group, its kinds in segment order.
+  // Marks whose drawn extents overlap (the minimum height included) merge into one group, its kinds in segment order.
   function regroup() {
     groups = [];
-    let key = null;
     marks.forEach(function (m) {
-      const top = yOf(m.index);
-      const bottom = Math.max(top + MIN_MARK, yOf(m.index + 1));
+      m.top = yOf(m.index);
+      m.bottom = Math.max(m.top + MIN_MARK, yOf(m.index + 1));
       const last = groups[groups.length - 1];
-      if (last && Math.floor(top) === key) {
+      if (last && m.top < last.bottom) {
         last.marks.push(m);
-        last.bottom = Math.max(last.bottom, bottom);
+        last.bottom = Math.max(last.bottom, m.bottom);
       } else {
-        key = Math.floor(top);
-        groups.push({ top: top, bottom: bottom, marks: [m] });
+        groups.push({ top: m.top, bottom: m.bottom, marks: [m] });
       }
     });
     groups.forEach(function (g) {
@@ -123,12 +116,11 @@ if (api && api.getRows && canvas) {
     const seen = new Set();
     api.getMatches().forEach(function (m) { if (at.has(m.row)) { seen.add(at.get(m.row)); } });
     searchMarks = Array.from(seen);
-    draw();
+    paint();
   }
 
   // The search strip, right of the marks.
   function drawSearch(ctx) {
-    ctx.clearRect(width, 0, SEARCH_W, height);
     ctx.fillStyle = token("--search-match");
     searchMarks.forEach(function (index) {
       const y = yOf(index);
@@ -136,35 +128,52 @@ if (api && api.getRows && canvas) {
     });
   }
 
-  function draw() {
-    if (canvas.hidden || !width || !height) { return; }
+  // The marks and the search strip go to the offscreen layer; they only change with the rows, the
+  // search, the size or the theme.
+  function paintLayer() {
     const dpr = window.devicePixelRatio || 1;
-    const ctx = canvas.getContext("2d");
+    const ctx = layer.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, width + SEARCH_W, height);
     drawMarks(ctx);
     drawSearch(ctx);
+  }
+
+  // The visible canvas: the layer, then the box. A scroll only redraws this.
+  function draw() {
+    if (canvas.hidden || !width || !height) { return; }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(layer, 0, 0);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawView(ctx);
+  }
+
+  function paint() {
+    if (canvas.hidden || !width || !height) { return; }
+    paintLayer();
+    draw();
   }
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
     width = canvas.clientWidth - SEARCH_W;
     height = canvas.clientHeight;
-    canvas.width = Math.round(canvas.clientWidth * dpr);
-    canvas.height = Math.round(height * dpr);
+    canvas.width = layer.width = Math.round(canvas.clientWidth * dpr);
+    canvas.height = layer.height = Math.round(height * dpr);
     regroup();
-    draw();
+    paint();
   }
 
   // The map is hidden while the whole Timeline fits in its box without scrolling.
   function updateFit() {
-    const nowFits = api.body.scrollHeight <= api.body.clientHeight;
-    if (nowFits === fits && !canvas.hidden === !nowFits) { return; }
-    fits = nowFits;
-    canvas.hidden = fits;
-    box.classList.toggle("has-map", !fits);
-    if (!fits) { resize(); }
+    const wholeFits = api.body.scrollHeight <= api.body.clientHeight;
+    if (canvas.hidden === wholeFits) { return; }
+    canvas.hidden = wholeFits;
+    box.classList.toggle("has-map", !wholeFits);
+    if (!wholeFits) { resize(); }
   }
 
   // The single entry point: re-derive the marks from the current row list and redraw.
@@ -183,7 +192,7 @@ if (api && api.getRows && canvas) {
       new ResizeObserver(updateFit).observe(space);
     }
     updateFit();
-    draw();
+    paint();
   }
 
   function indexAt(event) {
@@ -202,15 +211,24 @@ if (api && api.getRows && canvas) {
     });
     return best;
   }
-  // The nearest marked row's label (the first of a merged mark: prompts, then the fixed order), and how many more share the spot.
-  function tipText(g) {
+  // The marked row nearest to the pointer within a merged mark (a tie goes to the earlier segment, prompts first).
+  function nearestMark(g, y) {
+    let best = g.marks[0];
+    let bestDist = Infinity;
+    g.marks.forEach(function (m) {
+      const dist = y < m.top ? m.top - y : (y > m.bottom ? y - m.bottom : 0);
+      if (dist < bestDist) { best = m; bestDist = dist; }
+    });
+    return best;
+  }
+  function tipText(g, y) {
     const more = g.marks.length - 1;
-    return markLabel(g.marks[0]) + (more ? " +" + more + " more" : "");
+    return markLabel(nearestMark(g, y)) + (more ? " +" + more + " more" : "");
   }
   function showTip(event) {
     const g = dragging ? null : markAt(event);
     if (!g) { tip.hidden = true; return; }
-    tip.textContent = tipText(g);
+    tip.textContent = tipText(g, event.clientY - canvas.getBoundingClientRect().top);
     tip.style.top = (event.clientY - tip.parentNode.getBoundingClientRect().top) + "px";
     tip.hidden = false;
   }
@@ -240,8 +258,7 @@ if (api && api.getRows && canvas) {
     new ResizeObserver(function () { updateFit(); if (!canvas.hidden) { resize(); } }).observe(api.body);
   }
   if (window.matchMedia) {  // the tokens change with the theme; there is no other theme signal
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
   }
-  window.timelineMap = { rebuild: rebuild };
   if (api.getRows().length) { rebuild(); }
 }
