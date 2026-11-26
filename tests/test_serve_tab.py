@@ -123,3 +123,40 @@ def test_probe_reports_a_program_that_does_not_speak_http():
         assert real_probe(f"http://127.0.0.1:{listener.getsockname()[1]}/") == ""
     finally:
         listener.close()
+
+
+# --- the real `serve` process, its stdout redirected to a file as a background agent runs it ---
+
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def test_serving_line_reaches_a_redirected_stdout(tmp_path, root, env):
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    (tmp_path / "config" / "config.toml").write_text(f'data_roots = ["{root.path}"]\nport = {port}\nupdate_check = false\n')
+    url = f"http://127.0.0.1:{port}/"
+    log = tmp_path / "out.log"
+    with log.open("w") as out:
+        proc = subprocess.Popen([sys.executable, "-c", "from claude_cost.cli import main_entry; main_entry()",
+                                 "serve", "--browser=none"], env={**{k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}, **env},
+                                stdout=out, stderr=subprocess.STDOUT)
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        deadline = time.monotonic() + 20
+        while True:
+            try:
+                direct.open(url + "healthz", timeout=1).close()  # no proxy for localhost
+                break
+            except OSError:
+                assert proc.poll() is None and time.monotonic() < deadline, log.read_text()
+                time.sleep(0.1)
+        assert proc.poll() is None  # the answer came from our server, not one that took the port
+        assert f"Serving {url}" in log.read_text()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)

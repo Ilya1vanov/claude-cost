@@ -415,7 +415,7 @@ def cmd_serve(config: Config, now_fn: Callable[[], datetime], out, err, run_serv
     _ingest(config, now_fn(), err)  # ingest on start
     app = create_app(lambda: _open(config), now_fn, refresh, top_n=config.top_n,
                      update_available=update_available)
-    print(f"Serving {url}", file=out)
+    print(f"Serving {url}", file=out, flush=True)  # stdout is block-buffered when redirected
     run_server(app, HOST, config.port, lambda: show_tab(url))
     return 0
 
