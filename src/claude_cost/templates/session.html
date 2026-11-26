@@ -52,7 +52,11 @@
     <h2>Timeline</h2>
     <div class="timeline" id="timeline-box" data-src="{{ url_for('session_timeline_rows', session_id=t.session_id, agent_id=t.agent_id) }}">
       <div class="tl-head"><span>Prompts, requests and events <span id="timeline-setting" class="tl-setting"></span> <label class="tl-collapse"><input type="checkbox" id="timeline-collapse"> Collapse text</label> <input type="search" id="timeline-search" class="tl-search" placeholder="Search" aria-label="Search the Timeline"> <span class="tl-search-count num" id="timeline-search-count" aria-live="polite"></span></span><span class="num">Context</span><span class="num">Cost</span></div>
-      <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
+      <div class="tl-main">
+        <div class="tl-body" id="timeline-rows"><p class="empty">Loading…</p></div>
+        <canvas class="tl-map" id="timeline-map" hidden aria-label="Timeline map: a mark per prompt; click or drag to move the Timeline"></canvas>
+        <div class="tl-map-tip" id="timeline-map-tip" hidden></div>
+      </div>
     </div>
   </section>
 {% endblock %}
@@ -60,4 +64,5 @@
   <script id="chart-data" type="application/json">{{ chart_data|tojson }}</script>
   {{ ui.chart_scripts('session.js', module=True) }}
   <script type="module" src="{{ url_for('static', filename='timeline_window.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='timeline_map.js') }}"></script>
 {% endblock %}

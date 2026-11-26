@@ -9,10 +9,13 @@ if (api) {
   const ESTIMATED_ROW_HEIGHT = 72;  // until a row has been measured
   const OVERSCAN = 8;
   const firstVisibleListeners = [];
+  const visibleRangeListeners = [];
+  const rowsListeners = [];
   let rows = [];
   let space = null;
   let virtualizer = null;
   let firstVisible = -1;
+  let lastVisible = -1;
   const nodes = new Map();  // row index -> its wrapper element, for the rows currently drawn
 
   // The sticky badge in the Timeline header: the setting in effect for the first visible row
@@ -54,8 +57,15 @@ if (api) {
       firstVisible = start;
       firstVisibleListeners.slice().forEach(function (fn) { fn(start); });
     }
+    const end = virtualizer.range ? virtualizer.range.endIndex : start;
+    if (end !== lastVisible) {
+      lastVisible = end;
+      visibleRangeListeners.slice().forEach(function (fn) { fn({ start: start, end: end }); });
+    }
     updateSettingBadge();
   }
+
+  function notifyRows() { rowsListeners.slice().forEach(function (fn) { fn(rows); }); }
 
   function mount(newRows) {
     rows = newRows;
@@ -64,6 +74,7 @@ if (api) {
     body.appendChild(space);
     nodes.clear();
     firstVisible = -1;
+    lastVisible = -1;
     if (virtualizer) { virtualizer._didMount()(); }  // clean up a previous mount's observers
     virtualizer = new Virtualizer({
       count: rows.length,
@@ -78,6 +89,7 @@ if (api) {
     virtualizer._didMount();
     virtualizer._willUpdate();
     render();
+    notifyRows();
   }
 
   // For rows that change height without the browser telling us (the ResizeObserver already covers
@@ -92,6 +104,19 @@ if (api) {
   api.onFirstVisibleChange = function (fn) {
     firstVisibleListeners.push(fn);
     return function () { const i = firstVisibleListeners.indexOf(fn); if (i >= 0) { firstVisibleListeners.splice(i, 1); } };
+  };
+  // The rows currently listed (Subagent blocks expanded or not), and the last row in view.
+  api.getRows = function () { return rows; };
+  api.getVisibleRange = function () { return { start: firstVisible, end: lastVisible }; };
+  // fn({start, end}) runs whenever the first or last row in view changes.
+  api.onVisibleRangeChange = function (fn) {
+    visibleRangeListeners.push(fn);
+    return function () { const i = visibleRangeListeners.indexOf(fn); if (i >= 0) { visibleRangeListeners.splice(i, 1); } };
+  };
+  // fn(rows) runs after the row list is mounted or swapped (a Subagent block expanded or collapsed).
+  api.onRowsChange = function (fn) {
+    rowsListeners.push(fn);
+    return function () { const i = rowsListeners.indexOf(fn); if (i >= 0) { rowsListeners.splice(i, 1); } };
   };
   // Open (or close, with on=false) the text of row `index` while Collapse text is on; the
   // ResizeObserver re-measures the drawn row. For the search (#92) to reveal a match.
@@ -112,6 +137,7 @@ if (api) {
     virtualizer.setOptions(Object.assign({}, virtualizer.options, { count: rows.length }));
     virtualizer.measure();  // item sizes were cached per index, which has shifted
     render();
+    notifyRows();
   };
 
   api.loadRows(document.getElementById("timeline-box").dataset.src).then(api.setTree || mount).catch(function (err) {
